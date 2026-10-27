@@ -6,13 +6,13 @@
 **Provisioned:** 2026-06-25 by ivan
 
 ## Account
-- Login email: `testing@whalesync.com` (`CB_TRELLO_LOGIN_EMAIL`) — Atlassian SSO account
-- Password: `CB_TRELLO_PASSWORD` (generated, agent-unseen)
+- Login email: `testing@whalesync.com` (`TRELLO_LOGIN_EMAIL`) — Atlassian SSO account
+- Password: `TRELLO_PASSWORD` (generated, agent-unseen)
 
-## Credentials (in `.env.connector-build`)
-- `CB_TRELLO_API_KEY` — from creating a **Power-Up** (Trello no longer hands out a key directly).
-- `CB_TRELLO_TOKEN` — authorized via `https://trello.com/1/authorize?...&key=<key>&...` (manual approve).
-- `CB_TRELLO_LOGIN_EMAIL`, `CB_TRELLO_PASSWORD`
+## Credentials (secret `trello` in the shared test-credentials store)
+- `TRELLO_API_KEY` — from creating a **Power-Up** (Trello no longer hands out a key directly).
+- `TRELLO_TOKEN` — authorized via `https://trello.com/1/authorize?...&key=<key>&...` (manual approve).
+- `TRELLO_LOGIN_EMAIL`, `TRELLO_PASSWORD`
 
 ## Validation
 `GET https://api.trello.com/1/members/me?key=<key>&token=<token>` → **HTTP 200**.

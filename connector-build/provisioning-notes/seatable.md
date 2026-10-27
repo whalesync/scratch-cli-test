@@ -6,14 +6,14 @@
 **Provisioned:** 2026-06-26 by ivan · **Run:** [2026-06-26-provisioning-report-ivan-2-2](../provisioning-runs/2026-06-26-provisioning-report-ivan-2-2.md)
 
 ## Account
-- Login email: `testing@whalesync.com` (`CB_SEATABLE_LOGIN_EMAIL`)
-- Password: `CB_SEATABLE_PASSWORD` (generated, agent-unseen)
+- Login email: `testing@whalesync.com` (`SEATABLE_LOGIN_EMAIL`)
+- Password: `SEATABLE_PASSWORD` (generated, agent-unseen)
 - Workspace: personal team "Scratch QA"
 
-## Credentials (in `.env.connector-build`)
-- `CB_SEATABLE_API_TOKEN` — **account-level** API token, obtained via the auth-token API:
+## Credentials (secret `seatable` in the shared test-credentials store)
+- `SEATABLE_API_TOKEN` — **account-level** API token, obtained via the auth-token API:
   `POST https://cloud.seatable.io/api2/auth-token/` with `username`+`password` → `{token}`.
-- `CB_SEATABLE_LOGIN_EMAIL`, `CB_SEATABLE_PASSWORD`
+- `SEATABLE_LOGIN_EMAIL`, `SEATABLE_PASSWORD`
 
 ## Validation
 `GET https://cloud.seatable.io/api2/account/info/` with `Authorization: Token <token>` → **HTTP 200**.

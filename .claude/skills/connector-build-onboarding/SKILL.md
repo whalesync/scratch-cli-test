@@ -8,7 +8,7 @@ description: One-time, guided setup that gets a teammate ready to run /connector
 
 Run this **once** before your first `/connector-build-prepare` / `/connector-build-execute`. It leads you through the connector-build–specific setup and verifies it live. **Be conversational and interactive** — check each piece, and when something's missing, give the exact fix and re-check after they've done it. Declare them ready only when the readiness rule is met.
 
-**Assumption:** the Scratch **dev environment is already working** — repo cloned, `yarn install` (client + server), Docker (Postgres + Redis) up, DB created + migrated, `scratchmd` built, the server runnable, node 22. This skill does **not** set that up; it only adds the connector-build extras (browser + email reader + secrets file). If a basic check fails (e.g. `scratchmd` missing), point them at the repo README and stop.
+**Assumption:** the Scratch **dev environment is already working** — repo cloned, `yarn install` (client + server), Docker (Postgres + Redis) up, DB created + migrated, `scratchmd` built, the server runnable, node 22. This skill does **not** set that up; it only adds the connector-build extras (browser + email reader + access to the shared secrets store). If a basic check fails (e.g. `scratchmd` missing), point them at the repo README and stop.
 
 > **Overnight note to say up front:** these runs need the **machine awake** (a browser is always driven) — that's a requirement, not a bug. And tell them the gate rule (below) so they know whether they can walk away.
 
@@ -22,13 +22,13 @@ Install **BOTH** browser drivers — they're each other's fallback, and an unatt
 
 ## Steps
 
-**0. Run the bash check** to cover the secrets file + the gstack binary:
+**0. Run the bash check** to cover secrets-store access + the gstack binary:
 ```
 bash .claude/skills/connector-build-onboarding/check-setup.sh
 ```
-Read its output with them; it tells you the secrets-file + gstack-binary state and what to fix.
+Read its output with them; it tells you the secrets-store + gstack-binary state and what to fix.
 
-**1. Secrets file — `connector-build/.env.connector-build`.** Building a **new** connector doesn't need anyone else's secrets, but the file must exist to write into. If it's missing: either copy the shared note from **1Password → "connector-build secrets"**, or `cp connector-build/.env.connector-build.sample connector-build/.env.connector-build` to start empty.
+**1. Secrets store — Secret Manager in the `whalesync-test-credentials` GCP project.** Test-account secrets are shared through it (with the Whalesync repo too), so there's no file to copy. They need `gcloud` signed in as their own whalesync.com login or as their read-only laptop service account; both can read and write the store. If the check can't list the store, have them fix their `gcloud` login (`gcloud auth list`), then re-run the check.
 
 **2. Browser — get BOTH working (they're each other's fallback).**
 - **gstack**: if the binary check passed, smoke-test it live — `$B connect` then `$B status` (headless), and `$B connect --headed` then `$B status --headed` (must show `Mode: headed`). If the binary is missing, walk them through installing the gstack browser, then re-check. If gstack misbehaves, use the recovery in the execute skill's preflight (single clean daemon, kill stray daemons + remove the SingletonLock).

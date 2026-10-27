@@ -27,8 +27,6 @@ local
 .env.*
 !.env.example
 !.env.integration.example
-!.env.connector-build.sample
-!connector-build/.env.connector-build.sample
 
 # Claude local files.
 settings.local.json

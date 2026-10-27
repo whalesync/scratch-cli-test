@@ -1,6 +1,6 @@
 ---
 name: qa-desktop-app
-description: Drive the real Scratch Desktop Electron app like a human QA tester against the deployed test backend (test-api.scratch.md), and report what's broken, slow, or odd. Takes a plain-language description of what to test (e.g. "check that editing a Pipedrive deal title and publishing works", "smoke-test the download flow and see if the Affinity grid renders right", "just poke around and tell me what looks off") — with no argument it does a broad dogfood pass. Builds the app + CLI, launches it with a seeded real session via Playwright `_electron`, stubs ONLY the native folder picker, and exercises whatever the description calls for — auth, downloading a workspace, browsing the data grids, editing a field, reviewing, publishing — capturing screenshots, timings, console/HTTP errors, and a findings log. It can reuse or create a workspace and connect API-key connectors (Airtable/Pipedrive/Webflow) from server/.env.integration to stand up real data to pull/edit/publish (OAuth connectors need a browser and are out of scope). Downloads/edits touch local files and publishing hits the real test external services. Use when asked to QA / smoke-test / dogfood the desktop app, or to test a specific desktop behavior end-to-end against a live backend. NOT for the web client (`/client`) — that's `/qa`.
+description: Drive the real Scratch Desktop Electron app like a human QA tester against the deployed test backend (test-api.scratch.md), and report what's broken, slow, or odd. Takes a plain-language description of what to test (e.g. "check that editing a Pipedrive deal title and publishing works", "smoke-test the download flow and see if the Affinity grid renders right", "just poke around and tell me what looks off") — with no argument it does a broad dogfood pass. Builds the app + CLI, launches it with a seeded real session via Playwright `_electron`, stubs ONLY the native folder picker, and exercises whatever the description calls for — auth, downloading a workspace, browsing the data grids, editing a field, reviewing, publishing — capturing screenshots, timings, console/HTTP errors, and a findings log. It can reuse or create a workspace and connect API-key connectors (Airtable/Pipedrive/Webflow) from server/.env.integration or the shared test-credentials store to stand up real data to pull/edit/publish (OAuth connectors need a browser and are out of scope). Downloads/edits touch local files and publishing hits the real test external services. Use when asked to QA / smoke-test / dogfood the desktop app, or to test a specific desktop behavior end-to-end against a live backend. NOT for the web client (`/client`) — that's `/qa`.
 user-invocable: true
 argument-hint: "[what to test, in plain words]"
 ---
@@ -93,6 +93,16 @@ API keys live in **`server/.env.integration`**. Cleanly connectable (key present
 `connections add --service` enum): **Airtable** (`AIRTABLE_API_KEY`), **Pipedrive** (`PIPEDRIVE_API_KEY`),
 **Webflow** (`WEBFLOW_API_KEY`). Other keys exist (Affinity, Attio, Brevo, Intercom, Stripe) but may not
 be in the CLI service enum — check `scratchmd connections add --service` before relying on them.
+
+When a key is missing there, or the service answers 401, look in the **shared test-credentials store**
+(Secret Manager, GCP project `whalesync-test-credentials`): one secret per test account, named after the
+service in lowercase. List them with `bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh list`
+and a secret's variable names with `… names <secret>` (never the values). Pass the key to
+`setup-connection.sh` as `<secret>:<VAR>`, e.g. `airtable:AIRTABLE_PAT`, with a **new workspace name**
+(`"QA Airtable (shared store)"`): the script reuses an existing connection by service, so re-running into
+a workspace that already holds the 401'd connection keeps the dead key. Whalesync's own tests use the
+same accounts, so read the secret's header comments for write rules before publishing edits
+(`gcloud secrets versions access latest --secret=<secret> --project=whalesync-test-credentials --billing-project=whalesync-test-credentials | grep '^#'`).
 
 Bootstrap with the bundled helper — idempotent (reuses the workspace by name + connection by service;
 re-running won't duplicate folders):

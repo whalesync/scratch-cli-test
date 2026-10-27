@@ -11,8 +11,8 @@ _Provisioned 2026-08-05 (degraded mode: human-gated signup, manual creds)._
 
 ## Credentials
 
-- `CB_GONG_ACCESS_KEY` + `CB_GONG_ACCESS_KEY_SECRET` — HTTP **Basic auth** pair (key = username, secret = password), created in Gong Admin → API. Stored in `connector-build/.env.connector-build` (⚠️ this store was created fresh on this machine — merge into the 1Password note "connector-build secrets"). Source of truth also at `/Users/ryder/spinner/local/audit-creds/gong.env` (Ryder's machine).
-- `CB_GONG_API_BASE_URL` — **instance-specific cell URL** (`https://us02-125032.api.gong.io`). The generic `https://api.gong.io` also answers, but Gong docs recommend the per-instance host.
+- `GONG_ACCESS_KEY` + `GONG_ACCESS_KEY_SECRET` — HTTP **Basic auth** pair (key = username, secret = password), created in Gong Admin → API. Belongs in secret `gong` of the shared test-credentials store; until it's imported (as of 2026-10-27), the only copies are an old `connector-build/.env.connector-build` and the file below. Source of truth also at `/Users/ryder/spinner/local/audit-creds/gong.env` (Ryder's machine).
+- `GONG_API_BASE_URL` — **instance-specific cell URL** (`https://us02-125032.api.gong.io`). The generic `https://api.gong.io` also answers, but Gong docs recommend the per-instance host.
 - **Validated:** `GET <base>/v2/workspaces` → HTTP 200 on 2026-08-05.
 
 ## API quirks (for the build)

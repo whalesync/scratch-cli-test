@@ -34,7 +34,7 @@ Status: ✅ done · 🔄 in progress · ⬜ not started.
 | 6 | **Improvement candidates triaged** (each GENERAL / TRIVIAL / UNSUPPORTED) | ⬜ | generality gate |
 
 ## Service & connection
-- **Test account:** `<which account/workspace the key belongs to — e.g. login email + auth method (Google/SSO/password), org/workspace name, plan>`. Record this so the **next run reuses the same account** instead of hunting for one. Identify, don't expose secrets (the key still never goes in this doc). Where the key is stored locally: `<e.g. apiget-fixtures/.env → SERVICE_API_KEY>`.
+- **Test account:** `<which account/workspace the key belongs to — e.g. login email + auth method (Google/SSO/password), org/workspace name, plan>`. Record this so the **next run reuses the same account** instead of hunting for one. Identify, don't expose secrets (the key still never goes in this doc). Where the key is stored: `<secret in the shared test-credentials store, e.g. linear → LINEAR_API_KEY; or "not stored — user's own account">`.
 - **Login:** `<https://app.service.com/login>` · **API docs:** `<https://developers.service.com>`
 - **API key source:** `<Settings → Developer → API keys>` (where a human generates the long-lived key). **Never record the key itself.** To inspect a live one, decrypt `ConnectorAccount.encryptedCredentials` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in `server/.env`, AAD `connector-account`; `server/tools/decrypt-credentials.js`).
 - **Auth header style:** `<bearer | token | raw | custom-header>` (`headerName: <…>` if custom).

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Automated login for the Todoist test account. Reads creds from .env.connector-build
-# via the credential helper — never echoes the password.
+# Automated login for the Todoist test account. Reads creds from the shared test-credentials
+# store (secret `todoist`) via the credential helper — never echoes the password.
 #   bash login.sh                              # headless default daemon
 #   CB_BROWSE_FLAGS=--headed bash login.sh     # drive the visible (headed) daemon
 #   bash login.sh logout
@@ -19,14 +19,13 @@ if [ "${1:-}" = "logout" ]; then
   echo "logged out"; exit 0
 fi
 
-bash "$H" require CB_TODOIST_LOGIN_EMAIL CB_TODOIST_PASSWORD >/dev/null
-email="$(grep -E '^CB_TODOIST_LOGIN_EMAIL=' "$ROOT/connector-build/.env.connector-build" | sed -E "s/^[^=]+='?([^']*)'?\$/\1/")"
+bash "$H" require todoist TODOIST_LOGIN_EMAIL TODOIST_PASSWORD >/dev/null
 
 "$B" goto "$LOGIN_URL" $BF >/dev/null
 sleep 3
-"$B" fill 'input[type=email]' "$email" $BF >/dev/null
-# password supplied by the helper from the env file — never printed here
-bash "$H" enter-secret CB_TODOIST_PASSWORD 'input[type=password]'
+bash "$H" enter-secret todoist TODOIST_LOGIN_EMAIL 'input[type=email]'
+# password supplied by the helper from the store — never printed here
+bash "$H" enter-secret todoist TODOIST_PASSWORD 'input[type=password]'
 # submit via JS — $B click can hang and reset the page to about:blank
 "$B" js "var b=document.querySelector('button[type=submit]'); b&&b.click()" $BF >/dev/null
 sleep 6

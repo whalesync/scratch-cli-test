@@ -22,6 +22,12 @@
 #     }
 #   }
 #
+# The target service's key can come from an env var instead of the body file: set API_KEY_ENV to
+# the var's name and it replaces userProvidedParams.apiKey before sending, so the key never sits
+# in body.json. With a key in the shared test-credentials store:
+#   API_KEY_ENV=LINEAR_API_KEY bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh \
+#     run linear -- .claude/skills/test-generic-connector/setup-generic-connection.sh <workbookId> <body.json>
+#
 # Auth token resolution order:
 #   1. $SCRATCH_API_TOKEN (if set)
 #   2. ~/.scratchmd/credentials.yaml → environments[<host of SCRATCH_SERVER>].apiToken
@@ -73,6 +79,20 @@ if [[ -z "$TOKEN" ]]; then
   exit 1
 fi
 
+# --- optional: take the target service's key from $API_KEY_ENV ---
+SEND_FILE="$BODY_FILE"
+if [[ -n "${API_KEY_ENV:-}" ]]; then
+  [[ "$API_KEY_ENV" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "error: API_KEY_ENV must be an env var name" >&2; exit 2; }
+  [[ -n "${!API_KEY_ENV:-}" ]] || { echo "error: API_KEY_ENV=$API_KEY_ENV, but \$$API_KEY_ENV is empty" >&2; exit 2; }
+  SEND_FILE="$(mktemp)"; chmod 600 "$SEND_FILE"; trap 'rm -f "$SEND_FILE"' EXIT
+  BODY_FILE="$BODY_FILE" KEY_VAR="$API_KEY_ENV" python3 - >"$SEND_FILE" <<'PY'
+import json, os
+body = json.load(open(os.environ["BODY_FILE"]))
+body.setdefault("userProvidedParams", {})["apiKey"] = os.environ[os.environ["KEY_VAR"]]
+print(json.dumps(body))
+PY
+fi
+
 # --- create the connection ---
 URL="${SERVER%/}/workbooks/${WORKBOOK_ID}/connections"
 echo "POST $URL" >&2
@@ -80,7 +100,7 @@ HTTP_CODE="$(curl -sS -o /tmp/generic-conn-resp.json -w '%{http_code}' \
   -X POST "$URL" \
   -H "Authorization: API-Token ${TOKEN}" \
   -H "Content-Type: application/json" \
-  --data-binary "@${BODY_FILE}")"
+  --data-binary "@${SEND_FILE}")"
 
 echo "HTTP $HTTP_CODE" >&2
 if command -v python3 >/dev/null 2>&1; then

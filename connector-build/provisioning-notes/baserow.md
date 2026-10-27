@@ -6,12 +6,12 @@
 **Provisioned:** 2026-06-25 by ivan
 
 ## Account
-- Login email: `testing@whalesync.com` (`CB_BASEROW_LOGIN_EMAIL`)
-- Password: `CB_BASEROW_PASSWORD` (generated, agent-unseen)
+- Login email: `testing@whalesync.com` (`BASEROW_LOGIN_EMAIL`)
+- Password: `BASEROW_PASSWORD` (generated, agent-unseen)
 
-## Credentials (in `.env.connector-build`)
-- `CB_BASEROW_API_TOKEN` — a **database token** (non-expiring), created in the workspace's settings → API tokens. Used as `Authorization: Token <token>`.
-- `CB_BASEROW_LOGIN_EMAIL`, `CB_BASEROW_PASSWORD`
+## Credentials (secret `baserow` in the shared test-credentials store)
+- `BASEROW_API_TOKEN` — a **database token** (non-expiring), created in the workspace's settings → API tokens. Used as `Authorization: Token <token>`.
+- `BASEROW_LOGIN_EMAIL`, `BASEROW_PASSWORD`
 
 ## Validation
 `GET https://api.baserow.io/api/database/tokens/check/` with `Authorization: Token <token>` → **HTTP 200**.

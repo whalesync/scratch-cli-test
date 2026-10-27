@@ -6,12 +6,12 @@
 **Provisioned:** 2026-06-26 by ivan · **Run:** [2026-06-26-provisioning-report-ivan-2-2](../provisioning-runs/2026-06-26-provisioning-report-ivan-2-2.md)
 
 ## Account
-- Login email: `testing@whalesync.com` (`CB_CODA_LOGIN_EMAIL`)
+- Login email: `testing@whalesync.com` (`CODA_LOGIN_EMAIL`)
 - **Passwordless** by default (magic-link sign-in). A password can be added under Account settings → Security if a scripted UI login is ever needed; the connector itself only needs the API token.
 
-## Credentials (in `.env.connector-build`)
-- `CB_CODA_API_TOKEN` — REST API token, **read+write**, unrestricted. Created at Account settings → Developer tools (toggle **Enable developer mode**) → **API connections → Generate API token**.
-- `CB_CODA_LOGIN_EMAIL`
+## Credentials (secret `coda` in the shared test-credentials store)
+- `CODA_API_TOKEN` — REST API token, **read+write**, unrestricted. Created at Account settings → Developer tools (toggle **Enable developer mode**) → **API connections → Generate API token**.
+- `CODA_LOGIN_EMAIL`
 
 ## Validation
 `GET https://coda.io/apis/v1/whoami` with `Authorization: Bearer <token>` → **HTTP 200**.

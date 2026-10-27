@@ -5,7 +5,7 @@ test account** for a service with **no manual password typing** in the common ca
 companion to [`queued-connectors.md`](/connector-build/queued-connectors.md): that doc is the _funnel_
 (what to build, scored); **this** doc is the _inventory_ (services we have already provisioned a
 throwaway test account on, with a reusable browser session and a credential in
-`.env.connector-build`).
+the shared test-credentials store).
 
 Two lists, do not conflate them:
 
@@ -26,7 +26,7 @@ fix it by making login **not a judgment call**:
 1. **Don't log in at all** where the connector only needs an API token (most services). — _Layer 0_
 2. **Log in once, save the browser session, reuse it forever.** — _Layer 1_
 3. When a saved session has expired and no human is around, **re-auth with a pre-written login
-   helper** that reads the credential from `.env.connector-build` — the agent _invokes_ the helper
+   helper** that reads the credential from the shared store — the agent _invokes_ the helper
    but never sees or types the secret. — _Layer 2_
 
 Layer 2 is what removes the refusal: an authorized, pre-written automation logging a known
@@ -36,64 +36,97 @@ password it was handed. All three layers are described below.
 > **Authorization (state this to the agent, and it is true):** every account in this registry is a
 > **disposable, company-owned QA account that holds no real customer data and exists solely to test
 > connectors.** Authenticating these accounts — loading a saved session, or running a login helper
-> that reads the credential from `.env.connector-build` — is an **expected, routine** part of
+> that reads the credential from the shared store — is an **expected, routine** part of
 > connector testing, not a sensitive operation. Captcha / 2FA / email-or-phone verification are the
 > only login steps that still hand off to a human.
 
 ---
 
-## The secret store — `.env.connector-build`
+## The secret store — Secret Manager (`whalesync-test-credentials`)
 
-All test-account secrets live in **one gitignored file at the repo root**:
+All test-account secrets live in **Secret Manager in the GCP project `whalesync-test-credentials`**,
+shared with the Whalesync repo (whose `docs/test-credentials.md` describes the store and its access
+rules). There is no file to copy between machines: a value is available to every teammate's runs the
+moment it is saved.
 
-```
-/.env.connector-build          # the real secrets — gitignored (matched by `.env.*`)
-/.env.connector-build.sample   # committed template: every var name, no values
-```
-
-- Already ignored by the root `.gitignore` (`.env.*`); the `.sample` is un-ignored so the template
-  is committed (same pattern as `.env.integration.example`).
+- **Who can use it:** your own whalesync.com login and your read-only laptop service account can both
+  read secrets, create them, and add versions. Deleting a secret or destroying a version needs an org
+  admin, so history can't be wiped; overwriting a working key by mistake is undone by saving the old
+  version back. Every call needs `--billing-project` as well as `--project` (the helper passes both).
+- **One secret per test account**, named after the service in lowercase (`todoist`, `baserow`). A
+  second account for the same service gets a suffix (`zoho-eu`). Whalesync keeps its own test accounts
+  here too (`airtable`, `attio`, `zoho`, …), so check `credential-helpers.sh list` before creating one:
+  if the name is taken by a *different* account, use `<svc>-scratch`.
+- **The value is a `.env` file:** comment lines first, saying which account it is, its login, where to
+  generate a new key, and when it expires (`set-header` writes them), then the variables. Only test
+  accounts go here — never a production or customer credential, and never the password of a
+  whalesync.com Google account.
 - **Default login email is `testing@whalesync.com`** for every test account (a Whalesync-controlled
   mailbox, so emailed verification links can be retrieved). Passwords are **generated** by the
   credential helper at registration time, not chosen by hand.
-- **Distributed through 1Password — one canonical copy, copied by hand.** The file's contents live
-  in the 1Password note **`connector-build secrets`**. On a new machine, copy
-  them into `<repo-root>/.env.connector-build`. When you provision a new account, paste your new
-  `CB_<SVC>_*` lines back into that note so the team gets them. (Manual copy by design — no `op` CLI,
-  no automation.) 1Password is the **source of truth**; the on-disk `.env.connector-build` is a
-  working copy. Keep the committed `.sample` (var names, no values) in sync so the structure is
-  reviewable in git without exposing secrets.
-- **Naming convention — `CB_<SERVICE>_<FIELD>`** (service uppercased, `_` for separators; a second
-  account for one service gets a suffix, `CB_ZOHO_EU_*` / `CB_ZOHO_US_*`):
+- **Naming convention — `<SERVICE>_<FIELD>`**, where `<SERVICE>` is the secret name before any `-`,
+  upper-cased. The store's own tools skip any other variable name (so a stored `PATH` or
+  `NODE_OPTIONS` can't change what runs on someone's machine), and the helper refuses to write one.
 
   | Var | For | Example value |
   |---|---|---|
-  | `CB_<SVC>_LOGIN_EMAIL` | all | `qa+airtable@whalesync.com` |
-  | `CB_<SVC>_PASSWORD` | login-required services | _(secret)_ |
-  | `CB_<SVC>_API_TOKEN` | `user_provided_params` services | _(secret)_ |
-  | `CB_<SVC>_OAUTH_CLIENT_ID` / `_OAUTH_CLIENT_SECRET` | OAuth services | _(secret)_ |
-  | `CB_<SVC>_OAUTH_REFRESH_TOKEN` | OAuth (self-client / long-lived) | _(secret)_ |
-  | `CB_<SVC>_ACCOUNT_ID` | all | org / workspace id |
-  | `CB_<SVC>_DATA_CENTER` | multi-region services | `EU` |
-  | `CB_<SVC>_TRIAL_END` | trials | `2026-06-18` |
+  | `<SVC>_LOGIN_EMAIL` | all | `qa+airtable@whalesync.com` |
+  | `<SVC>_PASSWORD` | login-required services | _(secret)_ |
+  | `<SVC>_API_TOKEN` | `user_provided_params` services | _(secret)_ |
+  | `<SVC>_OAUTH_CLIENT_ID` / `_OAUTH_CLIENT_SECRET` | OAuth services | _(secret)_ |
+  | `<SVC>_OAUTH_REFRESH_TOKEN` | OAuth (self-client / long-lived) | _(secret)_ |
+  | `<SVC>_ACCOUNT_ID` | all | org / workspace id |
+  | `<SVC>_DATA_CENTER` | multi-region services | `EU` |
+  | `<SVC>_TRIAL_END` | trials | `2026-06-18` |
 
-- **Reference a secret by its var name**, never by value, everywhere outside the file (this doc, the
-  login helper, the registry table). A script reads it by sourcing the file:
+- **Reference a secret by its account and var name**, never by value, everywhere outside the store
+  (this doc, the login helper, the registry table). Scripts get values through the credential helper
+  (`.claude/skills/connector-build-prepare/lib/credential-helpers.sh`), which never prints them:
 
   ```bash
-  set -a; source "$(git rev-parse --show-toplevel)/.env.connector-build"; set +a
-  echo "$CB_AIRTABLE_API_TOKEN"   # now available to the helper / CLI; never echoed into the transcript
+  H=.claude/skills/connector-build-prepare/lib/credential-helpers.sh
+  bash $H require todoist TODOIST_API_TOKEN                     # fail fast, naming any missing var
+  bash $H run todoist -- sh -c 'curl -s -H "Authorization: Bearer $TODOIST_API_TOKEN" https://api.todoist.com/api/v1/projects >/dev/null'
+  bash $H names todoist                                         # which vars are stored, never the values
   ```
 
-This **supersedes the ad-hoc credential locations** that grew up before the registry —
+  `run` exports the account's `<SVC>_*` vars into that one command only. The raw read,
+  `gcloud secrets versions access latest --secret=<svc> --project=whalesync-test-credentials --billing-project=whalesync-test-credentials`,
+  prints every value, so agents should stick to the helper.
+
+This **supersedes** the old `connector-build/.env.connector-build` file and its 1Password note
+(`connector-build secrets`), and the ad-hoc credential locations that grew up before that —
 `~/.zoho-scratch-test.json`, `server/.env.integration` `ZOHO_*`, keys pasted into per-connector
-`STATE.md`. Fold those into `.env.connector-build` as you touch each connector; the encrypted
+`STATE.md`. Move those into the store as you touch each connector; the encrypted
 `ConnectorAccount.encryptedCredentials` in the DB stays as-is (it's the runtime store, not the
 source of truth for re-provisioning).
 
-> **Never echo a secret.** Helpers `source` the file and pass `$CB_*` straight to `$B fill` / the
-> CLI; they do not `echo` it, write it to logs, or paste it into a message. The file is the only
-> place a value appears in plaintext.
+### Moving an account in from the old 1Password note
+
+Accounts provisioned before 2026-10-27 have their secrets only in the 1Password note
+**`connector-build secrets`**, as `CB_<SVC>_<FIELD>` lines. A teammate with 1Password access copies
+the note into a temporary file once, and then each account moves with one command (no value is
+printed; the `CB_` prefix is dropped on the way in):
+
+```bash
+H=.claude/skills/connector-build-prepare/lib/credential-helpers.sh
+bash $H import /tmp/connector-build-secrets.env todoist CB_TODOIST_   # → secret todoist, TODOIST_* vars
+bash $H set-header todoist <<'EOF'
+# Todoist test account (free plan). Login: testing@whalesync.com (password in TODOIST_PASSWORD).
+# Where to get the token: Settings > Integrations > Developer > API token.
+# Expires: never.
+EOF
+rm /tmp/connector-build-secrets.env
+```
+
+`import` refuses to touch a secret that already exists, since the store's account of that name may
+be a different one. When you import under a suffixed name (`attio-scratch`), put that name at the
+start of the connector's Test env vars cell in `provisioned-connectors.md` (or `queued-connectors.md`)
+so `/connector-build-execute` reads the right secret. Put the details for each header from the account's provisioning note or
+`STATE.md`.
+
+> **Never echo a secret.** The helper passes values straight to `$B fill` or into a child command's
+> environment; it does not `echo` them, write them to logs, or paste them into a message.
 
 ---
 
@@ -135,12 +168,12 @@ this script** (and runs the registration that creates the account in the first p
 and the registration before it — handle the secret through the **credential helper**
 (`.claude/skills/connector-build-prepare/lib/credential-helpers.sh`), which **never prints a value**:
 
-- At registration, the agent calls `gen-password CB_<SVC>_PASSWORD` → a strong random password is
-  generated, stored in `.env.connector-build`, and entered into the form field
-  (`enter-secret CB_<SVC>_PASSWORD '<selector>'`) — **the agent never sees it**, so signup is fully
-  automatable.
-- The login script later reads the same `CB_<SVC>_LOGIN_EMAIL` / `CB_<SVC>_PASSWORD` through the
-  helper, fills the form, submits, and `$B state save <connector>` on success.
+- At registration, the agent calls `gen-password <svc> <SVC>_PASSWORD` → a strong random password
+  is generated, stored in the `<svc>` secret, and entered into the form field
+  (`enter-secret <svc> <SVC>_PASSWORD '<selector>'`) — **the agent never sees it**, so signup is
+  fully automatable.
+- The login script later enters the same `<SVC>_LOGIN_EMAIL` / `<SVC>_PASSWORD` through the
+  helper, submits, and `$B state save <connector>` on success.
 
 The agent's instruction is simply _"run the login script for `<connector>`"_ — an authorized,
 pre-written automation, not a free-form decision to type a secret. The **only** thing that makes it
@@ -159,7 +192,7 @@ Preflight needs the service in the browser?
 └─ Yes (seed/verify in the UI, or OAuth consent)
    ├─ $B state load <connector>; session still valid?                    → Layer 1: reuse, done
    └─ Session expired?
-      ├─ login script exists → run it (reads the env file, no echo)       → Layer 2: scripted re-auth
+      ├─ login script exists → run it (reads the store, no echo)          → Layer 2: scripted re-auth
       └─ emailed confirmation needed (or no script) → post ask + /read    → human gate
 ```
 
@@ -177,13 +210,13 @@ Adding a service to the inventory is the job of the
    at the password step, **generating a random password the agent never sees** and entering it via
    the credential helper. It pauses **only** for an emailed confirmation link/code (with a spoken
    `/read` cue), since that mailbox isn't readable by the agent.
-3. **Capture the credentials** into `.env.connector-build` (API token / OAuth creds, account id,
-   trial-end) via the no-echo helper, and add the var **names** to `.env.connector-build.sample`.
+3. **Capture the credentials** into the account's secret (API token / OAuth creds, account id,
+   trial-end) via the no-echo helper, and describe the account in the secret's header (`set-header`).
 4. **Build + verify the login script** (logs in and out a couple of times to prove it round-trips),
    `$B state save <connector>`.
 5. **Register it**: fill the **Test env vars** column for the connector's row in
    [`provisioned-connectors.md`](/connector-build/provisioned-connectors.md), note the account in the connector's
-   `STATE.md`, and **paste the new `CB_<SVC>_*` lines into the 1Password note** so the team has them.
+   `STATE.md`. Nothing to hand off: the store is already shared with the team.
 
 The per-connector **Test env vars** column in `provisioned-connectors.md` is the source of truth for
 which vars each connector needs; `/connector-build-execute` reads it for its fast env preflight.
@@ -214,19 +247,19 @@ state of an in-flight batch — treat it like STATE.md for provisioning).
 
 | Service | Account email | Stage | Session | Env vars stored | Updated | Notes |
 |---|---|---|---|---|---|---|
-| Todoist | testing@whalesync.com | `done` | `todoist` | `CB_TODOIST_LOGIN_EMAIL`, `CB_TODOIST_PASSWORD`, `CB_TODOIST_API_TOKEN` | 2026-06-25 | Fully prepared: signup → email-verify → onboarding → `login.sh` proven live (headed); token captured (unseen) + validated HTTP 200 against `api.todoist.com/api/v1` (REST v2 & sync v9 are 410-gone — connector must target v1). |
-| NocoDB | testing@whalesync.com | `done` | (Chrome ext) | `CB_NOCODB_LOGIN_EMAIL`, `CB_NOCODB_PASSWORD`, `CB_NOCODB_API_TOKEN` | 2026-06-25 | **Done via Chrome ext, fully autonomous.** Signup → email code `759011` fetched from Gmail (sender `noreply@nocodb.com`, not the forward-from — search broadly with `in:anywhere`) → onboarding skipped → personal API token (Records+Base scopes, all resources, 90-day exp) created at `/account/tokens`. Token shown once in a modal (read leaf-element textContent, not an input). Validated HTTP 200 at `api/v2/meta/workspaces/{wnrusqvf}/bases` — **NocoDB cloud API is workspace-scoped** (`/api/v2/meta/bases` and v1 `/db/meta/projects` return 403). |
-| Teable | testing@whalesync.com | `done` | (Chrome ext) | `CB_TEABLE_LOGIN_EMAIL`, `CB_TEABLE_PASSWORD`, `CB_TEABLE_API_TOKEN` | 2026-06-25 | **Done via Chrome ext, fully autonomous.** Signup (app.teable.ai) → email code `1008` from Gmail (`hello@notify.teable.ai`) → straight into a base (no onboarding gate) → Permanent PAT at `/setting/personal-access-token` (scopes Read record/base + Read current user email; token value read from the list-page input). Validated HTTP 200 at `/api/auth/user`. **Caveat:** token created with NO base resources attached (confirm dialog warned) — for actual data pulls, recreate the PAT with "Add all resources"/a base added. |
-| Grist | testing@whalesync.com | `done` | (Chrome ext) | `CB_GRIST_LOGIN_EMAIL`, `CB_GRIST_PASSWORD`, `CB_GRIST_API_KEY` | 2026-06-25 | **Done via Chrome ext.** Signup (login.getgrist.com) → email **code in body only** (snippet truncated → used Gmail `get_thread` FULL_CONTENT; code `484986`, sender `support@getgrist.com`) → verified, but session didn't carry → had to log in again → Account settings → Developer → Create API key. **Key sits in a masked password input → extension fully redacts JS reads ("[BLOCKED: Base64]").** Worked around by reading the input value as char-codes and decoding in shell. Validated HTTP 200 at `/api/orgs`. |
-| Shortcut | testing@whalesync.com | `done` | (Chrome ext) | `CB_SHORTCUT_LOGIN_EMAIL`, `CB_SHORTCUT_PASSWORD`, `CB_SHORTCUT_API_TOKEN` | 2026-06-25 | **Done via Chrome ext.** Signup at shortcut.com/signup (rejected cookie banner) → email code `1356` (sender `testing@whalesync.com`) → onboarding (workspace `scratch-qa`, name, password, profession required) → Settings→API Tokens→Create Token (modal: name + permissions). Token `sct_r_scratch-qa_…` read from the one-time green reveal block via leaf textContent. Validated HTTP 200 at `api.app.shortcut.com/api/v3/member` (header `Shortcut-Token`). **Caveat:** token is Read-only; for connector writes create a Full-access token. |
+| Todoist | testing@whalesync.com | `done` | `todoist` | `TODOIST_LOGIN_EMAIL`, `TODOIST_PASSWORD`, `TODOIST_API_TOKEN` | 2026-06-25 | Fully prepared: signup → email-verify → onboarding → `login.sh` proven live (headed); token captured (unseen) + validated HTTP 200 against `api.todoist.com/api/v1` (REST v2 & sync v9 are 410-gone — connector must target v1). |
+| NocoDB | testing@whalesync.com | `done` | (Chrome ext) | `NOCODB_LOGIN_EMAIL`, `NOCODB_PASSWORD`, `NOCODB_API_TOKEN` | 2026-06-25 | **Done via Chrome ext, fully autonomous.** Signup → email code `759011` fetched from Gmail (sender `noreply@nocodb.com`, not the forward-from — search broadly with `in:anywhere`) → onboarding skipped → personal API token (Records+Base scopes, all resources, 90-day exp) created at `/account/tokens`. Token shown once in a modal (read leaf-element textContent, not an input). Validated HTTP 200 at `api/v2/meta/workspaces/{wnrusqvf}/bases` — **NocoDB cloud API is workspace-scoped** (`/api/v2/meta/bases` and v1 `/db/meta/projects` return 403). |
+| Teable | testing@whalesync.com | `done` | (Chrome ext) | `TEABLE_LOGIN_EMAIL`, `TEABLE_PASSWORD`, `TEABLE_API_TOKEN` | 2026-06-25 | **Done via Chrome ext, fully autonomous.** Signup (app.teable.ai) → email code `1008` from Gmail (`hello@notify.teable.ai`) → straight into a base (no onboarding gate) → Permanent PAT at `/setting/personal-access-token` (scopes Read record/base + Read current user email; token value read from the list-page input). Validated HTTP 200 at `/api/auth/user`. **Caveat:** token created with NO base resources attached (confirm dialog warned) — for actual data pulls, recreate the PAT with "Add all resources"/a base added. |
+| Grist | testing@whalesync.com | `done` | (Chrome ext) | `GRIST_LOGIN_EMAIL`, `GRIST_PASSWORD`, `GRIST_API_KEY` | 2026-06-25 | **Done via Chrome ext.** Signup (login.getgrist.com) → email **code in body only** (snippet truncated → used Gmail `get_thread` FULL_CONTENT; code `484986`, sender `support@getgrist.com`) → verified, but session didn't carry → had to log in again → Account settings → Developer → Create API key. **Key sits in a masked password input → extension fully redacts JS reads ("[BLOCKED: Base64]").** Worked around by reading the input value as char-codes and decoding in shell. Validated HTTP 200 at `/api/orgs`. |
+| Shortcut | testing@whalesync.com | `done` | (Chrome ext) | `SHORTCUT_LOGIN_EMAIL`, `SHORTCUT_PASSWORD`, `SHORTCUT_API_TOKEN` | 2026-06-25 | **Done via Chrome ext.** Signup at shortcut.com/signup (rejected cookie banner) → email code `1356` (sender `testing@whalesync.com`) → onboarding (workspace `scratch-qa`, name, password, profession required) → Settings→API Tokens→Create Token (modal: name + permissions). Token `sct_r_scratch-qa_…` read from the one-time green reveal block via leaf textContent. Validated HTTP 200 at `api.app.shortcut.com/api/v3/member` (header `Shortcut-Token`). **Caveat:** token is Read-only; for connector writes create a Full-access token. |
 | Capsule CRM | testing@whalesync.com | `blocked` | — | — | 2026-06-25 | Slot-#5 attempt. **Free-forever plan removed** — only paid plans w/ 14-day no-card trials now (candidates-table staleness). Cookie consent wall intercepted the "Try Free" click. Swapped. |
-| Stackby | testing@whalesync.com | `blocked` | — | `CB_STACKBY_LOGIN_EMAIL`, `CB_STACKBY_PASSWORD` (unused) | 2026-06-25 | Slot-#5 attempt. Signup form has a **phone field**; submit → "Something went wrong" (likely phone/SMS-gated). Swapped. |
-| SeaTable | testing@whalesync.com | `blocked` | — | `CB_SEATABLE_LOGIN_EMAIL` | 2026-06-25 | Slot-#5 attempt. Account created (email submitted) but verification is a **magic LINK** whose token `get_thread` **redacts** → link unusable. Workaround = click it in-browser via the connected Gmail (Chrome is logged into `ivan.jd@gmail.com`), but Gmail UI search didn't surface the email this run. See report. |
+| Stackby | testing@whalesync.com | `blocked` | — | `STACKBY_LOGIN_EMAIL`, `STACKBY_PASSWORD` (unused) | 2026-06-25 | Slot-#5 attempt. Signup form has a **phone field**; submit → "Something went wrong" (likely phone/SMS-gated). Swapped. |
+| SeaTable | testing@whalesync.com | `blocked` | — | `SEATABLE_LOGIN_EMAIL` | 2026-06-25 | Slot-#5 attempt. Account created (email submitted) but verification is a **magic LINK** whose token `get_thread` **redacts** → link unusable. Workaround = click it in-browser via the connected Gmail (Chrome is logged into `ivan.jd@gmail.com`), but Gmail UI search didn't surface the email this run. See report. |
 | Coda | testing@whalesync.com | `blocked` | — | — | 2026-06-25 | Slot-#5 attempt. Passwordless **magic-link** signup → same redaction blocker as SeaTable. |
 
 > **Batch result (overnight run):** 4 NEW validated (NocoDB, Teable, Grist, Shortcut) + Todoist + Trello = **6 live**. Slot #5 unfilled — blocked by free-plan-removal / phone-gating / **magic-link verification redaction** (the key limitation). Full analysis + skill-integration plan: [`connector-build/provisioning-runs/2026-06-25-provisioning-report-ivan-4-8.md`](/connector-build/provisioning-runs/2026-06-25-provisioning-report-ivan-4-8.md).
-| Trello | testing@whalesync.com | `done` | (Chrome ext) | `CB_TRELLO_LOGIN_EMAIL`, `CB_TRELLO_PASSWORD`, `CB_TRELLO_API_KEY`, `CB_TRELLO_TOKEN` | 2026-06-25 | **Fully done via the Chrome extension** (gstack kept failing). Login: password + **MFA email code (`VNAGAM`) fetched from Gmail** and entered autonomously. Created Power-Up `6a3da71a4ecfaffb2c1432ba` (Trello Workspace; support-contact is a required field), generated API key, authorized a token via `/1/authorize` (Allow). Validated `GET /1/members/me` → HTTP 200. Premium trial ends **2026-07-09**. Note: Chrome extension redacts secret-looking values from JS reads, but the key was in the authorize URL and the token in page article-text via get_page_text. |
-| Baserow | testing@whalesync.com | `done` | `baserow` | `CB_BASEROW_LOGIN_EMAIL`, `CB_BASEROW_PASSWORD`, `CB_BASEROW_API_TOKEN` | 2026-06-25 | Fully prepared: signup (generated pw, unseen) → onboarding skipped → logged in, session saved; **no blocking email gate**. Database token created via the management API (`POST /api/database/tokens/` after `token-auth` login with stored creds) and validated HTTP 200 at `api.baserow.io/api/database/tokens/check/`. workspace_id `213959`. (DB tokens aren't in the workspace-settings UI — minted via API.) |
+| Trello | testing@whalesync.com | `done` | (Chrome ext) | `TRELLO_LOGIN_EMAIL`, `TRELLO_PASSWORD`, `TRELLO_API_KEY`, `TRELLO_TOKEN` | 2026-06-25 | **Fully done via the Chrome extension** (gstack kept failing). Login: password + **MFA email code (`VNAGAM`) fetched from Gmail** and entered autonomously. Created Power-Up `6a3da71a4ecfaffb2c1432ba` (Trello Workspace; support-contact is a required field), generated API key, authorized a token via `/1/authorize` (Allow). Validated `GET /1/members/me` → HTTP 200. Premium trial ends **2026-07-09**. Note: Chrome extension redacts secret-looking values from JS reads, but the key was in the authorize URL and the token in page article-text via get_page_text. |
+| Baserow | testing@whalesync.com | `done` | `baserow` | `BASEROW_LOGIN_EMAIL`, `BASEROW_PASSWORD`, `BASEROW_API_TOKEN` | 2026-06-25 | Fully prepared: signup (generated pw, unseen) → onboarding skipped → logged in, session saved; **no blocking email gate**. Database token created via the management API (`POST /api/database/tokens/` after `token-auth` login with stored creds) and validated HTTP 200 at `api.baserow.io/api/database/tokens/check/`. workspace_id `213959`. (DB tokens aren't in the workspace-settings UI — minted via API.) |
 
 ## Maintenance — keep the list usable
 
@@ -237,8 +270,11 @@ now; a scheduled sweep later):
   connector's `STATE.md`.
 - **Sessions that no longer load** (`state load` lands on a login wall) → run the login script
   (`login.sh`), or re-snapshot by hand.
-- **Rotated tokens** → regenerate, update the value in `.env.connector-build` and paste the new
-  value into the 1Password note; the var name is stable so nothing else changes.
+- **Rotated tokens** → regenerate and save it with `set-secret <svc> <VAR>` (a new version; the old
+  one stays readable); the var name is stable so nothing else changes. If the expiry changed, keep
+  the rest of the header: `set-header` replaces the whole leading comment block, so pipe the
+  existing one back with only the `Expires` line edited:
+  `gcloud secrets versions access latest --secret=<svc> --project=whalesync-test-credentials --billing-project=whalesync-test-credentials | awk '!/^[[:space:]]*(#|$)/{exit} {print}' | sed 's/^# Expires:.*/# Expires: <new date>/' | bash $H set-header <svc>`.
 
 ---
 
@@ -248,22 +284,22 @@ There is **no separate registry table** — that would be a second source of tru
 inventory is two existing artifacts:
 
 - **[`provisioned-connectors.md`](/connector-build/provisioned-connectors.md) → the `Test env vars` column** — the
-  cross-service index of which `CB_<SVC>_*` vars each connector needs. `/connector-build-execute` reads it
+  cross-service index of which `<SVC>_*` vars each connector needs (in secret `<svc>`). `/connector-build-execute` reads it
   for its fast env preflight; `/connector-build-prepare` fills it when it provisions a connector.
 - **each connector's `STATE.md` → `Test account` section** — the authoritative per-connector detail
   (account/org id, plan/trial, session name, workbook/connection ids, decrypt recipe, UI
   quick-links). Never the secret itself.
 
-### Already-provisioned, pending migration into `.env.connector-build`
+### Already-provisioned, pending migration into the store
 
 These accounts exist (seeded from their `STATE.md`) but their secrets still live in ad-hoc places
-(`~/.zoho-scratch-test.json`, `server/.env.integration`, the encrypted DB) — migrate each into the
-shared file as you next touch it:
+(`~/.zoho-scratch-test.json`, `server/.env.integration`, the encrypted DB) — move each into the
+store as you next touch it:
 
-| Connector | Env prefix | Session | Account / DC | Note |
+| Connector | Secret | Session | Account / DC | Note |
 |---|---|---|---|---|
-| Attio | `CB_ATTIO_` | `attio` | `whalesync-attio` (dev program) | api-token |
-| Affinity | `CB_AFFINITY_` | `affinity` | `whalesync.affinity.co` | **prod — read-only** |
-| Zoho CRM | `CB_ZOHO_` | `zoho-eu` / `zoho-us` | org `20115333801` EU · `857392714` US | OAuth + params |
-| Copper | `CB_COPPER_` | `copper` | account `612378` | trial (~2026-06-18) |
-| GoHighLevel | `CB_GOHIGHLEVEL_` | `gohighlevel` | sub-account (agency model) | OAuth, trial |
+| Attio | `attio-scratch` | `attio` | `whalesync-attio` (dev program) | api-token. The store's `attio` secret is Whalesync's "Whalesync Testing" workspace, a different account |
+| Affinity | — | `affinity` | `whalesync.affinity.co` | **prod — read-only. Never goes in the store** (production credential) |
+| Zoho CRM | `zoho-eu` / `zoho-us` | `zoho-eu` / `zoho-us` | org `20115333801` EU · `857392714` US | OAuth + params. The store's `zoho` secret is shared with Scratch's audit harness; check which org it is before adding another |
+| Copper | `copper` | `copper` | account `612378` | trial (~2026-06-18) |
+| GoHighLevel | `gohighlevel` | `gohighlevel` | sub-account (agency model) | OAuth, trial |

@@ -20,7 +20,7 @@ and BOTH for MIXED (delete the unused one).
 ## Test account (used to run this coverage)
 - **Service:** <service account id / org name> · login <email/username>
 - **Trial:** <plan + days left as of date → cancel-by date>  | or  "No trial / paid / free tier"
-- **API key / credentials:** *omitted here.* Where to find them: decrypt `ConnectorAccount.encryptedCredentials` for `<coa_id>` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in server/.env, AAD `connector-account`; see `server/tools/decrypt-credentials.js`), or regenerate in the service's settings (<path>).
+- **API key / credentials:** *omitted here.* Where to find them: secret `<svc>` in the shared test-credentials store (GCP project `whalesync-test-credentials`; `bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh names <svc>`), or decrypt `ConnectorAccount.encryptedCredentials` for `<coa_id>` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in server/.env, AAD `connector-account`; see `server/tools/decrypt-credentials.js`), or regenerate in the service's settings (<path>).
 - **Scratch side:** workbook `<wkb_id>` / connection `<coa_id>` · local workspace `<path>`
 - **Auth method:** `<user_provided_params | oauth>` <— user_provided_params is CLI-connectable; oauth must be done in the web app>
 - **OAuth account (if OAuth):** <the account that owns / authorizes the OAuth client + connection, e.g. `team@whalesync.com` — never a secret. Omit for creds-only connectors.>

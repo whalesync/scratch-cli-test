@@ -6,12 +6,12 @@
 **Provisioned:** 2026-06-25 by ivan · **Run:** [2026-06-25-provisioning-report-ivan-4-8](../provisioning-runs/2026-06-25-provisioning-report-ivan-4-8.md)
 
 ## Account
-- Login email: `testing@whalesync.com` (`CB_GRIST_LOGIN_EMAIL`)
-- Password: `CB_GRIST_PASSWORD` (generated, agent-unseen)
+- Login email: `testing@whalesync.com` (`GRIST_LOGIN_EMAIL`)
+- Password: `GRIST_PASSWORD` (generated, agent-unseen)
 
-## Credentials (in `.env.connector-build`)
-- `CB_GRIST_API_KEY` — `Authorization: Bearer <key>`. Created at Account settings → Developer.
-- `CB_GRIST_LOGIN_EMAIL`, `CB_GRIST_PASSWORD`
+## Credentials (secret `grist` in the shared test-credentials store)
+- `GRIST_API_KEY` — `Authorization: Bearer <key>`. Created at Account settings → Developer.
+- `GRIST_LOGIN_EMAIL`, `GRIST_PASSWORD`
 
 ## Validation
 `GET https://docs.getgrist.com/api/orgs` with `Authorization: Bearer <key>` → **HTTP 200**.

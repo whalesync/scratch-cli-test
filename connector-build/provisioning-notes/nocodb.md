@@ -6,13 +6,13 @@
 **Provisioned:** 2026-06-25 by ivan · **Run:** [2026-06-25-provisioning-report-ivan-4-8](../provisioning-runs/2026-06-25-provisioning-report-ivan-4-8.md)
 
 ## Account
-- Login email: `testing@whalesync.com` (`CB_NOCODB_LOGIN_EMAIL`)
-- Password: `CB_NOCODB_PASSWORD` (generated, agent-unseen)
+- Login email: `testing@whalesync.com` (`NOCODB_LOGIN_EMAIL`)
+- Password: `NOCODB_PASSWORD` (generated, agent-unseen)
 - Cloud workspace id: `wnrusqvf`
 
-## Credentials (in `.env.connector-build`)
-- `CB_NOCODB_API_TOKEN` — 40-char token, header `xc-token: <token>`. Created in account → tokens; the form gates on **scopes + resource access** (select the workspace(s)).
-- `CB_NOCODB_LOGIN_EMAIL`, `CB_NOCODB_PASSWORD`
+## Credentials (secret `nocodb` in the shared test-credentials store)
+- `NOCODB_API_TOKEN` — 40-char token, header `xc-token: <token>`. Created in account → tokens; the form gates on **scopes + resource access** (select the workspace(s)).
+- `NOCODB_LOGIN_EMAIL`, `NOCODB_PASSWORD`
 
 ## Validation
 `GET https://app.nocodb.com/api/v2/meta/workspaces/` with `xc-token: <token>` → **HTTP 200** (lists workspaces incl. `wnrusqvf`).

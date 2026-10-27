@@ -1,14 +1,14 @@
 ---
 name: connector-build-prepare
 user-invocable: true
-description: One-time, near-fully-automated setup that makes a connector ready for /connector-build-execute. `/connector-build-prepare <connector>` provisions a throwaway test account on the service (registering autonomously — generating a random password the agent never sees and entering it via a script), generates/stores the API or OAuth credentials in .env.connector-build, builds a per-connector login script, verifies it can log in and out a couple of times, registers the connector + its env vars in connector-build/provisioned-connectors.md and .env.connector-build.sample, and declares victory. Pauses ONLY for email-confirmation steps (a link to click or code to enter sent to testing@whalesync.com), with a spoken /read cue. The output is a connector whose login is fully automated so /connector-build-execute can later run hands-off.
+description: One-time, near-fully-automated setup that makes a connector ready for /connector-build-execute. `/connector-build-prepare <connector>` provisions a throwaway test account on the service (registering autonomously — generating a random password the agent never sees and entering it via a script), generates/stores the API or OAuth credentials in the shared test-credentials store (Secret Manager in the `whalesync-test-credentials` GCP project), builds a per-connector login script, verifies it can log in and out a couple of times, registers the connector + its env vars in connector-build/provisioned-connectors.md, and declares victory. Pauses ONLY for email-confirmation steps (a link to click or code to enter sent to testing@whalesync.com), with a spoken /read cue. The output is a connector whose login is fully automated so /connector-build-execute can later run hands-off.
 ---
 
 # connector-build-prepare
 
 `/connector-build-prepare <connector>` — **one parameter, the connector** (e.g. `/connector-build-prepare clickup`). Run this **once per connector**, before `/connector-build-execute`. It does the human-shaped setup work — provision a test account, wire up automated login — so that every later `/connector-build-execute` run on this connector is hands-off.
 
-Read [`connector-build/test-accounts-mechanism.md`](/connector-build/test-accounts-mechanism.md) first — it is the mechanism this skill implements (the `.env.connector-build` secret store, 1Password distribution, the gstack session layer, the login-script convention, the three-layer login model).
+Read [`connector-build/test-accounts-mechanism.md`](/connector-build/test-accounts-mechanism.md) first — it is the mechanism this skill implements (the shared Secret Manager store, the gstack session layer, the login-script convention, the three-layer login model).
 
 ## The contract — what you do autonomously vs. when you pause
 
@@ -37,38 +37,40 @@ Provisioning a batch (or pushing hard to reach N successes) is a **long, mostly-
 
 ## The secret model — you never see the password
 
-All secrets live in `.env.connector-build` (gitignored; copied by hand from / back to the 1Password note — see the mechanism doc). The credential helper does every secret operation **without printing the value**, so the password/token never enters your context:
+All secrets live in the **shared test-credentials store**: Secret Manager in the GCP project `whalesync-test-credentials`, shared with the Whalesync repo (see the mechanism doc). Your read-only laptop service account can read and write it, and the moment a value is saved every teammate's runs can use it. The credential helper does every secret operation **without printing the value**, so the password/token never enters your context:
 
 ```
 H=.claude/skills/connector-build-prepare/lib/credential-helpers.sh
-bash $H gen-password   CB_<SVC>_PASSWORD            # generate a strong random pw, store it (no echo)
-bash $H enter-secret   CB_<SVC>_PASSWORD '#password' '#confirm-password'   # fill the field(s)
-bash $H type-secret    CB_<SVC>_PASSWORD            # type into the focused element
-printf '%s' "<token>" | bash $H set-secret CB_<SVC>_API_TOKEN   # store a value from stdin
-bash $H require        CB_<SVC>_API_TOKEN ...       # fail fast if missing/empty
-bash $H update-sample  CB_<SVC>_PASSWORD CB_<SVC>_API_TOKEN     # add var names to the .sample
+bash $H gen-password   <svc> <SVC>_PASSWORD            # generate a strong random pw, store it (no echo)
+bash $H enter-secret   <svc> <SVC>_PASSWORD '#password' '#confirm-password'   # fill the field(s)
+bash $H type-secret    <svc> <SVC>_PASSWORD            # type into the focused element
+printf '%s' "<token>" | bash $H set-secret <svc> <SVC>_API_TOKEN   # store a value from stdin
+bash $H require        <svc> <SVC>_API_TOKEN ...       # fail fast if missing/empty
+bash $H run            <svc> -- <command>              # run a command with the account's vars exported
+bash $H set-header     <svc> < header.txt              # the comment lines describing the account
+bash $H names          <svc>                           # which vars are stored (never the values)
 ```
 
 You locate the password/email fields (you *can* see the form), pass their selectors to the script; the script supplies the value. You see only `set … (value hidden)`.
 
-`<SVC>` is the connector name upper-cased (`CLICKUP`, `ZOHO`). Default login email is **`testing@whalesync.com`** (`CB_<SVC>_LOGIN_EMAIL`).
+`<svc>` is the account's secret name: the connector name in lowercase (`clickup`, `zoho`). `<SVC>` is the same name upper-cased, and **every variable must start with it** (`CLICKUP_API_TOKEN`); the store's tools skip any other name, so the helper refuses them. Default login email is **`testing@whalesync.com`** (`<SVC>_LOGIN_EMAIL`). Before creating a new secret, `bash $H list`: if `<svc>` already exists for a *different* account (Whalesync keeps its own test accounts here too, e.g. `airtable`, `attio`, `zoho`), use a suffixed name such as `<svc>-scratch`.
 
 ## Steps
 
-**1. Resolve the connector + its env vars.** Open `server/src/remote-service/connectors/library/<connector>/`; read the connector code to learn its **auth method** (`user_provided_params` → which `--param`s; `oauth`; or UI-login-only) and define the `CB_<SVC>_*` vars it needs (token vs OAuth client/secret/refresh vs login email/password). Note its DC/region param if multi-region.
+**1. Resolve the connector + its env vars.** Open `server/src/remote-service/connectors/library/<connector>/`; read the connector code to learn its **auth method** (`user_provided_params` → which `--param`s; `oauth`; or UI-login-only) and define the `<SVC>_*` vars it needs (token vs OAuth client/secret/refresh vs login email/password). Note its DC/region param if multi-region.
 
-**2. Env-file preflight (fail fast).** `bash $H require CB_<SVC>_...` for whatever should already exist. If `.env.connector-build` is **missing**, stop and tell the developer to copy it by hand from the 1Password note `connector-build secrets` (the helper prints where), `/read`, and wait. If the account simply isn't provisioned yet, that's expected — continue to provision it.
+**2. Store preflight (fail fast).** `bash $H require <svc> <SVC>_...` for whatever should already exist. If the helper says it **can't read Secret Manager**, stop and tell the developer to fix their gcloud login (their own whalesync.com login or their read-only laptop service account), `/read`, and wait. If it says there's **no `<svc>` secret**, the account isn't provisioned yet — that's expected, continue to provision it. If it says the `<svc>` secret **exists but the vars are missing**, it is probably someone else's account (Whalesync keeps its own test accounts here, e.g. `asana`, `mailchimp`): read its header (`gcloud secrets versions access latest --secret=<svc> --project=whalesync-test-credentials --billing-project=whalesync-test-credentials | grep '^#'`). Unless it describes this exact account, use `<svc>-scratch` as the secret name for every later step, **before** any `gen-password` / `set-secret` — those write silently and would overwrite that account's keys.
 
 **3. Browser preflight — try the 3-rung ladder, use the first that works:** (1) **gstack headless** (`$B connect`), (2) **gstack headed** (`$B connect --headed`), (3) **Chrome extension** (`mcp__claude-in-chrome__*`, user-connected via `/connect-chrome`). All need the machine awake. Fall through the ladder; don't let one option's flakiness stop you. Full ladder + gstack recovery (single clean daemon, JS form-submit over `$B click`, kill stray daemons): [connector-build-execute's preflight](/.claude/skills/connector-build-execute/SKILL.md). If a saved session already exists, `$B state load <connector>` and `$B goto` the app — if you land authenticated, the account is already provisioned; skip to step 6 (build/verify the login script). If the coworker has **no** browser set up at all, point them at **`/connector-build-onboarding`**.
 
 **4. Register the account — autonomously.** `$B goto` the service **sign-up** page. Fill the form (`testing@whalesync.com`, a company name, etc.) with `$B fill`/`$B click`.
-   - **At the password step:** `bash $H gen-password CB_<SVC>_PASSWORD`, then `bash $H enter-secret CB_<SVC>_PASSWORD '<pw-selector>' ['<confirm-selector>']`. The agent never sees the password. Submit.
+   - **At the password step:** `bash $H gen-password <svc> <SVC>_PASSWORD`, then `bash $H enter-secret <svc> <SVC>_PASSWORD '<pw-selector>' ['<confirm-selector>']`. The agent never sees the password. Submit.
    - **Pause only** if an emailed confirmation link/code is required (or, rarely, a captcha/card): post the ask, `/read`, wait. Otherwise keep going.
-   - Capture account/org id, plan, and **trial-end date** (if any) → `printf … | bash $H set-secret CB_<SVC>_ACCOUNT_ID` etc.
+   - Capture account/org id, plan, and **trial-end date** (if any) → `printf … | bash $H set-secret <svc> <SVC>_ACCOUNT_ID` etc.
 
 **5. Get the API / OAuth credentials — PUSH ALL THE WAY THROUGH to the key.** **Onboarding is your job, not a blocker.** A fresh account usually drops you into an onboarding flow (welcome modal → name → use-case radios → intro video/tour) that *gates the Settings page* — if you try Settings before finishing it, you bounce to login. **Click through every step** until you land in the real app, then open the developer/API settings. Use JS clicks (`$B js "[...document.querySelectorAll('button,[role=radio]')].find(e=>/let.s go|next|continue|skip|finish/i.test(e.innerText||''))?.click()"`), advancing step by step. **Do not stop at any soft blocker** — onboarding, cookie/consent banners, intro tours, "create your first project" nudges are all things you push past. **Only an *absolutely unbeatable* blocker pauses the run:** an email link you can't read, a captcha, hard 2FA, or a forced credit card.
-   - Create/copy the API token (or register the OAuth client / mint a refresh token). **The token is often a readonly `password` input — read its `.value` via `$B js` and pipe straight to `set-secret`, never printing it:** return `'TKN:'+input.value`, then `grep -oE 'TKN:[^[:space:]]+' | sed 's/^TKN://'` into `set-secret CB_<SVC>_API_TOKEN`.
-   - **Validate before declaring victory:** `curl` the service API with the stored token and assert HTTP 200 (`( set -a; source connector-build/.env.connector-build; set +a; curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CB_<SVC>_API_TOKEN" <api-url> )`). A working token is the proof the whole run succeeded. (Watch for deprecated API versions — e.g. Todoist's REST v2 / sync v9 now return 410; the live base is `api.todoist.com/api/v1`.)
+   - Create/copy the API token (or register the OAuth client / mint a refresh token). **The token is often a readonly `password` input — read its `.value` via `$B js` and pipe straight to `set-secret`, never printing it:** return `'TKN:'+input.value`, then `grep -oE 'TKN:[^[:space:]]+' | sed 's/^TKN://'` into `set-secret <svc> <SVC>_API_TOKEN`.
+   - **Validate before declaring victory:** `curl` the service API with the stored token and assert HTTP 200 (`bash $H run <svc> -- sh -c 'curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $<SVC>_API_TOKEN" <api-url>'`). A working token is the proof the whole run succeeded. (Watch for deprecated API versions — e.g. Todoist's REST v2 / sync v9 now return 410; the live base is `api.todoist.com/api/v1`.)
    - For OAuth-redirect connectors, the credential proven later is the connection through the web app — record client id/secret here.
 
 **6. Build the login script** at `server/src/remote-service/connectors/library/<connector>/test/login.sh` (template below): it sources the helper, goes to the login page, enters email + password via the no-echo helper, submits, confirms the authenticated UI, and `$B state save <connector>`. Add a `logout` path.
@@ -76,13 +78,11 @@ You locate the password/email fields (you *can* see the form), pass their select
 **7. Verify login/logout a couple of times.** Prove the automation round-trips: `bash login.sh logout` → confirm you hit a login wall → `bash login.sh` → confirm authenticated UI → repeat **at least twice**. If a cycle fails, fix the selectors/URL in the script and re-verify. This is the gate that earns "victory".
 
 **8. Register it everywhere:**
-   - Add/update the connector's row in [`connector-build/provisioned-connectors.md`](/connector-build/provisioned-connectors.md) — fill the **Test env vars** column with the `CB_<SVC>_*` names.
-   - `bash $H update-sample CB_<SVC>_...` to add the var names to `.env.connector-build.sample`.
-   - Record the account in the connector's `STATE.md` **Test account** section (account id, plan/trial, session name, where creds live — never the secret).
-   - (1Password is a **human** step — you can't write to it. Remind them at the end, per step 9.)
+   - **Describe the account in the secret itself**, so whoever finds it in the store (including Whalesync teammates) can replace the key without asking: `bash $H set-header <svc>` with comment lines on stdin — which account it is and its login, where to generate a new key, and when it expires (trial end, or "never"). Comments only; never a value.
+   - Add/update the connector's row in [`connector-build/provisioned-connectors.md`](/connector-build/provisioned-connectors.md) — fill the **Test env vars** column with the `<SVC>_*` names (they live in secret `<svc>`). If the secret got a suffix because the plain name was taken, start the cell with it (`attio-scratch: ATTIO_API_TOKEN`) — `/connector-build-execute` reads the secret name from there.
+   - Record the account in the connector's `STATE.md` **Test account** section (account id, plan/trial, session name, where creds live: secret `<svc>` in `whalesync-test-credentials` — never the secret).
 
-**9. Declare victory.** Post a short summary — account provisioned, env vars stored, login script built + verified N×, provisioned-connectors row + sample + STATE.md updated. **End with the secrets reminder** (the agent cannot write to 1Password):
-> "Please add the new `CB_<SVC>_*` secrets to the **bottom** of the 1Password note *"connector-build secrets"* so the team gets them. They're already in your local `connector-build/.env.connector-build`."
+**9. Declare victory.** Post a short summary — account provisioned, `<svc>` secret stored (with its header), login script built + verified N×, provisioned-connectors row + STATE.md updated. There is no hand-off step for the secrets: the store is already shared with the team.
 
 Then invoke `/read`. The connector is now ready for `/connector-build-execute <connector>`.
 
@@ -90,8 +90,8 @@ Then invoke `/read`. The connector is now ready for `/connector-build-execute <c
 
 ```bash
 #!/usr/bin/env bash
-# Automated login for the <connector> test account. Reads creds from .env.connector-build
-# via the credential helper — never echoes the password.
+# Automated login for the <connector> test account. Reads creds from the shared test-credentials
+# store (secret `<svc>`) via the credential helper — never echoes the password.
 #   bash login.sh                            # headless default daemon
 #   CB_BROWSE_FLAGS=--headed bash login.sh   # drive the visible (headed) daemon
 #   bash login.sh logout
@@ -100,7 +100,8 @@ ROOT="$(git rev-parse --show-toplevel)"
 H="$ROOT/.claude/skills/connector-build-prepare/lib/credential-helpers.sh"
 B="$(bash "$H" browse-bin)"
 BF="${CB_BROWSE_FLAGS:-}"                    # passed through to every $B call (e.g. --headed)
-SVC=<SVC>                                    # e.g. CLICKUP
+ACCOUNT=<svc>                                # the store secret, e.g. clickup
+SVC=<SVC>                                    # its variable prefix, e.g. CLICKUP
 LOGIN_URL="https://app.<service>.com/login"
 APP_URL="https://app.<service>.com/app"
 
@@ -110,13 +111,12 @@ if [ "${1:-}" = "logout" ]; then
   echo "logged out"; exit 0
 fi
 
-bash "$H" require "CB_${SVC}_LOGIN_EMAIL" "CB_${SVC}_PASSWORD" >/dev/null
-email="$(grep -E "^CB_${SVC}_LOGIN_EMAIL=" "$ROOT/connector-build/.env.connector-build" | sed -E "s/^[^=]+='?([^']*)'?\$/\1/")"
+bash "$H" require "$ACCOUNT" "${SVC}_LOGIN_EMAIL" "${SVC}_PASSWORD" >/dev/null
 
 "$B" goto "$LOGIN_URL" $BF >/dev/null; sleep 3
-"$B" fill 'input[type=email]' "$email" $BF >/dev/null
-# password supplied by the helper from the env file — never printed here
-bash "$H" enter-secret "CB_${SVC}_PASSWORD" 'input[type=password]'
+bash "$H" enter-secret "$ACCOUNT" "${SVC}_LOGIN_EMAIL" 'input[type=email]'
+# password supplied by the helper from the store — never printed here
+bash "$H" enter-secret "$ACCOUNT" "${SVC}_PASSWORD" 'input[type=password]'
 # submit via JS — $B click can hang and reset the page to about:blank
 "$B" js "document.querySelector('button[type=submit]')?.click()" $BF >/dev/null
 sleep 6
@@ -128,12 +128,12 @@ case "$url" in
 esac
 ```
 
-Fill the `<...>` placeholders from the real signup/login pages while you have them open (record the URLs as UI quick-links in `STATE.md`). Keep the email read inline (it's not secret); the password only ever flows through the helper.
+Fill the `<...>` placeholders from the real signup/login pages while you have them open (record the URLs as UI quick-links in `STATE.md`). Both the email and the password flow through the helper, so the script never needs to read the store itself.
 
 ## Notes
 
-- `user_provided_params` (API-token) connectors often need **no browser login at all** to be tested — the login script is still worth building if seeding/verifying in the UI is useful, but the critical path is just the token in the env file. OAuth and login-only services are where the session layer + login script matter most.
-- One account per service by default. For a second account, suffix the session and vars (`<connector>-b`, `CB_<SVC>_B_*`).
+- `user_provided_params` (API-token) connectors often need **no browser login at all** to be tested — the login script is still worth building if seeding/verifying in the UI is useful, but the critical path is just the token in the store. OAuth and login-only services are where the session layer + login script matter most.
+- One account per service by default. For a second account, suffix the session and the secret (`<connector>-b` for both); its variables keep the plain `<SVC>_` prefix, since each secret holds one account.
 - This skill **sets up**; [`/connector-build-execute`](/.claude/skills/connector-build-execute/SKILL.md) **tests**. `/connector-build-execute`'s first task is a fast env-var preflight against the candidates row; if vars are missing it points the developer back here.
 
 ## Cookie / consent banners — dismiss FIRST (they intercept clicks)
@@ -165,8 +165,7 @@ Everything connector-build lives in the top-level **`connector-build/`** folder 
 | `connector-build/provisioned-connectors.md` | **the build-ready registry** — finished provisioning, secrets stored, token validated; `/connector-build-execute` can begin |
 | `connector-build/provisioning-notes/<service>.md` | **one doc per provisioned service** — the detailed record (account, creds, validated endpoint, gates, quirks). Write this when you finish a service. |
 | `connector-build/provisioning-runs/YYYY-MM-DD-provisioning-report-<person>-<success>-<all>.md` | **one run report per session** (e.g. `…-ivan-2-2.md` = 2 of 2 succeeded) |
-| `connector-build/.env.connector-build` | the secret store (gitignored) · `.env.connector-build.sample` is its committed template |
-| `connector-build/test-accounts-mechanism.md` | the secret-store / login-script / Gmail mechanism doc |
+| `connector-build/test-accounts-mechanism.md` | the secret-store / login-script / Gmail mechanism doc (secrets themselves live in the shared Secret Manager store, not the repo) |
 
 **Pick the next service from `queued-connectors.md`** (Human Picks first). **When you finish provisioning a service:** (1) **move it out of `queued-connectors.md` into `provisioned-connectors.md`** (with env vars + gate axes), (2) write `connector-build/provisioning-notes/<service>.md`, and (3) at end of session write the run report. **Lifecycle:** when `/connector-build-execute <service>` later starts the real build, it **copies `connector-build/provisioning-notes/<service>.md` into the connector's library folder as `provisioning-notes.md`** (kept there — it's useful if the account ever needs re-provisioning), **lifts only build-useful details into `STATE.md`** (STATE.md is read on every build, so keep it lean — don't dump the whole provisioning doc in), and **removes the central copy** — so a service is in exactly one place: "provisioned, awaiting build" (central `provisioning-notes/`) → or "building/built" (its own folder).
 
@@ -203,4 +202,4 @@ Don't fall back to a personal inbox — wait for `gmail-whalesync`.
 3. Enter the code: **JS-focus the first OTP box, then `$B type "<CODE>"`** (auto-distributes across the boxes) — `$B fill`/`$B click` are unreliable here; `$B type` into a focused field works. Click Verify.
 4. Continue the run. Only fall back to a human if no email arrives within a timeout, or a captcha/2FA also blocks.
 
-This is what makes **fully hands-off batch runs** possible. Note some flows (Atlassian) verify the **code first and set the password AFTER** — so gen+enter `CB_<SVC>_PASSWORD` on the post-code step, not before.
+This is what makes **fully hands-off batch runs** possible. Note some flows (Atlassian) verify the **code first and set the password AFTER** — so gen+enter `<SVC>_PASSWORD` on the post-code step, not before.

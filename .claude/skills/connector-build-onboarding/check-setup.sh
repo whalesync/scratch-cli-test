@@ -7,7 +7,7 @@
 #
 # Assumes the dev environment (repo, yarn install, Docker, DB+migrations, server,
 # scratchmd build, node 22) is ALREADY set up — this only checks the connector-build
-# extras (browser + secrets file).
+# extras (browser + access to the shared secrets store).
 set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 H="$ROOT/.claude/skills/connector-build-prepare/lib/credential-helpers.sh"
@@ -16,14 +16,15 @@ warn(){ printf '  \033[33m⚠️  %s\033[0m\n' "$1"; }
 bad(){  printf '  \033[31m❌ %s\033[0m\n' "$1"; }
 bold(){ printf '\n\033[1m%s\033[0m\n' "$1"; }
 
-bold "1. Secrets file (connector-build/.env.connector-build)"
-ENVF="$ROOT/connector-build/.env.connector-build"
-if [ -f "$ENVF" ]; then
-  ok "present — secrets will be read/written here"
+bold "1. Secrets store (Secret Manager, GCP project whalesync-test-credentials)"
+if ! command -v gcloud >/dev/null 2>&1; then
+  bad "gcloud not installed — the credential helper reads and writes secrets through it."
+elif accounts="$(bash "$H" list 2>/dev/null)"; then
+  ok "readable as $(gcloud config get-value account 2>/dev/null) — $(printf '%s\n' "$accounts" | grep -c .) test account(s) stored"
 else
-  warn "missing — building a NEW connector doesn't need existing secrets, but the file must exist to write into."
-  echo "      Fix (either): copy the shared note from 1Password \"connector-build secrets\","
-  echo "      or create an empty one:  cp \"$ROOT/connector-build/.env.connector-build.sample\" \"$ENVF\""
+  bad "can't list the store."
+  echo "      Fix: sign gcloud in as your whalesync.com login or your read-only laptop service account"
+  echo "      (check with 'gcloud auth list'), then re-run this check."
 fi
 
 bold "2. gstack browser (option A — headless + headed)"

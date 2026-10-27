@@ -6,13 +6,13 @@
 **Provisioned:** 2026-06-25 by ivan · **Run:** [2026-06-25-provisioning-report-ivan-4-8](../provisioning-runs/2026-06-25-provisioning-report-ivan-4-8.md)
 
 ## Account
-- Login email: `testing@whalesync.com` (`CB_SHORTCUT_LOGIN_EMAIL`)
-- Password: `CB_SHORTCUT_PASSWORD` (generated, agent-unseen)
+- Login email: `testing@whalesync.com` (`SHORTCUT_LOGIN_EMAIL`)
+- Password: `SHORTCUT_PASSWORD` (generated, agent-unseen)
 - Workspace slug: `scratch-qa`
 
-## Credentials (in `.env.connector-build`)
-- `CB_SHORTCUT_API_TOKEN` — header `Shortcut-Token: <token>`. Created at Settings → API Tokens (modal: name + permissions).
-- `CB_SHORTCUT_LOGIN_EMAIL`, `CB_SHORTCUT_PASSWORD`
+## Credentials (secret `shortcut` in the shared test-credentials store)
+- `SHORTCUT_API_TOKEN` — header `Shortcut-Token: <token>`. Created at Settings → API Tokens (modal: name + permissions).
+- `SHORTCUT_LOGIN_EMAIL`, `SHORTCUT_PASSWORD`
 
 ## Validation
 `GET https://api.app.shortcut.com/api/v3/member` with `Shortcut-Token: <token>` → **HTTP 200**.

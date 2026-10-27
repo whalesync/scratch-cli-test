@@ -7,7 +7,7 @@
 > Every ✅ needs evidence ids (workbook / sync / routine-run / report path). No evidence, no ✅.
 
 - Umbrella Linear issue: DEV-____ (`Live Export QA: <SOURCE> source`, project [MAJOR] Live Export)
-- Credentials: `local/audit-creds/<source>.env` (burner account: <which account/workspace>)
+- Credentials: shared secret `<name>` in GCP project `whalesync-test-credentials` → `local/audit-creds/<source>.env` (burner account: <which account/workspace>)
 - OAuth-only? <no / yes — connection provisioned via dusky UI, workbook wkb_…, connection coa_…>
 - Seed script: `tools/live-export-audit/seeds/<source>/`
 - Torture tables: <names + which value classes each covers>

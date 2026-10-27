@@ -10,7 +10,7 @@ account on the service, then builds + exercises the connector end-to-end.
    `scratchmd` built, server runnable, node 22.)*
 2. **Pick the next connector** from [`queued-connectors.md`](./queued-connectors.md) — **Human Picks first, but skip `research pending` rows for an unattended run** (start with a researched, free-tier REST service like **ClickUp / Jira / Asana** — see the first-pick rule at the top of that doc).
 3. **`/connector-build-prepare <connector>`** — provisions a free test account, stores creds in
-   `connector-build/.env.connector-build`, validates the API token. The run **tells you up front**
+   the shared test-credentials store (Secret Manager), validates the API token. The run **tells you up front**
    whether it'll need you for a gate (see below).
 4. **`/connector-build-execute <connector>`** — builds + tests the connector against that account.
 
@@ -22,9 +22,13 @@ The first thing a prepare/execute run tells you:
 Runs need the **machine awake** (a browser is always driven) — that's a requirement.
 
 ## Secrets
-- Live in `connector-build/.env.connector-build` (gitignored). Building a *new* connector needs no
-  existing secrets — but **after** provisioning, paste your new `CB_<SVC>_*` lines to the **bottom**
-  of the 1Password note **"connector-build secrets"** so the team gets them.
+- Live in Secret Manager in the GCP project **`whalesync-test-credentials`**, one secret per test
+  account, shared with the whole team (and the Whalesync repo). Agents read and write them through
+  `.claude/skills/connector-build-prepare/lib/credential-helpers.sh`, which never prints a value.
+  Your gcloud login (or your read-only laptop service account) is all the access you need.
+- Accounts provisioned before 2026-10-27 are still only in the 1Password note "connector-build
+  secrets" until someone imports them; see
+  [`test-accounts-mechanism.md`](./test-accounts-mechanism.md#moving-an-account-in-from-the-old-1password-note).
 - The `gmail-whalesync` OAuth (set up during onboarding) is in 1Password **"Gmail Auto-Label Desktop OAuth"**.
 
 ## The docs

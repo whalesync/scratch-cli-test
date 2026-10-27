@@ -13,7 +13,7 @@
 - Gong **partner developer instance** (Gong has NO self-serve signup — sales-led; instance requested via the collective.gong.io form 2026-07-30, granted 2026-08-05). Full record: [provisioning-notes.md](./provisioning-notes.md).
 - Login: ryder@whalesync.com via **Google SSO only** — no password login exists, so browser automation is impossible; all testing is **API-only** (sufficient for a read-only connector).
 - Users in instance: Ryder Ziola + Curtis Fonger. One workspace: "Initial workspace" (`1299375510811165803`).
-- Credentials: `CB_GONG_ACCESS_KEY` / `CB_GONG_ACCESS_KEY_SECRET` / `CB_GONG_API_BASE_URL` in `connector-build/.env.connector-build`, mirrored in `server/.env.integration` (`GONG_*`) and Ryder's `~/spinner/local/audit-creds/gong.env`. Never the key itself here.
+- Credentials: `GONG_ACCESS_KEY` / `GONG_ACCESS_KEY_SECRET` / `GONG_API_BASE_URL` in secret `gong` of the shared test-credentials store (GCP project `whalesync-test-credentials`; not yet imported from the old `connector-build/.env.connector-build` as of 2026-10-27), mirrored in `server/.env.integration` (`GONG_*`) and Ryder's `~/spinner/local/audit-creds/gong.env`. Never the key itself here.
 - Scratch harness: workbook `wkb_TEfntfUZpz` (`gong-build`), connection `coa_QtMW6OLR7m`, local clone `~/scratch-workspaces/gong-build`.
 
 ## Objects / entity types

@@ -6,12 +6,12 @@
 **Provisioned:** 2026-06-25 by ivan · **Run:** [2026-06-25-provisioning-report-ivan-4-8](../provisioning-runs/2026-06-25-provisioning-report-ivan-4-8.md)
 
 ## Account
-- Login email: `testing@whalesync.com` (`CB_TEABLE_LOGIN_EMAIL`)
-- Password: `CB_TEABLE_PASSWORD` (generated, agent-unseen)
+- Login email: `testing@whalesync.com` (`TEABLE_LOGIN_EMAIL`)
+- Password: `TEABLE_PASSWORD` (generated, agent-unseen)
 
-## Credentials (in `.env.connector-build`)
-- `CB_TEABLE_API_TOKEN` — Personal Access Token, `Authorization: Bearer <token>`. Created in account settings; the form gates on **scopes + resource access**.
-- `CB_TEABLE_LOGIN_EMAIL`, `CB_TEABLE_PASSWORD`
+## Credentials (secret `teable` in the shared test-credentials store)
+- `TEABLE_API_TOKEN` — Personal Access Token, `Authorization: Bearer <token>`. Created in account settings; the form gates on **scopes + resource access**.
+- `TEABLE_LOGIN_EMAIL`, `TEABLE_PASSWORD`
 
 ## Validation
 `GET https://app.teable.io/api/auth/user` with `Authorization: Bearer <token>` → **HTTP 200**.

@@ -4,15 +4,17 @@
 # (non-OAuth) connector, so the desktop QA has real data to download / edit /
 # publish. OAuth connectors need a browser — out of scope here.
 #
-# API keys come from server/.env.integration; the Scratch token from
-# scratch-desktop/.env.e2e. Everything is created server-side on test-api against
-# the test account; the desktop app then downloads the workspace.
+# API keys come from server/.env.integration, or from the shared test-credentials store
+# (Secret Manager, GCP project whalesync-test-credentials) when KEY is written <secret>:<VAR>.
+# The Scratch token comes from scratch-desktop/.env.e2e. Everything is created server-side on
+# test-api against the test account; the desktop app then downloads the workspace.
 #
 # Usage:
-#   .claude/skills/qa-desktop-app/setup-connection.sh <SERVICE> <KEY_ENV_VAR> [workspace_name] [table_id...]
+#   .claude/skills/qa-desktop-app/setup-connection.sh <SERVICE> <KEY_ENV_VAR | secret:VAR> [workspace_name] [table_id...]
 #
 # Examples (SERVICE must be one of `scratchmd connections add --service`'s enum):
 #   setup-connection.sh AIRTABLE  AIRTABLE_API_KEY
+#   setup-connection.sh AIRTABLE  airtable:AIRTABLE_PAT "QA Airtable (shared store)"
 #   setup-connection.sh PIPEDRIVE PIPEDRIVE_API_KEY "QA Pipedrive"
 #   setup-connection.sh WEBFLOW   WEBFLOW_API_KEY   "QA Webflow" siteId,collectionId
 #
@@ -22,8 +24,8 @@
 # =============================================================================
 set -euo pipefail
 
-SERVICE="${1:?usage: setup-connection.sh <SERVICE> <KEY_ENV_VAR> [workspace_name] [table_id...]}"
-KEY_VAR="${2:?need the env var name in server/.env.integration, e.g. AIRTABLE_API_KEY}"
+SERVICE="${1:?usage: setup-connection.sh <SERVICE> <KEY_ENV_VAR | secret:VAR> [workspace_name] [table_id...]}"
+KEY_VAR="${2:?need the env var name in server/.env.integration (e.g. AIRTABLE_API_KEY) or a store reference (e.g. airtable:AIRTABLE_PAT)}"
 shift 2
 WS_NAME="${1:-QA $SERVICE}"; [ $# -gt 0 ] && shift || true
 EXPLICIT_TABLES=("$@")
@@ -32,7 +34,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 B="$ROOT/scratch-git-2/target/debug/scratchmd"
 [ -x "$B" ] || { echo "Build the CLI first:  (cd scratch-git-2 && cargo build --bin scratchmd)"; exit 1; }
 export SCRATCH_URL="${SCRATCH_URL:-https://test-api.scratch.md}"
-# Isolate CLI creds so we don't clobber the user's real ~/.scratchmd login.
+# Isolate CLI creds so we don't clobber the user's real ~/.scratchmd login. gcloud still needs the
+# real HOME (its login lives in ~/.config/gcloud) for keys read from the shared store.
+REAL_HOME="$HOME"
 export HOME="$ROOT/.context/qa/cli-home"; mkdir -p "$HOME"
 
 # Sourcing strips the single-quotes the .env files wrap values in.
@@ -40,7 +44,15 @@ set -a
 [ -f "$ROOT/server/.env.integration" ] && . "$ROOT/server/.env.integration"
 [ -f "$ROOT/scratch-desktop/.env.e2e" ] && . "$ROOT/scratch-desktop/.env.e2e"
 set +a
-KEY="${!KEY_VAR:-}"; [ -n "$KEY" ] || { echo "No \$$KEY_VAR in server/.env.integration"; exit 1; }
+if [[ "$KEY_VAR" == *:* ]]; then
+  # The credential helper exports the secret's vars into printenv only; the key is captured, never shown.
+  H="$ROOT/.claude/skills/connector-build-prepare/lib/credential-helpers.sh"
+  KEY="$(HOME="$REAL_HOME" bash "$H" run "${KEY_VAR%%:*}" -- printenv "${KEY_VAR#*:}" || true)"
+  [ -n "$KEY" ] || { echo "No ${KEY_VAR#*:} in the '${KEY_VAR%%:*}' secret of the shared store (see the error above, or: bash $H names ${KEY_VAR%%:*})"; exit 1; }
+else
+  KEY="${!KEY_VAR:-}"
+  [ -n "$KEY" ] || { echo "No \$$KEY_VAR in server/.env.integration. If it's in the shared store, pass <secret>:<VAR> instead (list them: bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh list)"; exit 1; }
+fi
 TOKEN="${TESTING_ACCOUNT_API_KEY:-}"; [ -n "$TOKEN" ] || { echo "No TESTING_ACCOUNT_API_KEY in scratch-desktop/.env.e2e"; exit 1; }
 EMAIL="${TESTING_ACCOUNT_EMAIL:-testing@whalesync.com}"
 

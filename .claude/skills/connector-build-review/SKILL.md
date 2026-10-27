@@ -14,7 +14,7 @@ This exists because the #1 failure mode of `/connector-build-execute` is **self-
 The main build agent runs you as a **separate clean subagent and waits** for your verdict. Then it: (1) applies your fixes, (2) **re-checks your claims with its own live operations** (you can be wrong too — an over-eager reviewer is as bad as an over-eager builder), and (3) spawns **another fresh `connector-build-review`** in a clean session. This repeats until a review round returns **PASS** with no real findings. So: be specific and reproducible (every finding must be something the main agent can independently re-run), and don't invent problems to look busy — a clean connector earning a fast PASS is a good outcome.
 
 ## What you have
-Read-only-of-intent, but you DO run live checks: you have the repo, `scratchmd`, the connector's creds in `connector-build/.env.connector-build`, the running server (ask/confirm which), and the service's own API. **Verify against the SERVICE, not a Scratch pull** (a pull replays accepted patches over main and masks failed pushes).
+Read-only-of-intent, but you DO run live checks: you have the repo, `scratchmd`, the connector's creds in the shared test-credentials store (secret `<svc>`; hand them to a command with `bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh run <svc> -- …`), the running server (ask/confirm which), and the service's own API. **Verify against the SERVICE, not a Scratch pull** (a pull replays accepted patches over main and masks failed pushes).
 
 ## The audit — go in this order
 

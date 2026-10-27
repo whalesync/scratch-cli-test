@@ -1,6 +1,6 @@
 ---
 name: test-live-export
-description: Audit ONE Live Export source service end-to-end against one or more real destinations — `/test-live-export <source> <dest1>[,<dest2>…]` (e.g. `/test-live-export HUBSPOT AIRTABLE,SUPABASE`). Drives the production sync-draft flow headlessly via tools/live-export-audit/audit.mjs against the LOCAL spinner server, seeds torture data ONCE through the source service's own API, then loops the destinations sequentially (one workbook each), verifies published data on each destination's own API, runs CRUD + steady-state passes, and triages every finding to the LAYER that owns the fix (default View vs connector transport vs shared transform picker vs destination pack vs core engine) — using cross-destination reproduction as the [dest-pack]-vs-upstream discriminator. Files Linear issues in the [MAJOR] Live Export project with the `live-export-qa` label. Preflights all secrets/servers UP FRONT for EVERY requested destination and stops with an explicit checklist if anything is missing, so it can run unsupervised. Resumable per source service via server/src/remote-service/connectors/library/<source>/LIVE_EXPORT_AUDIT.md.
+description: Audit ONE Live Export source service end-to-end against one or more real destinations — `/test-live-export <source> <dest1>[,<dest2>…]` (e.g. `/test-live-export HUBSPOT AIRTABLE,SUPABASE`). Drives the production sync-draft flow headlessly via tools/live-export-audit/audit.mjs against the LOCAL spinner server, seeds torture data ONCE through the source service's own API, then loops the destinations sequentially (one workbook each), verifies published data on each destination's own API, runs CRUD + steady-state passes, and triages every finding to the LAYER that owns the fix (default View vs connector transport vs shared transform picker vs destination pack vs core engine) — using cross-destination reproduction as the [dest-pack]-vs-upstream discriminator. Files Linear issues in the [MAJOR] Live Export project with the `live-export-qa` label. Preflights all secrets/servers UP FRONT for EVERY requested destination, fills missing test-account credentials from the shared `whalesync-test-credentials` Secret Manager store, and stops with an explicit checklist only for what is still missing, so it can run unsupervised. Resumable per source service via server/src/remote-service/connectors/library/<source>/LIVE_EXPORT_AUDIT.md.
 user-invocable: true
 ---
 
@@ -38,13 +38,16 @@ Run the harness preflight first — it checks everything and prints a fix-it che
 node tools/live-export-audit/audit.mjs --source <SOURCE> --dest <DEST> --no-run --max-tables 0 --report /tmp/preflight.json
 ```
 
-Requirements it enforces (echo this checklist to the user if anything is missing, then STOP —
-do not begin a half-configured run):
+Requirements it enforces. A missing service credential is usually already in the shared store
+(see [Test-account credentials](#test-account-credentials-the-shared-store) below): fill those in
+and re-run the preflight first. Echo whatever is *still* missing to the user as a checklist, then
+STOP — do not begin a half-configured run:
 
 1. **Local spinner server** on `http://localhost:3010` (or `SPINNER_API_URL`).
 2. **API token** in `local/audit-creds/_spinner.env` → `SPINNER_API_TOKEN=...` (mint via
    `POST /users/current/api-token`, or copy a USER token from the local scratchpaper DB's
    `"APIToken"` table). `local/` is gitignored — credentials never land in git or in this doc.
+   This token is for your local server only; it never goes in the shared store.
 3. **Source credentials** in `local/audit-creds/<source>.env`, keys named exactly after the
    connector's `userProvidedParams` (the preflight prints the required field names from
    `GET /connectors/metadata` when the file is missing). **Burner account only** — this skill
@@ -60,6 +63,70 @@ do not begin a half-configured run):
    connection. Say this explicitly and stop; it is the one human step this skill cannot absorb.
 6. **Linear MCP** available (for filing). If not, still run the audit; findings queue in the
    audit doc with a `⚠ not yet filed` marker.
+
+### Test-account credentials: the shared store
+
+Credentials for our test accounts live in Secret Manager in the **`whalesync-test-credentials`**
+GCP project, shared with the Whalesync repo (its `docs/test-credentials.md` is the full guide).
+Your read-only laptop service account can read and write it. Always pass `--billing-project` as
+well as `--project`, or gcloud bills the call to the wrong project and fails.
+
+For each service the preflight reports missing, look through the credential helper, which never
+prints a value (a raw `gcloud secrets versions access` prints every value in the secret, passwords
+included, so don't use it to read):
+
+```bash
+H=.claude/skills/connector-build-prepare/lib/credential-helpers.sh
+bash $H list                    # every stored account
+bash $H names <name>            # a secret's variable names, never the values
+gcloud secrets versions access latest --secret=<name> --project=whalesync-test-credentials \
+  --billing-project=whalesync-test-credentials | grep '^#'   # its comment lines only
+```
+
+- **One secret per test account**, named after the service in lowercase (`airtable`, `square`,
+  `attio`). A second account for the same service has a suffix (`hubspot-oauth`). Names follow
+  Whalesync's connector registry, which can differ from our enum (`sheets` for `GOOGLE_SHEETS`),
+  so match on the service, not the exact string.
+- **The value is a `.env` file**: comment lines describing the account (login, where to get a new
+  key, expiry), then variables named for Whalesync's connector driver, prefixed with the service
+  in capitals (`AIRTABLE_PAT`, `SQUARE_SANDBOX_ACCESS_TOKEN`). They are not named after our
+  connector's fields.
+- **Write `local/audit-creds/<service>.env`** (mode 600) with those values under the connector's
+  `userProvidedParams` keys, plus harness extras such as `DEST_PARENT_ID`. Let `run` hand the values
+  straight to the file so they never pass through you:
+  `bash $H run airtable -- sh -c 'umask 077; printf "apiKey=%s\n" "$AIRTABLE_PAT" > local/audit-creds/airtable.env'`.
+  Copy only keys the connector takes: the harness sends the whole file as the connection's params,
+  and some connectors (MYSQL) reject unknown keys.
+- Record the secret name in the audit doc's Credentials line. Never put a secret value in chat,
+  the audit doc, a seed script, or a Linear issue.
+
+**Save new credentials back.** When the user gives you a credential that isn't in the store (a new
+burner account, or a renewed trial), save it before you continue, so the next run in any workspace
+finds it. Save through the helper, one variable at a time:
+
+```bash
+printf '%s' '<value>' | bash $H set-secret <name> <SERVICE>_<FIELD>
+```
+
+`set-secret` creates the secret if needed and otherwise replaces only that variable, keeping the
+others and the comment lines. Don't upload a whole file over an existing secret
+(`test_credentials.sh put` or `gcloud secrets versions add`): that drops every variable the file
+doesn't repeat, and Whalesync's tests read the same secret.
+
+Follow the store's format, because Whalesync's tools read the same secrets:
+
+- For a new secret, write comment lines with `bash $H set-header <name>` (on stdin): which account
+  it is, how to get a new key, and when it expires. Add a line mapping the variables to the
+  connector's fields, so the next run doesn't have to work it out (the `square` secret has
+  `# Scratch connection: paste SQUARE_SANDBOX_ACCESS_TOKEN as the Square "Access Token"`).
+- Name every variable `<SERVICE>_…` in capitals (Whalesync also uses `IAPP_<SERVICE>_…`). The
+  store's tools skip any other name, and the helper refuses it.
+- If the service already has a secret, keep its variable names. Don't create a second secret for
+  the same account. If its expiry changed, keep the other comment lines: `set-header` replaces the
+  whole leading comment block, so pipe the existing one back with only the `Expires` line edited:
+  `gcloud secrets versions access latest --secret=<name> --project=whalesync-test-credentials --billing-project=whalesync-test-credentials | awk '!/^[[:space:]]*(#|$)/{exit} {print}' | sed 's/^# Expires:.*/# Expires: <new date>/' | bash $H set-header <name>`.
+- Store test accounts only. Never store a production or customer credential, or the password of a
+  whalesync.com Google account.
 
 ## Phase 1 — Recon (read, don't run)
 

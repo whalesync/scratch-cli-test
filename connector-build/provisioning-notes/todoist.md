@@ -6,12 +6,12 @@
 **Provisioned:** 2026-06-25 by ivan
 
 ## Account
-- Login email: `testing@whalesync.com` (`CB_TODOIST_LOGIN_EMAIL`)
-- Password: `CB_TODOIST_PASSWORD` (generated, agent-unseen)
+- Login email: `testing@whalesync.com` (`TODOIST_LOGIN_EMAIL`)
+- Password: `TODOIST_PASSWORD` (generated, agent-unseen)
 
-## Credentials (in `.env.connector-build`)
-- `CB_TODOIST_API_TOKEN` — Bearer token, from Settings → Integrations → Developer → API token.
-- `CB_TODOIST_LOGIN_EMAIL`, `CB_TODOIST_PASSWORD`
+## Credentials (secret `todoist` in the shared test-credentials store)
+- `TODOIST_API_TOKEN` — Bearer token, from Settings → Integrations → Developer → API token.
+- `TODOIST_LOGIN_EMAIL`, `TODOIST_PASSWORD`
 
 ## Validation
 `GET https://api.todoist.com/api/v1/projects` with `Authorization: Bearer <token>` → **HTTP 200**.

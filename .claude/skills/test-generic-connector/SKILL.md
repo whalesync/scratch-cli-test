@@ -76,7 +76,7 @@ The helper [`setup-generic-connection.sh`](setup-generic-connection.sh) wraps th
 - **Live auth probe at create time:** the server probes the first endpoint with the key before any row is written (`probeAuthOnly`). A bad/placeholder key → no connection. So the key must already be valid.
 - **SSRF guard:** endpoint URLs must be public HTTPS that resolve to public IPs (no localhost / private / metadata IPs).
 
-**The human gate (cannot be automated):** obtaining the target service's **API key / PAT**. A human logs into the service in the browser and generates a long-lived key. The generic connector does **no OAuth** for arbitrary services — if the service only issues OAuth tokens, the service is **unsupported** (record it; don't try to build OAuth into the generic connector). Pause for the human exactly here, the same way /connector-build-execute pauses for login/billing/captcha gates.
+**The human gate (cannot be automated):** obtaining the target service's **API key / PAT**, unless the shared test-credentials store already has one (Stage A). A human logs into the service in the browser and generates a long-lived key. The generic connector does **no OAuth** for arbitrary services — if the service only issues OAuth tokens, the service is **unsupported** (record it; don't try to build OAuth into the generic connector). Pause for the human exactly here, the same way /connector-build-execute pauses for login/billing/captcha gates.
 
 ## The flow — read-only, so seed then fetch
 
@@ -85,13 +85,17 @@ There is no publish. You prove an entity works by **putting data into the servic
 **Browser tooling — gstack or chrome, your pick.** The browser-driven steps in this flow (logging into the service in Stage A, seeding and observing records in the service's UI in Stage D) can use **either** the gstack `/browse` skill **or** the claude-in-chrome MCP tools — the exact same principle as /connector-build-execute's browser work. Default to gstack `/browse` for isolated headless runs; reach for chrome when you need the user's real, already-logged-in session or to coordinate tabs (there, always create your **own** tab so parallel agents don't collide). Pause for the human at any login / captcha / 2FA gate.
 
 ### Stage A — pick the service & get a key (human gate)
-Human logs into the service (browser), generates an API key, and tells you the key + the API docs URL. Record the key's **source** (settings path) in the coverage doc — never the key itself. Confirm the service issues a **long-lived key** (not OAuth-only) — if OAuth-only, stop and mark the service unsupported.
+**Check the shared test-credentials store first.** Test-account keys live in Secret Manager in the GCP project `whalesync-test-credentials` (shared with the Whalesync repo), one secret per account, named after the service in lowercase. `bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh list` shows the accounts and `… names <svc>` a secret's variable names (never the values). If the service is there, use that key and skip the human gate; the secret's comment lines say which account it is (`gcloud secrets versions access latest --secret=<svc> --project=whalesync-test-credentials --billing-project=whalesync-test-credentials | grep '^#'`).
+
+Otherwise the human logs into the service (browser), generates an API key, and tells you the key + the API docs URL. Record the key's **source** (settings path) in the coverage doc — never the key itself. Confirm the service issues a **long-lived key** (not OAuth-only) — if OAuth-only, stop and mark the service unsupported.
+
+**Save a test-account key to the store** so the next run (in any workspace, by anyone) skips the gate: `printf '%s' '<key>' | bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh set-secret <svc> <SVC>_API_KEY`, then `… set-header <svc>` with comment lines (which account, where to generate a new key, when it expires). Variable names must start with the service name in capitals. **Only a burner/test account goes in the store.** If the key belongs to someone's real account (users often point this skill at their own), don't store it; ask if you can't tell.
 
 ### Stage B — map the API's entities → endpoints (build `extras`)
 From the service's API docs, enumerate its **list endpoints** (the collection endpoints — `GET /projects`, `GET /issues`, …). Each becomes one endpoint/entity. For each, decide: method, full URL, auth header style, and whether auto-detection will handle pagination or you need `overrides` (consult the AI prompt). Build the `extras` object. **Maximize the entity list** — include every top-level collection the service exposes, even ones you suspect won't fetch (you'll classify them in Stage E).
 
 ### Stage C — create the connection
-Run the helper / recipe to create the GENERIC_API connection in the test workbook. Record `workbook` + `connectorAccount` ids and the exact `extras` used in the coverage doc.
+Run the helper / recipe to create the GENERIC_API connection in the test workbook. With the key in the store, leave `apiKey` as a placeholder in the body file and let the helper fill it in, so it never sits in a file or your context: `API_KEY_ENV=<SVC>_API_KEY bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh run <svc> -- .claude/skills/test-generic-connector/setup-generic-connection.sh <wkb> <body.json>`. Seeding scripts can get the key the same way (`… run <svc> -- node seed.mjs`). Record `workbook` + `connectorAccount` ids and the exact `extras` used in the coverage doc.
 
 ### Stage D — per entity: probe, add table, fetch, verify counts
 
@@ -137,7 +141,7 @@ One per service, co-located with the connector at `server/src/remote-service/con
 1. A **do-not-delete** notice (generated/maintained by this skill).
 2. **Metadata** — `Template version` this doc is reconciled to, `Last run`, `Tester`, service.
 3. **User notes (client-facing brief)** — a one-line pointer to the separate sendable brief `coverage/<service>-user-notes.md` (see below). The brief itself lives in that standalone file, not inline.
-4. **Service & connection** — service name, **the test account used** (login email + auth method, workspace/plan — so the next run reuses it), login + API-docs URLs, **where the API key lives** (settings path / local store / decrypt recipe — never the key), auth header style, notable API traits (pagination style, OAuth?).
+4. **Service & connection** — service name, **the test account used** (login email + auth method, workspace/plan — so the next run reuses it), login + API-docs URLs, **where the API key lives** (its secret in the shared store / settings path / decrypt recipe — never the key), auth header style, notable API traits (pagination style, OAuth?).
 5. **Connection setup** — test `workbook` / `connectorAccount` ids, how it was created (helper/recipe), and the exact `extras` used.
 6. **Entities** table — one row per endpoint considered: name, method + url, pagination type, `idPath`, **fetchable** (✅/❌/➖), records fetched, notes.
 7. **Fetchability** — for each ❌, the reason from the [taxonomy](#stage-e--classify-fetchability-the-core-deliverable), and any `overrides` workaround that rescued it.
