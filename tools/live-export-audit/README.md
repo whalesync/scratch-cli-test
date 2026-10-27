@@ -58,6 +58,8 @@ torture set is identical. Each one is idempotent — re-running updates rather t
   (mints a QBO token out-of-band and re-encrypts it into the connection, for dev servers whose
   `.env` lacks `QUICKBOOKS_CLIENT_ID`/`_SECRET` and so can't refresh)
 - `seeds/pipedrive/`
+- `seeds/salesforce/` — `create-oauth-connection.mjs` plants a SALESFORCE OAuth connection from a password-grant
+  token (no consent screen, no connected-app secrets in `server/.env`); `--refresh coa_…` re-mints its token
 - `seeds/airtable/` — `seed.mjs` (honours `AIRTABLE_SEED_BASE_ID` from the env or `airtable.env`), `crud-pass.mjs`
 - `seeds/postgres/` — `seed.mjs`, `crud-pass.mjs` (plain SQL through the server's `pg`; table ids are `public/<table>`)
 - `seeds/mysql/` — `seed.mjs` (`--wide` adds a 185-column table, `--reset-dest` empties the destination databases),

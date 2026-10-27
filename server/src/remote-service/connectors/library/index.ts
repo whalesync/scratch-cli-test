@@ -23,6 +23,7 @@ import './notion/notion-connector';
 import './pipedrive/pipedrive-connector';
 import './postgres/postgres-connector';
 import './quickbooks/quickbooks-connector';
+import './salesforce/salesforce-connector';
 import './sanity/sanity-connector';
 import './shopify/shopify-connector';
 import './square/square-connector';

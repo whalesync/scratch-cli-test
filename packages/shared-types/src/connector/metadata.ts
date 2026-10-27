@@ -165,6 +165,26 @@ export function isQuickBooksConnectorExtras(extras: unknown): extras is QuickBoo
   );
 }
 
+// ============= Salesforce Connector Extras =============
+
+/**
+ * Extras stored on Salesforce ConnectorAccount records. `sandbox` records whether the org signs in at
+ * test.salesforce.com, so reconnecting the connection signs in at the same host without asking again.
+ */
+export interface SalesforceConnectorExtras {
+  sandbox: boolean;
+}
+
+/** Type guard for SalesforceConnectorExtras. */
+export function isSalesforceConnectorExtras(extras: unknown): extras is SalesforceConnectorExtras {
+  return (
+    typeof extras === 'object' &&
+    extras !== null &&
+    'sandbox' in extras &&
+    typeof (extras as Record<string, unknown>).sandbox === 'boolean'
+  );
+}
+
 // ============= YouTube Connector Extras =============
 
 /**

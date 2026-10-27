@@ -25,6 +25,8 @@ export const oauthInitiateOptionsSchema = z.object({
   quickbooksSandbox: z.boolean().optional(),
   /** Zoho multi-datacenter selection (US | EU | IN | AU | JP | CA | CN | SA). */
   zohoDataCenter: z.string().optional(),
+  /** Salesforce: the org is a sandbox, which signs in at test.salesforce.com instead of login.salesforce.com. */
+  salesforceSandbox: z.boolean().optional(),
   /**
    * YouTube: raw, user-entered list of extra channel IDs (brand/managed channels
    * that `channels.list?mine=true` does not return). Comma/space/newline

@@ -11,9 +11,11 @@ import {
   createConnectorAccountId,
   GoogleSheetsConnectorExtras,
   isGoogleSheetsConnectorExtras,
+  isSalesforceConnectorExtras,
   OAuthStatePayload,
   parseYouTubeAdditionalChannels,
   QuickBooksConnectorExtras,
+  SalesforceConnectorExtras,
   ValidatedOAuthInitiateOptionsDto,
   WorkbookId,
   YouTubeConnectorExtras,
@@ -45,6 +47,7 @@ import { LinearOAuthProvider } from './providers/linear-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { PipedriveOAuthProvider } from './providers/pipedrive-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
+import { SalesforceOAuthProvider } from './providers/salesforce-oauth.provider';
 import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
 import { WebflowOAuthProvider } from './providers/webflow-oauth.provider';
 import { WixOAuthProvider } from './providers/wix-oauth.provider';
@@ -213,6 +216,7 @@ export class OAuthService {
     private readonly linearProvider: LinearOAuthProvider,
     private readonly zohoProvider: ZohoOAuthProvider,
     private readonly pipedriveProvider: PipedriveOAuthProvider,
+    private readonly salesforceProvider: SalesforceOAuthProvider,
     private readonly posthogService: PostHogService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
@@ -233,6 +237,7 @@ export class OAuthService {
     this.providers.set('LINEAR', this.linearProvider);
     this.providers.set('ZOHO', this.zohoProvider);
     this.providers.set('PIPEDRIVE', this.pipedriveProvider);
+    this.providers.set('SALESFORCE', this.salesforceProvider);
   }
 
   /**
@@ -268,8 +273,9 @@ export class OAuthService {
     // A re-auth may only target an OAuth connection of this service inside the workbook
     // the caller was just permission-checked for (DEV-12155). Checked here so a bad id
     // fails before the user is sent to the provider; the callback checks it again.
+    let connectorAccountToReauthorize: ConnectorAccount | null = null;
     if (options.connectorAccountId) {
-      const connectorAccountToReauthorize = await this.findConnectorAccountEligibleForReauthorization(
+      connectorAccountToReauthorize = await this.findConnectorAccountEligibleForReauthorization(
         options.connectorAccountId,
         options.workbookId,
         service,
@@ -283,10 +289,18 @@ export class OAuthService {
       }
     }
 
-    // Generate PKCE values for providers that require it (e.g. Airtable)
+    // Salesforce sandboxes sign in at a different host. A reconnect doesn't ask again, so it signs in
+    // wherever the connection was made, as recorded in its extras.
+    const salesforceSandbox =
+      options.salesforceSandbox ??
+      (isSalesforceConnectorExtras(connectorAccountToReauthorize?.extras)
+        ? connectorAccountToReauthorize.extras.sandbox
+        : undefined);
+
+    // Generate PKCE values for providers that use it (Airtable, Salesforce)
     let codeVerifier: string | undefined;
     let codeChallenge: string | undefined;
-    if (service === 'AIRTABLE') {
+    if (provider.usesPkce?.() === true) {
       codeVerifier = randomBytes(96).toString('base64url');
       codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
     }
@@ -324,6 +338,7 @@ export class OAuthService {
       connectorAccountId: options.connectorAccountId,
       quickbooksSandbox: options.quickbooksSandbox,
       zohoDataCenter: options.zohoDataCenter,
+      salesforceSandbox,
       youtubeAdditionalChannels: options.youtubeAdditionalChannels,
       googleSheetsSpreadsheetUrls: options.googleSheetsSpreadsheetUrls,
       codeVerifier,
@@ -339,6 +354,7 @@ export class OAuthService {
     const authUrl = provider.generateAuthUrl(state, credentials, {
       codeChallenge,
       dataCenter: options.zohoDataCenter,
+      sandbox: salesforceSandbox,
     });
 
     return { authUrl };
@@ -480,6 +496,7 @@ export class OAuthService {
         tokenResponse = await provider.exchangeCodeForTokens(callbackData.code, credentials, {
           codeVerifier: pendingAuthorization.codeVerifier,
           dataCenter: pendingAuthorization.zohoDataCenter,
+          sandbox: pendingAuthorization.salesforceSandbox,
         });
       }
     } catch (error) {
@@ -513,6 +530,7 @@ export class OAuthService {
         customClientSecret: pendingAuthorization.customClientSecret,
         connectionName: pendingAuthorization.connectionName,
         googleSheetsSpreadsheetUrls: pendingAuthorization.googleSheetsSpreadsheetUrls,
+        salesforceSandbox: pendingAuthorization.salesforceSandbox,
       });
 
       return { connectorAccountId: existingConnectorAccount.id };
@@ -530,6 +548,7 @@ export class OAuthService {
           customClientSecret: pendingAuthorization.customClientSecret,
           connectionName: pendingAuthorization.connectionName,
           quickbooksSandbox: pendingAuthorization.quickbooksSandbox,
+          salesforceSandbox: pendingAuthorization.salesforceSandbox,
           youtubeAdditionalChannels: pendingAuthorization.youtubeAdditionalChannels,
           googleSheetsSpreadsheetUrls: pendingAuthorization.googleSheetsSpreadsheetUrls,
         },
@@ -756,8 +775,8 @@ export class OAuthService {
           if (!decryptedCredentials.oauthRefreshToken) {
             throw new BadRequestException('No refresh token available');
           }
-          // Multi-region providers (Zoho) need the stored data center to refresh
-          // against the correct regional accounts host (persisted in oauthWorkspaceId).
+          // Multi-region providers need their stored host to refresh against (persisted in
+          // oauthWorkspaceId): Zoho's data center, Salesforce's org instance URL.
           const tokenResponse = await withProviderTokenRequestTimeout(
             provider.refreshTokens(decryptedCredentials.oauthRefreshToken, credentials, {
               dataCenter: decryptedCredentials.oauthWorkspaceId,
@@ -962,6 +981,7 @@ export class OAuthService {
       customClientSecret?: string;
       connectionName?: string;
       quickbooksSandbox?: boolean;
+      salesforceSandbox?: boolean;
       youtubeAdditionalChannels?: string;
       googleSheetsSpreadsheetUrls?: string;
     },
@@ -970,6 +990,7 @@ export class OAuthService {
     const isQuickBooks = serviceKey === Service.QUICKBOOKS;
     const isYouTube = serviceKey === Service.YOUTUBE;
     const isGoogleSheets = serviceKey === Service.GOOGLE_SHEETS;
+    const isSalesforce = serviceKey === Service.SALESFORCE;
 
     // Load the workbook to get its organizationId (don't rely on actor's organizationId)
     const workbook = await this.db.client.workbook.findUniqueOrThrow({
@@ -1006,9 +1027,16 @@ export class OAuthService {
     const repoPath = getDefaultRepoPath(workbook.organizationId, workbookId, accountId);
 
     // Store non-sensitive metadata in extras for direct querying
-    let extras: QuickBooksConnectorExtras | YouTubeConnectorExtras | GoogleSheetsConnectorExtras | undefined;
+    let extras:
+      | QuickBooksConnectorExtras
+      | YouTubeConnectorExtras
+      | GoogleSheetsConnectorExtras
+      | SalesforceConnectorExtras
+      | undefined;
     if (isQuickBooks && tokenResponse.workspace_id) {
       extras = { realmId: tokenResponse.workspace_id, sandbox: connectionInfo?.quickbooksSandbox ?? false };
+    } else if (isSalesforce) {
+      extras = { sandbox: connectionInfo?.salesforceSandbox ?? false };
     } else if (isYouTube) {
       // Brand/managed channels the OAuth identity doesn't own — parsed from the
       // connect form and listed as extra video tables. Only set when non-empty so
@@ -1081,10 +1109,12 @@ export class OAuthService {
       customClientSecret?: string;
       connectionName?: string;
       googleSheetsSpreadsheetUrls?: string;
+      salesforceSandbox?: boolean;
     },
   ): Promise<void> {
     const isQuickBooks = connectorAccount.service === 'QUICKBOOKS';
     const isGoogleSheets = connectorAccount.service === Service.GOOGLE_SHEETS;
+    const isSalesforce = connectorAccount.service === Service.SALESFORCE;
 
     // Prepare credentials for encryption
     // For QuickBooks, workspace-specific IDs are stored in extras (not encrypted)
@@ -1102,9 +1132,12 @@ export class OAuthService {
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(credentials);
 
     // Store non-sensitive metadata in extras for direct querying
-    let extras: QuickBooksConnectorExtras | GoogleSheetsConnectorExtras | undefined;
+    let extras: QuickBooksConnectorExtras | GoogleSheetsConnectorExtras | SalesforceConnectorExtras | undefined;
     if (isQuickBooks && tokenResponse.workspace_id) {
       extras = { realmId: tokenResponse.workspace_id };
+    } else if (isSalesforce) {
+      // A re-auth may move the connection between production and sandbox; record where it signed in.
+      extras = { sandbox: connectionInfo?.salesforceSandbox ?? false };
     } else if (isGoogleSheets && connectionInfo?.googleSheetsSpreadsheetUrls) {
       // Re-auth with URLs typed on the form: UNION into the existing rows (the
       // reconnect form isn't prefilled, so replace semantics would silently

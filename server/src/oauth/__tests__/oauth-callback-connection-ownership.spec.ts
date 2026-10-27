@@ -80,6 +80,12 @@ function buildSeedConnectorAccountRows(): FakeConnectorAccountRow[] {
       workbookId: ATTACKER_WORKBOOK_ID,
       authType: AuthType.USER_PROVIDED_PARAMS,
     }),
+    buildConnectorAccountRow({
+      id: 'coa_salesforce_sandbox',
+      workbookId: ATTACKER_WORKBOOK_ID,
+      service: 'SALESFORCE',
+      extras: { sandbox: true },
+    }),
   ];
 }
 
@@ -205,7 +211,7 @@ function buildInMemoryPendingAuthorizationStore() {
   };
 }
 
-function buildFakeOAuthProvider(serviceName: string) {
+function buildFakeOAuthProvider(serviceName: string, options: { usesPkce?: boolean } = {}) {
   const exchangeCodeForTokens = jest.fn<Promise<OAuthTokenResponse>, [string, ...unknown[]]>().mockResolvedValue({
     access_token: 'attacker-access-token',
     refresh_token: 'attacker-refresh-token',
@@ -218,15 +224,18 @@ function buildFakeOAuthProvider(serviceName: string) {
     exchangeCodeForTokens: exchangeCodeForTokens as unknown as OAuthProvider['exchangeCodeForTokens'],
     generateAuthUrl: generateAuthUrl as unknown as OAuthProvider['generateAuthUrl'],
     getServiceName: () => serviceName,
+    ...(options.usesPkce ? { usesPkce: () => true } : {}),
   };
-  return { provider, exchangeCodeForTokens };
+  return { provider, exchangeCodeForTokens, generateAuthUrl };
 }
 
 function buildOAuthServiceUnderTest() {
   const fakeDb = buildFakeDbService();
   const pendingAuthorizationStore = buildInMemoryPendingAuthorizationStore();
-  const airtable = buildFakeOAuthProvider('airtable');
+  // Airtable's real provider uses PKCE, so its initiate stores a verifier.
+  const airtable = buildFakeOAuthProvider('airtable', { usesPkce: true });
   const notion = buildFakeOAuthProvider('notion');
+  const salesforce = buildFakeOAuthProvider('salesforce', { usesPkce: true });
   const identityCredentialEncryptionService = {
     encryptCredentials: (credentials: DecryptedCredentials) => Promise.resolve({ ...credentials }),
     decryptCredentials: (encrypted: unknown) => Promise.resolve({ ...(encrypted as DecryptedCredentials) }),
@@ -245,12 +254,13 @@ function buildOAuthServiceUnderTest() {
     }),
   };
 
-  // Positional, matching the constructor: db, the twelve providers (AIRTABLE first, NOTION
-  // fourth), then posthog, credential encryption, scratch-git, config, credential resolver and
-  // the pending-authorization store.
-  const providerPlaceholders: unknown[] = Array.from({ length: 12 }, () => ({}));
+  // Positional, matching the constructor: db, the thirteen providers (AIRTABLE first, NOTION
+  // fourth, SALESFORCE last), then posthog, credential encryption, scratch-git, config, credential
+  // resolver and the pending-authorization store.
+  const providerPlaceholders: unknown[] = Array.from({ length: 13 }, () => ({}));
   providerPlaceholders[0] = airtable.provider;
   providerPlaceholders[3] = notion.provider;
+  providerPlaceholders[12] = salesforce.provider;
   const constructorArguments = [
     fakeDb.db,
     ...providerPlaceholders,
@@ -264,6 +274,7 @@ function buildOAuthServiceUnderTest() {
 
   return {
     oauthService: new OAuthService(...constructorArguments),
+    salesforce,
     fakeDb,
     pendingAuthorizationStore,
     airtableExchangeCodeForTokens: airtable.exchangeCodeForTokens,
@@ -407,6 +418,35 @@ describe('OAuthService — re-auth is bound to the caller’s connection (DEV-12
   });
 
   describe('handleOAuthCallback', () => {
+    it('reconnects a Salesforce sandbox connection at the sandbox host without being told again', async () => {
+      const { oauthService, salesforce, fakeDb, pendingAuthorizationStore } = buildOAuthServiceUnderTest();
+      const actor = buildActor();
+
+      // The reconnect form doesn't offer the sandbox box, so the request doesn't carry it.
+      const { authUrl } = await oauthService.initiateOAuth(
+        'SALESFORCE',
+        actor,
+        buildInitiateOptions({ connectorAccountId: 'coa_salesforce_sandbox' }),
+      );
+      expect((salesforce.generateAuthUrl.mock.calls[0] as unknown[])[2]).toMatchObject({ sandbox: true });
+      const [storedPendingAuthorization] =
+        pendingAuthorizationStore.store.savePendingAuthorizationAndReturnNonce.mock.calls[0];
+      expect(storedPendingAuthorization.salesforceSandbox).toBe(true);
+
+      await oauthService.handleOAuthCallback('SALESFORCE', actor, {
+        code: 'auth-code',
+        state: extractStateFromAuthUrl(authUrl),
+      });
+
+      expect((salesforce.exchangeCodeForTokens.mock.calls[0] as unknown[])[2]).toMatchObject({ sandbox: true });
+      expect(fakeDb.connectorAccountUpdates).toEqual([
+        expect.objectContaining({
+          id: 'coa_salesforce_sandbox',
+          data: expect.objectContaining({ extras: { sandbox: true } }) as unknown,
+        }),
+      ]);
+    });
+
     it('re-authorizes the caller’s own connection, under the connection credentials lock', async () => {
       const { oauthService, fakeDb } = buildOAuthServiceUnderTest();
       const actor = buildActor();

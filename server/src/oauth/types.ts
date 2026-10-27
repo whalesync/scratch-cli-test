@@ -20,6 +20,7 @@ export type PendingOAuthAuthorization = {
   connectorAccountId?: string;
   quickbooksSandbox?: boolean;
   zohoDataCenter?: string; // Zoho multi-DC: US | EU | IN | AU | JP | CA | CN | SA
+  salesforceSandbox?: boolean; // Salesforce: sign in and exchange the code at test.salesforce.com
   youtubeAdditionalChannels?: string; // YouTube: raw extra channel-id list (parsed into extras.additionalChannels)
   googleSheetsSpreadsheetUrls?: string; // Google Sheets: raw spreadsheet URL/id list (parsed into extras.spreadsheetIds)
   /** PKCE verifier (Airtable). Kept server-side so it never travels with the authorization code. */

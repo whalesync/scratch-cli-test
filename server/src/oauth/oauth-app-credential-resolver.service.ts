@@ -49,6 +49,7 @@ type OAuthAppServiceKey =
   | typeof Service.NOTION
   | typeof Service.PIPEDRIVE
   | typeof Service.QUICKBOOKS
+  | typeof Service.SALESFORCE
   | typeof Service.SUPABASE
   | typeof Service.WEBFLOW
   | typeof Service.WIX_BLOG
@@ -166,6 +167,14 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID',
       clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET',
       redirectUri: (config) => whalesyncRedirectUri(config, 'linear'),
+    },
+  },
+  // Shares Whalesync's Salesforce connected app; its callback is registered under the `salesforce` slug.
+  [Service.SALESFORCE]: {
+    1: {
+      clientIdEnvVar: 'SALESFORCE_CLIENT_ID',
+      clientSecretEnvVar: 'SALESFORCE_CLIENT_SECRET',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'salesforce'),
     },
   },
   [Service.ZOHO]: {

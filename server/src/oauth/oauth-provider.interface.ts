@@ -30,8 +30,9 @@ export interface OAuthProvider {
    * Generate the URL the user's browser is redirected to.
    *
    * Uses `credentials.clientId` and `credentials.redirectUri`. `overrides` carries the
-   * per-connection knobs that aren't part of the app identity: `codeChallenge` (PKCE —
-   * Airtable) and `dataCenter` for multi-region providers (Zoho's US/EU/IN/… hosts).
+   * per-connection knobs that aren't part of the app identity: `codeChallenge` (PKCE — see
+   * {@link usesPkce}), `dataCenter` for multi-region providers (Zoho's US/EU/IN/… hosts), and
+   * `sandbox` for providers whose sandbox environments sign in at a separate host (Salesforce).
    *
    * For a `'client_credentials'` provider this URL is not an OAuth *authorize* URL but
    * the vendor's external *install* link (e.g. Wix's app-installer URL); the redirect it
@@ -40,7 +41,7 @@ export interface OAuthProvider {
   generateAuthUrl(
     state: string,
     credentials: OAuthAppCredentials,
-    overrides?: { codeChallenge?: string; dataCenter?: string },
+    overrides?: { codeChallenge?: string; dataCenter?: string; sandbox?: boolean },
   ): string;
 
   /**
@@ -55,7 +56,7 @@ export interface OAuthProvider {
   exchangeCodeForTokens(
     code: string,
     credentials: OAuthAppCredentials,
-    overrides?: { codeVerifier?: string; dataCenter?: string },
+    overrides?: { codeVerifier?: string; dataCenter?: string; sandbox?: boolean },
   ): Promise<OAuthTokenResponse>;
 
   /**
@@ -76,6 +77,14 @@ export interface OAuthProvider {
    * Get the service name
    */
   getServiceName(): string;
+
+  /**
+   * Whether this provider's authorize/exchange use PKCE (S256). When true, the orchestrator
+   * mints a verifier at initiate, passes its challenge to {@link generateAuthUrl} as
+   * `overrides.codeChallenge`, and the verifier to {@link exchangeCodeForTokens} as
+   * `overrides.codeVerifier`. Optional: a provider that omits it gets no PKCE.
+   */
+  usesPkce?(): boolean;
 
   /**
    * Which OAuth grant family this provider uses. Optional: a provider that omits it is

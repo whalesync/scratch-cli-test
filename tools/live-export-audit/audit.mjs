@@ -425,13 +425,22 @@ for (const f of folders) {
     const tgt = fl.fieldType.target ?? {};
     if (tgt.existingRemoteTableId || tgt.ref) return [fl];
     const linked = tgt.unresolvedLinkedTableId;
-    // Match the server's own binder convention (linkedTableIdCandidateTokensForRemoteTableId):
-    // a linked id may be the bare leaf OR any dot-joined suffix of the remote id
-    // (pg connectors emit "schema.table" for non-public schemas — DEV-11071 family).
+    const linkedRemoteId = tgt.unresolvedLinkedTableRemoteId;
+    // Match the server's own binder convention (linkedTableIdLookupKeysForPendingForeignKeyTarget), as dusky's
+    // `linkedTableMatches` does: the linked table's full remote id when the connector emits one (exact identity —
+    // QuickBooks/Salesforce name a link by a lower-cased wsId that appears in no remote-id segment), else a linked
+    // id that is the bare leaf OR any dot-joined suffix of the remote id (pg connectors emit "schema.table" for
+    // non-public schemas — DEV-11071 family).
     const linkedMatchesSelectedTable =
       linked &&
       folders.some((o) => {
         const remoteIdSegments = o.remoteId ?? [];
+        if (Array.isArray(linkedRemoteId)) {
+          return (
+            linkedRemoteId.length === remoteIdSegments.length &&
+            linkedRemoteId.every((segment, index) => segment === remoteIdSegments[index])
+          );
+        }
         if (remoteIdSegments.includes(linked)) return true;
         for (let suffixStart = 0; suffixStart < remoteIdSegments.length; suffixStart++) {
           if (remoteIdSegments.slice(suffixStart).join('.') === linked) return true;

@@ -23,6 +23,10 @@ export class AirtableOAuthProvider implements OAuthProvider {
     return authUrl.toString();
   }
 
+  usesPkce(): boolean {
+    return true;
+  }
+
   async exchangeCodeForTokens(
     code: string,
     credentials: OAuthAppCredentials,
