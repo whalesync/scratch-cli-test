@@ -312,6 +312,80 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
           createRef: 't1',
         });
       });
+
+      it('marks a table partial when the connector skips one of its deferred foreign keys', async () => {
+        const createTable = createTableStubResolvingEachRef();
+        const createFields = jest.fn(
+          (plan: { fields: { name: string }[] }): Promise<CreateFieldResult[]> =>
+            Promise.resolve(
+              plan.fields.map((field) => ({ name: field.name, status: 'skipped', error: 'no foreign keys here' })),
+            ),
+        );
+        connectorsService.getConnector.mockResolvedValue(
+          connectorStub({ supportsSchemaCreation: () => true, createTable, createFields }),
+        );
+        const service = app.get(SchemaBuilderService);
+
+        const response = await service.createTables(
+          WORKBOOK_ID as WorkbookId,
+          {
+            connectorAccountId: CONNECTOR_ACCOUNT_ID,
+            tables: [
+              {
+                ref: 't1',
+                name: 'Posts',
+                fields: [
+                  { name: 'Title', fieldType: { kind: 'text' }, isPrimary: true },
+                  { name: 'Parent', fieldType: { kind: 'foreignKey', target: { ref: 't1' } } },
+                ],
+              },
+            ],
+          } as CreateSchemaTablesDto,
+          actor,
+        );
+
+        expect(response.tables[0].status).toBe('partial');
+        expect(response.tables[0].fields).toContainEqual({
+          name: 'Parent',
+          status: 'skipped',
+          error: 'no foreign keys here',
+        });
+      });
+
+      it("records each deferred foreign key as failed when the connector's createFields throws", async () => {
+        const createTable = createTableStubResolvingEachRef();
+        const createFields = jest.fn().mockRejectedValue(new Error('Connection lost'));
+        connectorsService.getConnector.mockResolvedValue(
+          connectorStub({ supportsSchemaCreation: () => true, createTable, createFields }),
+        );
+        const service = app.get(SchemaBuilderService);
+
+        const response = await service.createTables(
+          WORKBOOK_ID as WorkbookId,
+          {
+            connectorAccountId: CONNECTOR_ACCOUNT_ID,
+            tables: [
+              {
+                ref: 't1',
+                name: 'Posts',
+                fields: [
+                  { name: 'Title', fieldType: { kind: 'text' }, isPrimary: true },
+                  { name: 'Parent', fieldType: { kind: 'foreignKey', target: { ref: 't1' } } },
+                ],
+              },
+            ],
+          } as CreateSchemaTablesDto,
+          actor,
+        );
+
+        expect(response.tables[0].status).toBe('partial');
+        expect(response.tables[0].error).toBe('Connection lost');
+        expect(response.tables[0].fields).toContainEqual({
+          name: 'Parent',
+          status: 'failed',
+          error: 'Connection lost',
+        });
+      });
     });
   });
 

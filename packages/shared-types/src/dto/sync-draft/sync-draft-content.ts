@@ -25,6 +25,15 @@ import { createFieldSpecSchema, createTableSpecSchema } from '../schema/create-s
 
 // ── Destination of a draft table mapping ──────────────────────────────────────
 
+/** A field of a created table that the destination skipped or refused, with the connector's reason. */
+export const draftFieldNotCreatedSchema = z.object({
+  /** The field's name in the table's create spec. */
+  name: z.string(),
+  /** Why the destination didn't create it, worded for the user. */
+  reason: z.string(),
+});
+export type DraftFieldNotCreated = z.infer<typeof draftFieldNotCreatedSchema>;
+
 /** The remote table id + (once apply runs) data folder a materialized placeholder resolved to. */
 export const draftPlaceholderTableResolvedSchema = z.object({
   /** Remote table id assigned by the connector on creation, e.g. [baseId, tableId]. */
@@ -33,6 +42,13 @@ export const draftPlaceholderTableResolvedSchema = z.object({
   dataFolderId: z.string().optional(),
   /** The name actually created, which may carry a server-appended `(1)`-style disambiguator. */
   actualName: z.string().optional(),
+  /**
+   * Fields of the created table the destination skipped or refused (a foreign key the database user may not
+   * create, a name the service can't hold). Recorded when the table is created, so a later save still knows
+   * them: apply leaves them out of the sync instead of failing on a column that doesn't exist. Absent when every
+   * field was created.
+   */
+  fieldsNotCreated: z.array(draftFieldNotCreatedSchema).optional(),
 });
 export type DraftPlaceholderTableResolved = z.infer<typeof draftPlaceholderTableResolvedSchema>;
 

@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type {
+  ApplySyncDraftFieldNotCreated,
   ApplySyncDraftPublicProgress,
   DraftTableMapping,
   JobTrigger,
@@ -85,6 +86,18 @@ function labelPlaceholderRefsByName(tableMappings: DraftTableMapping[]): Map<str
   return labelByPlaceholderRef;
 }
 
+/** Every field the materialized tables came back without, flattened for the job's public progress. */
+function collectFieldsNotCreated(results: MaterializePlaceholderResult[]): ApplySyncDraftFieldNotCreated[] {
+  return results.flatMap((result) =>
+    (result.fieldsNotCreated ?? []).map((field) => ({
+      ref: result.ref,
+      ...(result.actualName ? { tableName: result.actualName } : {}),
+      fieldName: field.name,
+      reason: field.reason,
+    })),
+  );
+}
+
 export class ApplySyncDraftJobHandler implements JobHandlerBuilder<ApplySyncDraftJobDefinition> {
   constructor(
     private readonly prisma: PrismaClient,
@@ -148,6 +161,7 @@ export class ApplySyncDraftJobHandler implements JobHandlerBuilder<ApplySyncDraf
       const totalPlaceholders = allPlaceholderRefs.length;
       const resolvedRefs = new Set<string>(alreadyResolvedRefs);
       let failedRefs: ApplySyncDraftPublicProgress['failedRefs'] = [];
+      let fieldsNotCreated: ApplySyncDraftFieldNotCreated[] = [];
       let phase: ApplySyncDraftPublicProgress['phase'] = 'materializing_tables';
 
       const checkpointCurrentProgress = async (syncId?: string) => {
@@ -157,6 +171,7 @@ export class ApplySyncDraftJobHandler implements JobHandlerBuilder<ApplySyncDraf
             totalPlaceholders,
             resolvedPlaceholders: resolvedRefs.size,
             failedRefs,
+            ...(fieldsNotCreated.length > 0 ? { fieldsNotCreated } : {}),
             ...(syncId ? { syncId } : {}),
           },
           jobProgress: {},
@@ -198,6 +213,9 @@ export class ApplySyncDraftJobHandler implements JobHandlerBuilder<ApplySyncDraf
       for (const result of materializeResponse.results) {
         if (result.status !== 'failed') resolvedRefs.add(result.ref);
       }
+      // Fields a created table came back without. Apply leaves them out of the sync, so they are warnings on a
+      // save that still succeeds, carried on every checkpoint from here to `done`.
+      fieldsNotCreated = collectFieldsNotCreated(materializeResponse.results);
 
       // Any placeholder still unresolved ⇒ the draft cannot apply. Fail the job with the per-ref
       // errors already in publicProgress; retrying the save skips everything that DID resolve.

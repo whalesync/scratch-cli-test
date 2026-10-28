@@ -1448,6 +1448,89 @@ describe('SyncDraftService', () => {
       expect(res.results[0]).toMatchObject({ status: 'alreadyResolved', kind: 'table' });
     });
 
+    it('records the fields a created table came back without, and reports them again on a later save (DEV-12412)', async () => {
+      const row = makeDraftRow({
+        tableMappings: [
+          placeholderTableDraft({
+            createSpec: {
+              ref: 'spec_contacts',
+              name: 'Contacts',
+              fields: [
+                { name: 'Name', fieldType: { kind: 'text' } },
+                { name: 'company_id', fieldType: { kind: 'text' } },
+                { name: 'Mood 😀', fieldType: { kind: 'text' } },
+              ],
+            },
+          }),
+        ],
+      });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      // MySQL refused the foreign key (no REFERENCES privilege) and skipped a name it can't hold.
+      schemaBuilderService.createTables.mockResolvedValue({
+        status: 'partial',
+        tables: [
+          {
+            ref: 'spec_contacts',
+            name: 'Contacts',
+            status: 'partial',
+            remoteTableId: ['db1', 'Contacts'],
+            fields: [
+              { name: 'Name', status: 'created', remoteFieldId: 'Name' },
+              { name: 'company_id', status: 'failed', error: "This connection's MySQL user isn't allowed…" },
+              { name: 'Mood 😀', status: 'skipped' },
+            ],
+          },
+        ],
+      } as never);
+      const expectedFieldsNotCreated = [
+        { name: 'company_id', reason: "This connection's MySQL user isn't allowed…" },
+        { name: 'Mood 😀', reason: 'The destination skipped this field.' },
+      ];
+
+      const first = await service.materialize(DRAFT_ID, ACTOR);
+
+      expect(first.status).toBe('ok');
+      expect(first.results[0]).toMatchObject({
+        ref: 'ph_contacts',
+        status: 'created',
+        fieldsNotCreated: expectedFieldsNotCreated,
+      });
+      const dest = first.draft.tableMappings[0].destination;
+      expect(dest.kind === 'placeholderTable' && dest.resolved?.fieldsNotCreated).toEqual(expectedFieldsNotCreated);
+
+      // A later save skips the resolved table but still knows which fields it lacks and why.
+      const second = await service.materialize(DRAFT_ID, ACTOR);
+
+      expect(schemaBuilderService.createTables).toHaveBeenCalledTimes(1);
+      expect(second.results[0]).toMatchObject({
+        status: 'alreadyResolved',
+        fieldsNotCreated: expectedFieldsNotCreated,
+      });
+    });
+
+    it('records nothing when every field of a created table landed', async () => {
+      const row = makeDraftRow({ tableMappings: [placeholderTableDraft()] });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      schemaBuilderService.createTables.mockResolvedValue({
+        status: 'ok',
+        tables: [
+          {
+            ref: 'spec_contacts',
+            name: 'Contacts',
+            status: 'created',
+            remoteTableId: ['base1', 'tbl1'],
+            fields: [{ name: 'Name', status: 'created', remoteFieldId: 'fld1' }],
+          },
+        ],
+      } as never);
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      expect(res.results[0]).not.toHaveProperty('fieldsNotCreated');
+      const dest = res.draft.tableMappings[0].destination;
+      expect(dest.kind === 'placeholderTable' && dest.resolved).not.toHaveProperty('fieldsNotCreated');
+    });
+
     it('creates field additions on an existing table', async () => {
       const row = makeDraftRow({
         tableMappings: [
@@ -2228,6 +2311,126 @@ describe('SyncDraftService', () => {
       expect(archiveData.appliedSyncId).toBe('syn_new');
       expect(archiveData.archivedAt).toBeInstanceOf(Date);
       expect(sync.id).toBe('syn_new');
+    });
+
+    describe('fields the destination did not create (DEV-12412)', () => {
+      /** A materialized placeholder table that got `Name` but not `contact_id`. */
+      function partiallyCreatedTable(
+        overrides: { fieldsNotCreated?: Array<{ name: string; reason: string }>; recordMatching?: unknown } = {},
+      ): Record<string, unknown> {
+        return {
+          ref: 'tm1',
+          source: { dataFolderId: 'dfd_src' },
+          destination: {
+            kind: 'placeholderTable',
+            ref: 'ph1',
+            connectorAccountId: 'coa_1',
+            remoteParentId: ['db1'],
+            createSpec: {
+              ref: 's1',
+              name: 'Invoices',
+              fields: [
+                { name: 'Name', fieldType: { kind: 'text' } },
+                { name: 'contact_id', fieldType: { kind: 'text' } },
+              ],
+            },
+            resolved: {
+              remoteTableId: ['db1', 'Invoices'],
+              actualName: 'Invoices',
+              ...(overrides.fieldsNotCreated ? { fieldsNotCreated: overrides.fieldsNotCreated } : {}),
+            },
+          },
+          columnMappings: [
+            { source: { columnId: 'title' }, destination: { kind: 'placeholderField', ref: 'Name' } },
+            { source: { columnId: 'contact' }, destination: { kind: 'placeholderField', ref: 'contact_id' } },
+          ],
+          ...(overrides.recordMatching ? { recordMatching: overrides.recordMatching } : {}),
+        };
+      }
+      const REFUSED_FOREIGN_KEY = {
+        name: 'contact_id',
+        reason: 'This connection\'s MySQL user isn\'t allowed to create foreign keys in "db1".',
+      };
+
+      beforeEach(() => {
+        (dataFolderService.createFolder as jest.Mock).mockResolvedValue({ id: 'dfd_new' });
+        // The created table has only `Name`.
+        (dataFolderService.getStoredSchema as jest.Mock).mockResolvedValue({
+          schema: {
+            type: 'object',
+            properties: { fields: { type: 'object', properties: { Name: { type: 'string' } } } },
+          },
+        });
+        (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
+        (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync('syn_new'));
+      });
+
+      it('leaves the column out of the sync and saves the rest of the table', async () => {
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(
+          makeDraftRow({ tableMappings: [partiallyCreatedTable({ fieldsNotCreated: [REFUSED_FOREIGN_KEY] })] }),
+        );
+
+        const sync = await service.apply(DRAFT_ID, ACTOR);
+
+        expect(sync.id).toBe('syn_new');
+        const createSyncCalls = (syncService.createSync as jest.Mock).mock.calls as Array<
+          [
+            unknown,
+            {
+              mappings: {
+                tableMappings: Array<{
+                  columnMappings: Array<{ destinationColumnId: string; source: { columnId: string } }>;
+                }>;
+              };
+            },
+          ]
+        >;
+        const columnMappings = createSyncCalls[0][1].mappings.tableMappings[0].columnMappings;
+        expect(columnMappings).toHaveLength(1);
+        expect(columnMappings[0].source.columnId).toBe('title');
+        expect(columnMappings[0].destinationColumnId.split('.').pop()).toBe('Name');
+      });
+
+      it('fails with the reason when the table matches records on that field', async () => {
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(
+          makeDraftRow({
+            tableMappings: [
+              partiallyCreatedTable({
+                fieldsNotCreated: [REFUSED_FOREIGN_KEY],
+                recordMatching: {
+                  source: { columnId: 'contact' },
+                  destination: { kind: 'placeholderField', ref: 'contact_id' },
+                },
+              }),
+            ],
+          }),
+        );
+
+        const error = await service.apply(DRAFT_ID, ACTOR).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(UnprocessableEntityException);
+        expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+          error: 'SYNC_DRAFT_MATCH_FIELD_NOT_CREATED',
+          message: expect.stringContaining(REFUSED_FOREIGN_KEY.reason) as unknown,
+        });
+        expect(dataFolderService.createFolder).not.toHaveBeenCalled();
+        expect(syncService.createSync).not.toHaveBeenCalled();
+      });
+
+      it('still fails on a missing column the destination reported as created', async () => {
+        // No record of `contact_id` failing, so its absence is unexpected: don't drop it silently.
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(
+          makeDraftRow({ tableMappings: [partiallyCreatedTable()] }),
+        );
+
+        const error = await service.apply(DRAFT_ID, ACTOR).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(UnprocessableEntityException);
+        expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+          error: 'SYNC_DRAFT_FIELD_RESOLUTION_FAILED',
+        });
+        expect(syncService.createSync).not.toHaveBeenCalled();
+      });
     });
 
     it('threads the unmatched-destination delete policy onto the created sync', async () => {

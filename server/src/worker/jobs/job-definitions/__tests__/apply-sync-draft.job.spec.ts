@@ -128,6 +128,45 @@ describe('ApplySyncDraftJobHandler', () => {
       ([, event]: [unknown, { type: string }]) => event.type,
     );
     expect(eventTypes).toEqual(['job-started', 'job-completed']);
+    expect(finalCheckpoint).not.toHaveProperty('fieldsNotCreated');
+  });
+
+  it('completes with the fields a created table came back without as warnings, not failures (DEV-12412)', async () => {
+    const { handler, syncDraftService, workbookEventService, checkpoint } = setup();
+    (syncDraftService.materialize as jest.Mock).mockResolvedValue({
+      draft: {},
+      results: [
+        {
+          ref: 'ph_contacts',
+          kind: 'table',
+          status: 'created',
+          actualName: 'Contacts',
+          remoteTableId: ['db1', 'Contacts'],
+          fieldsNotCreated: [{ name: 'company_id', reason: 'no REFERENCES privilege' }],
+        },
+      ],
+      status: 'ok',
+    });
+
+    await run(handler, checkpoint);
+
+    expect(syncDraftService.apply).toHaveBeenCalled();
+    const checkpointCalls = checkpoint.mock.calls as Array<
+      [{ publicProgress: ApplySyncDraftJobDefinition['publicProgress'] }]
+    >;
+    const finalCheckpoint = checkpointCalls[checkpointCalls.length - 1][0].publicProgress;
+    expect(finalCheckpoint).toMatchObject({
+      phase: 'done',
+      failedRefs: [],
+      syncId: 'syn_new',
+      fieldsNotCreated: [
+        { ref: 'ph_contacts', tableName: 'Contacts', fieldName: 'company_id', reason: 'no REFERENCES privilege' },
+      ],
+    });
+    const eventTypes = (workbookEventService.sendWorkbookEvent as jest.Mock).mock.calls.map(
+      ([, event]: [unknown, { type: string }]) => event.type,
+    );
+    expect(eventTypes).toEqual(['job-started', 'job-completed']);
   });
 
   it('feeds the running placeholder count from materialize batch callbacks into checkpoints', async () => {

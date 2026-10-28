@@ -65,9 +65,14 @@ events).
     totalPlaceholders: number;      // tables + field additions to create
     resolvedPlaceholders: number;   // running count, from the per-ref checkpoints
     failedRefs: { ref: string; error: string }[];
+    fieldsNotCreated?: { ref: string; tableName?: string; fieldName: string; reason: string }[];
     syncId?: SyncId;                // set on completion
   }
   ```
+
+  `fieldsNotCreated` lists fields of created tables that the destination skipped or
+  refused (DEV-12412). They're warnings, not failures: the save still completes without
+  them. No client shows them yet (work item 8).
 
   To feed the running count, the service methods accept an optional progress callback
   (invoked at the existing `persistTableMappings` checkpoint sites); the synchronous
@@ -122,6 +127,22 @@ Two layers, both cheap:
 - A failed table/field creation fails only its ref; the job completes the rest and
   reports `partial`, mirroring `aggregateMaterializeStatus`. The user retries after
   fixing the cause (e.g. a name collision on the destination).
+- A table can be created without some of its fields (`CreateTableResult.status:
+  'partial'`): a foreign key the database user may not create, or a name the service
+  can't hold. A resolved table is never re-created, so materialize records those fields
+  and the connector's reasons on the checkpoint (`resolved.fieldsNotCreated`). This
+  includes foreign keys added after the tables: if the connector's `createFields` call
+  throws, each of them is recorded as failed with its error. Apply leaves their columns
+  out of the sync, and the job reports them as `fieldsNotCreated`. If the table matches
+  records on such a field, apply fails with `SYNC_DRAFT_MATCH_FIELD_NOT_CREATED` and the
+  reason, since dropping it isn't safe. A column that's missing without a recorded reason
+  still fails with `SYNC_DRAFT_FIELD_RESOLUTION_FAILED` (DEV-12412).
+- A field addition the destination refuses still fails the save, with its reason in
+  `failedRefs`, and the draft's other edits wait for the retry. This differs from a new
+  table on purpose. A refused field on a new table can't be undone, because the table
+  already exists and is never re-created. A field addition is a column the user chose
+  for an existing table, and unticking it lets the save through. Whalesync's editor only
+  adds one when the user ticks it, so a refused foreign key doesn't come back on its own.
 - A crash mid-job resumes convergently on retry: materialize skips resolved placeholders,
   apply skips folders whose `dataFolderId` is checkpointed. Worst case is litter (an
   orphan remote table or folder), never duplicates — same guarantee as today.
@@ -139,6 +160,7 @@ Two layers, both cheap:
 | 5 | Shared types: save response, job public progress | `packages/shared-types` (+ api-client `syncDrafts.save`) | ✅ |
 | 6 | Live Export progress modal + reload/archived-draft handling | Whalesync repo | open |
 | 7 | Feature flag + rollout, then retire the synchronous two-call flow for Live Export | both | open |
+| 8 | Show `fieldsNotCreated` as warnings in the save progress dialog and the public API's save | Whalesync repo, after shared-types publishes | open |
 
 Items 1–5 are server-side and independently shippable; the synchronous endpoints keep
 working throughout, so the Whalesync client can migrate whenever ready.

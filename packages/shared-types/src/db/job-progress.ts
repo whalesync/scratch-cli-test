@@ -194,6 +194,21 @@ export type ApplySyncDraftFailedRef = {
 };
 
 /**
+ * A field of a created table that the destination skipped or refused during a save-sync-draft job. The save
+ * still succeeds without it, so this is a warning for the caller to show, not a failure.
+ */
+export type ApplySyncDraftFieldNotCreated = {
+  /** The draft placeholder `ref` of the table the field belongs to. */
+  ref: string;
+  /** The table's name as created on the destination. */
+  tableName?: string;
+  /** The field's name in the table's create spec. */
+  fieldName: string;
+  /** Why the destination didn't create it, worded for the user. */
+  reason: string;
+};
+
+/**
  * Progress for the `apply-sync-draft` job — the background "Save" of a Live Export sync draft
  * (DEV-10875). The job wraps the existing two-phase saga: materialize (create the draft's remote
  * tables, then its field additions) and apply (create destination data folders, then save the
@@ -210,6 +225,11 @@ export type ApplySyncDraftPublicProgress = {
   resolvedPlaceholders: number;
   /** Placeholders whose creation failed this run. Retrying the save skips everything already resolved. */
   failedRefs: ApplySyncDraftFailedRef[];
+  /**
+   * Fields of created tables that the destination skipped or refused, left out of the sync. Set once
+   * materialize finishes; absent or empty when every field was created. Not a failure.
+   */
+  fieldsNotCreated?: ApplySyncDraftFieldNotCreated[];
   /** The SyncId the draft reconciled into. Set on the terminal `done` checkpoint. */
   syncId?: string;
 };

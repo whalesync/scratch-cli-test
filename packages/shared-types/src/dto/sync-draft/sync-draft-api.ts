@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Sync } from '../../db/sync';
 import type { SyncDraft } from '../../db/sync-draft';
-import { draftTableMappingsSchema } from './sync-draft-content';
+import { type DraftFieldNotCreated, draftTableMappingsSchema } from './sync-draft-content';
 
 /**
  * Request/response contracts for the SyncDraft API. Request bodies are zod
@@ -87,6 +87,11 @@ export interface MaterializePlaceholderResult {
   remoteTableId?: string[];
   /** For field placeholders, on success. */
   remoteFieldId?: string;
+  /**
+   * For table placeholders: fields of the created table the destination skipped or refused. Apply leaves them
+   * out of the sync, so the save succeeds without them. Absent when every field was created.
+   */
+  fieldsNotCreated?: DraftFieldNotCreated[];
   error?: string;
 }
 

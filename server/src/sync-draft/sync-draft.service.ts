@@ -12,11 +12,13 @@ import {
   type CreateSchemaFieldsDto,
   type CreateSchemaTablesDto,
   createSyncDraftId,
+  type CreateTableResult,
   type CreateTableSpec,
   type DataFolderId,
   type DraftColumnDestination,
   type DraftColumnMapping,
   type DraftFieldAddition,
+  type DraftFieldNotCreated,
   type DraftTableDestination,
   type DraftTableMapping,
   type ForeignKeyTarget,
@@ -615,6 +617,9 @@ export class SyncDraftService {
    * destination data folders for materialized tables, resolves field refs → real
    * column path ids by name from the destination schema, builds the native v2
    * mapping, and create-or-updates the sync (diffing against `sourceSyncId`).
+   * A column whose field the destination skipped or refused when it created the
+   * table (`resolved.fieldsNotCreated`) is left out of the mapping, so the rest of
+   * the table still syncs; one the table matches records on fails the apply (422).
    * Archives the draft afterward (kept for debugging).
    */
   async apply(draftId: SyncDraftId, actor: Actor, options: ApplySyncDraftOptions = {}): Promise<Sync> {
@@ -641,6 +646,19 @@ export class SyncDraftService {
         message: `Sync draft ${draftId} has unresolved placeholders; run materialize first.`,
         unresolvedRefs,
       });
+    }
+
+    // Records can't be matched on a field the destination never created, so leaving it out (as below for other
+    // columns) isn't safe. Fail with the destination's reason before creating any folders.
+    for (const tableMapping of tableMappings) {
+      if (!tableMapping.recordMatching) continue;
+      const matchFieldNotCreated = this.fieldNotCreatedForColumn(tableMapping.recordMatching.destination, tableMapping);
+      if (matchFieldNotCreated) {
+        throw new UnprocessableEntityException({
+          error: 'SYNC_DRAFT_MATCH_FIELD_NOT_CREATED',
+          message: `The destination didn't create "${matchFieldNotCreated.name}", the field this table matches records on: ${matchFieldNotCreated.reason}`,
+        });
+      }
     }
 
     // Create destination data folders for materialized placeholder tables. Done
@@ -687,6 +705,22 @@ export class SyncDraftService {
       const destinationDataFolderId = this.destinationFolderId(tableMapping.destination);
       const columnMappings = [];
       for (const columnMapping of tableMapping.columnMappings) {
+        const fieldNotCreated = this.fieldNotCreatedForColumn(columnMapping.destination, tableMapping);
+        if (fieldNotCreated) {
+          // The destination skipped or refused this field when it created the table, and no later save
+          // re-creates a resolved table. Leave the column out so the rest of the table still syncs; the save
+          // job reports it as a warning.
+          WSLogger.warn({
+            source: 'SyncDraftService.apply',
+            message: 'Leaving a field the destination did not create out of the sync',
+            draftId,
+            workbookId,
+            tableMappingRef: tableMapping.ref,
+            fieldName: fieldNotCreated.name,
+            reason: fieldNotCreated.reason,
+          });
+          continue;
+        }
         const destinationColumnId = await this.resolveColumnDestination(
           columnMapping.destination,
           tableMapping,
@@ -1010,6 +1044,7 @@ export class SyncDraftService {
           status: 'alreadyResolved',
           actualName: destination.resolved.actualName,
           remoteTableId: destination.resolved.remoteTableId,
+          ...(destination.resolved.fieldsNotCreated ? { fieldsNotCreated: destination.resolved.fieldsNotCreated } : {}),
         });
         continue;
       }
@@ -1126,13 +1161,21 @@ export class SyncDraftService {
           for (const placeholder of placeholdersToCreate) {
             const tableResult = response.tables.find((table) => table.ref === placeholder.createSpec.ref);
             if (tableResult && tableResult.status !== 'failed' && tableResult.remoteTableId) {
-              placeholder.resolved = { remoteTableId: tableResult.remoteTableId, actualName: tableResult.name };
+              // A table can land without some of its fields (`partial`). Record which and why on the checkpoint:
+              // no later save re-creates a resolved table, so this is the only place the reason is known.
+              const fieldsNotCreated = collectFieldsNotCreated(tableResult);
+              placeholder.resolved = {
+                remoteTableId: tableResult.remoteTableId,
+                actualName: tableResult.name,
+                ...(fieldsNotCreated.length > 0 ? { fieldsNotCreated } : {}),
+              };
               results.push({
                 ref: placeholder.ref,
                 kind: 'table',
                 status: 'created',
                 actualName: tableResult.name,
                 remoteTableId: tableResult.remoteTableId,
+                ...(fieldsNotCreated.length > 0 ? { fieldsNotCreated } : {}),
               });
             } else {
               results.push({
@@ -2014,6 +2057,21 @@ export class SyncDraftService {
     return null;
   }
 
+  /**
+   * The recorded field-not-created entry when a column maps to a field its created table didn't get (the
+   * destination skipped or refused it at create time), or undefined for every other column.
+   */
+  private fieldNotCreatedForColumn(
+    destination: DraftColumnDestination,
+    tableMapping: DraftTableMapping,
+  ): DraftFieldNotCreated | undefined {
+    if (destination.kind !== 'placeholderField' || tableMapping.destination.kind !== 'placeholderTable') {
+      return undefined;
+    }
+    const fieldName = this.resolveCreatedFieldTarget(destination.ref, tableMapping)?.fieldName;
+    return tableMapping.destination.resolved?.fieldsNotCreated?.find((field) => field.name === fieldName);
+  }
+
   // ── apply internals ──────────────────────────────────────────────────────────
 
   private destinationFolderId(destination: DraftTableDestination): string {
@@ -2268,4 +2326,22 @@ function aggregateMaterializeStatus(results: MaterializePlaceholderResult[]): Ma
   if (failed.length === 0) return 'ok';
   const created = attempted.filter((result) => result.status === 'created');
   return created.length === 0 ? 'failed' : 'partial';
+}
+
+/**
+ * The fields a created table came back without — `skipped` (the connector declined before any DDL, e.g. a name
+ * the service can't hold) or `failed` (the service refused it, e.g. a foreign key the database user may not
+ * create) — each with the connector's user-facing reason.
+ */
+function collectFieldsNotCreated(tableResult: CreateTableResult): DraftFieldNotCreated[] {
+  return tableResult.fields
+    .filter((field) => field.status !== 'created')
+    .map((field) => ({
+      name: field.name,
+      reason:
+        field.error ??
+        (field.status === 'skipped'
+          ? 'The destination skipped this field.'
+          : 'The destination could not create this field.'),
+    }));
 }

@@ -815,12 +815,23 @@ export class SchemaBuilderService {
         );
         const fieldResults = await createFields({ remoteTableId, fields: resolvedFields, createRef: tablePlan.ref });
         result.fields = [...result.fields, ...fieldResults];
-        if (fieldResults.some((fieldResult) => fieldResult.status === 'failed')) {
+        if (fieldResults.some((fieldResult) => fieldResult.status !== 'created')) {
           result.status = 'partial';
         }
       } catch (error) {
+        // The connector returned no per-field results, so record each deferred field as failed with this error. A
+        // save never re-creates a table it already created, so these results are the only record of what it lacks.
+        const message = errorMessage(error);
+        result.fields = [
+          ...result.fields,
+          ...tablePlan.deferredFkFields.map((field) => ({
+            name: field.name,
+            status: 'failed' as const,
+            error: message,
+          })),
+        ];
         result.status = 'partial';
-        result.error = result.error ?? errorMessage(error);
+        result.error = result.error ?? message;
       }
     }
 
