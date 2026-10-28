@@ -19,6 +19,7 @@ import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { Connector } from 'src/remote-service/connectors/connector';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
+import { MYSQL_SCHEMA_CREATION_CAPABILITIES } from 'src/remote-service/connectors/library/mysql/mysql-create-schema';
 import { dotPath } from 'src/remote-service/connectors/types';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
@@ -660,6 +661,41 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
       expect(res.body.tableNotes).toEqual([]);
       // ...and we never even list the destination's tables, since collision detection is pointless there.
       expect(listTables).not.toHaveBeenCalled();
+    });
+
+    it("removes characters the destination can't hold from table and field names (MySQL — DEV-12413)", async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue({
+        ...sourceStoredSchema,
+        name: 'Authors \u{1F680}',
+        schema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            'mood \u{1F600}': { type: 'string' },
+            'Trailing space ': { type: 'string' },
+          },
+        },
+        titlePath: undefined,
+      });
+      connectorsService.getConnector.mockResolvedValue(
+        connectorStub({ service: 'MYSQL', getSchemaCreationCapabilities: () => MYSQL_SCHEMA_CREATION_CAPABILITIES }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({ sources: [{ dataFolderId: 'src_authors' }], destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID })
+        .expect(201);
+
+      expect(res.body.plan.tables[0].name).toBe('Authors');
+      expect(res.body.plan.tables[0].fields.map((f: { name: string }) => f.name)).toEqual([
+        'mood',
+        'Trailing space',
+        'source_record_id',
+      ]);
+      expect(res.body.tableNotes).toEqual([
+        expect.objectContaining({ renamedFromName: 'Authors \u{1F680}', reason: 'unsupported_characters' }),
+      ]);
     });
 
     it('still generates a plan when listing destination tables fails (graceful degradation)', async () => {

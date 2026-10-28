@@ -433,6 +433,8 @@ export class SchemaBuilderService {
       ...(destinationCapabilities?.nameLengthUnit !== undefined
         ? { destinationNameLengthUnit: destinationCapabilities.nameLengthUnit }
         : {}),
+      // Characters the destination can't hold in a name (MySQL's emoji, trailing spaces) are removed from the plan.
+      destinationNameCharacterRules: destinationCapabilities?.nameCharacterRules,
       destinationRequiresPrimaryField: destinationCapabilities?.primaryField != null,
       ...(destinationCapabilities?.primaryField
         ? { destinationPrimaryFieldKinds: destinationCapabilities.primaryField.kinds }

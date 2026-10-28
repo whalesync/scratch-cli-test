@@ -1,4 +1,4 @@
-import type { NameLengthUnit } from '@spinner/shared-types';
+import type { NameCharacterRules, NameLengthUnit } from '@spinner/shared-types';
 import { elideToMaxLength, measureTextLength } from 'src/utils/helpers';
 
 /**
@@ -18,6 +18,10 @@ import { elideToMaxLength, measureTextLength } from 'src/utils/helpers';
  * never trips the connector's `FIELD_NAME_TOO_LONG` / `TABLE_NAME_TOO_LONG` check
  * (DEV-10816). `maxLength` is measured in the connector's `NameLengthUnit` — UTF-8
  * bytes for Postgres, whose 63-byte limit a character-measured `…` would overflow.
+ *
+ * When the destination can't hold some characters in a name (`NameCharacterRules`,
+ * e.g. MySQL's emoji and trailing spaces), {@link fitNameToCharacterRules} removes
+ * them FIRST, so elision and dedup work on a name the destination can use (DEV-12413).
  */
 
 /**
@@ -93,4 +97,39 @@ function buildSuffixedCandidate(
     lengthUnit,
   });
   return `${base}${suffixString}`;
+}
+
+/** A character above U+FFFF, with any zero-width joiners and variation selectors around it. */
+const SUPPLEMENTARY_CHARACTER_RUN = /(?:\u200d|\ufe0e|\ufe0f)*(?:[\u{10000}-\u{10ffff}](?:\u200d|\ufe0e|\ufe0f)*)+/u;
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
+
+/**
+ * `name` with the characters `rules` forbid removed, so the destination can create it (DEV-12413). Each run of
+ * forbidden characters, with the spaces around it, becomes one space, and the result is trimmed:
+ * `Mood 😀` → `Mood`, `Hot 🔥 Deals` → `Hot Deals`, `First\nName` → `First Name`. An emoji run also takes the
+ * zero-width joiners and variation selectors attached to it, so a family emoji leaves nothing invisible behind.
+ * A name left empty becomes `fallbackName`. Unchanged when `rules` is absent or the name already fits.
+ */
+export function fitNameToCharacterRules(
+  name: string,
+  rules: NameCharacterRules | undefined,
+  fallbackName: string,
+): string {
+  if (!rules) return name;
+  const forbiddenCharacterRunPattern = buildForbiddenCharacterRunPattern(rules);
+  let fittedName = forbiddenCharacterRunPattern ? name.replace(forbiddenCharacterRunPattern, ' ') : name;
+  if (fittedName !== name) fittedName = fittedName.replace(/^ +| +$/g, '');
+  if (rules.noTrailingSpace) fittedName = fittedName.replace(/ +$/, '');
+  return fittedName.trim().length === 0 ? fallbackName : fittedName;
+}
+
+/** Matches each run of characters `rules` forbid, with the spaces around it; undefined when none are forbidden. */
+function buildForbiddenCharacterRunPattern(rules: NameCharacterRules): RegExp | undefined {
+  const forbiddenCharacterPatterns = [
+    ...(rules.basicMultilingualPlaneOnly ? [SUPPLEMENTARY_CHARACTER_RUN.source] : []),
+    ...(rules.noControlCharacters ? [CONTROL_CHARACTER.source] : []),
+  ];
+  if (forbiddenCharacterPatterns.length === 0) return undefined;
+  return new RegExp(` *(?:${forbiddenCharacterPatterns.join('|')})+ *`, 'gu');
 }

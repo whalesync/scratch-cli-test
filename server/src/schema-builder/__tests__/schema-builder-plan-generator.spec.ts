@@ -1163,6 +1163,218 @@ describe('generateCreatePlanFromSources — name-length limits (DEV-10816)', () 
   });
 });
 
+// DEV-12413: MySQL names can't hold emoji, control characters, or a trailing space. The plan removes them
+// before shortening and dedup, so MySQL never has to skip the field (or fail the table) at create.
+describe('generateCreatePlanFromSources — name character rules (DEV-12413)', () => {
+  const MYSQL_NAME_RULES = {
+    destinationNameCharacterRules: MYSQL_SCHEMA_CREATION_CAPABILITIES.nameCharacterRules,
+    destinationMaxTableNameLength: MYSQL_SCHEMA_CREATION_CAPABILITIES.maxTableNameLength,
+    destinationMaxFieldNameLength: MYSQL_SCHEMA_CREATION_CAPABILITIES.maxFieldNameLength,
+  };
+
+  const moodSource = (schemaFields: SchemaField[], tableName = 'Moods'): PlanGeneratorSource => ({
+    ref: 'moods',
+    dataFolderId: 'moods',
+    tableName,
+    remoteTableIds: ['tblMoods'],
+    schemaFields,
+  });
+
+  it('removes an emoji from a field name and notes the rename', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [moodSource([field({ path: 'mood', displayLabel: 'Mood \u{1F600}' })])],
+      destinationConnectorAccountId: 'destConn',
+      ...MYSQL_NAME_RULES,
+    });
+
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual(['Mood']);
+    expect(notes).toEqual([
+      expect.objectContaining({
+        sourceFieldPath: 'mood',
+        fieldName: 'Mood',
+        status: 'mapped',
+        renamedFromName: 'Mood \u{1F600}',
+        message: "removed characters the destination can't use in a field name",
+      }),
+    ]);
+  });
+
+  it('removes a trailing space from a field name', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [moodSource([field({ path: 'trailing', displayLabel: 'Trailing space ' })])],
+      destinationConnectorAccountId: 'destConn',
+      ...MYSQL_NAME_RULES,
+    });
+
+    expect(tables[0].fields[0].name).toBe('Trailing space');
+    expect(notes[0]).toMatchObject({ fieldName: 'Trailing space', renamedFromName: 'Trailing space ' });
+  });
+
+  it('names a field that is only emoji "Field", and the next one "Field 2"', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [
+        moodSource([
+          field({ path: 'fire', displayLabel: '\u{1F525}' }),
+          field({ path: 'rocket', displayLabel: '\u{1F680}' }),
+        ]),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      ...MYSQL_NAME_RULES,
+    });
+
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual(['Field', 'Field 2']);
+  });
+
+  it('deduplicates two names that are the same once their emoji are removed', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [
+        moodSource([
+          field({ path: 'happy', displayLabel: 'Mood \u{1F600}' }),
+          field({ path: 'sad', displayLabel: 'Mood \u{1F622}' }),
+        ]),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      ...MYSQL_NAME_RULES,
+    });
+
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual(['Mood', 'Mood 2']);
+    expect(notes[1].message).toBe(
+      `removed characters the destination can't use in a field name; renamed from "Mood \u{1F622}" to keep field names unique`,
+    );
+  });
+
+  it('reports a name that is reserved once its emoji are removed as reserved', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [moodSource([field({ path: 'key', displayLabel: 'ID \u{1F511}' })])],
+      destinationConnectorAccountId: 'destConn',
+      destinationReservedFieldNames: MYSQL_SCHEMA_CREATION_CAPABILITIES.reservedFieldNames,
+      ...MYSQL_NAME_RULES,
+    });
+
+    expect(tables[0].fields[0].name).toBe('ID 2');
+    expect(notes[0].message).toContain('"ID" is reserved by the destination');
+  });
+
+  it('removes emoji before shortening a long name, so the 64-character limit never splits one', () => {
+    const longNameWithEmoji = `Customer satisfaction \u{1F600} score after the second follow-up call \u{1F4DE} in the quarter`;
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [moodSource([field({ path: 'score', displayLabel: longNameWithEmoji })])],
+      destinationConnectorAccountId: 'destConn',
+      ...MYSQL_NAME_RULES,
+    });
+
+    const createdName = tables[0].fields[0].name;
+    expect([...createdName].length).toBeLessThanOrEqual(64);
+    expect([...createdName].every((character) => (character.codePointAt(0) ?? 0) <= 0xffff)).toBe(true);
+    expect(notes[0].renamedFromName).toBe(longNameWithEmoji);
+    expect(notes[0].message).toBe(
+      "removed characters the destination can't use in a field name; shortened to fit the destination's 64-character field-name limit",
+    );
+  });
+
+  it('removes an emoji from a table name and notes it with its own reason', () => {
+    const { tables, tableNotes } = generateCreatePlanFromSources({
+      sources: [moodSource([field({ path: 'name' })], 'Deals \u{1F680}')],
+      destinationConnectorAccountId: 'destConn',
+      ...MYSQL_NAME_RULES,
+    });
+
+    expect(tables[0].name).toBe('Deals');
+    expect(tableNotes).toEqual([
+      {
+        sourceDataFolderId: 'moods',
+        ref: 'moods',
+        tableName: 'Deals',
+        renamedFromName: 'Deals \u{1F680}',
+        reason: 'unsupported_characters',
+        message: `the name had characters the destination can't use; renamed to "Deals"`,
+      },
+    ]);
+  });
+
+  it('reports a collision first when a table name collides once its emoji are removed', () => {
+    const { tables, tableNotes } = generateCreatePlanFromSources({
+      sources: [moodSource([field({ path: 'name' })], 'Deals \u{1F680}')],
+      destinationConnectorAccountId: 'destConn',
+      existingDestinationTableNames: ['Deals'],
+      ...MYSQL_NAME_RULES,
+    });
+
+    expect(tables[0].name).toBe('Deals 2');
+    expect(tableNotes[0]).toMatchObject({
+      renamedFromName: 'Deals \u{1F680}',
+      reason: 'conflicts_with_existing_table',
+      message: `the name had characters the destination can't use; a table named "Deals" already exists on the destination; renamed to "Deals 2"`,
+    });
+  });
+
+  it('leaves names alone when the destination declares no character rules', () => {
+    const { tables, notes, tableNotes } = generateCreatePlanFromSources({
+      sources: [moodSource([field({ path: 'mood', displayLabel: 'Mood \u{1F600} ' })], 'Deals \u{1F680}')],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxFieldNameLength: 64,
+    });
+
+    expect(tables[0].name).toBe('Deals \u{1F680}');
+    expect(tables[0].fields[0].name).toBe('Mood \u{1F600} ');
+    expect(notes[0].renamedFromName).toBeUndefined();
+    expect(tableNotes).toEqual([]);
+  });
+
+  describe('re-planning into a table whose field was created without its emoji', () => {
+    const moodsIntoExisting = (
+      schemaFields: SchemaField[],
+      existingFields: ExistingDestinationField[],
+    ): PlanGeneratorSource => ({
+      ...moodSource(schemaFields),
+      existingDestination: { dataFolderId: 'destMoods', remoteTableId: ['tblDestMoods'], existingFields },
+    });
+
+    it('adopts the column created under the name without emoji instead of proposing "Mood 2"', () => {
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          moodsIntoExisting(
+            [field({ path: 'mood', displayLabel: 'Mood \u{1F600}' })],
+            [{ name: 'Mood', columnPath: 'Mood', kind: 'text' }],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        ...MYSQL_NAME_RULES,
+      });
+
+      expect(fieldPlans[0].fields).toEqual([]);
+      expect(notes).toEqual([
+        expect.objectContaining({
+          sourceFieldPath: 'mood',
+          fieldName: 'Mood',
+          status: 'adopted',
+          existingDestinationColumnId: 'Mood',
+          renamedFromName: 'Mood \u{1F600}',
+        }),
+      ]);
+    });
+
+    it('adopts the column for only the first of two names that lose their emoji to it', () => {
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          moodsIntoExisting(
+            [
+              field({ path: 'happy', displayLabel: 'Mood \u{1F600}' }),
+              field({ path: 'sad', displayLabel: 'Mood \u{1F622}' }),
+            ],
+            [{ name: 'Mood', columnPath: 'Mood', kind: 'text' }],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        ...MYSQL_NAME_RULES,
+      });
+
+      expect(notes.filter((note) => note.status === 'adopted').map((note) => note.sourceFieldPath)).toEqual(['happy']);
+      expect(fieldPlans[0].fields.map((createdField) => createdField.name)).toEqual(['Mood 2']);
+    });
+  });
+});
+
 describe('generateCreatePlanFromSources — fallback primary field', () => {
   // A source that designated NO title column (no primaryFieldPath), as happens
   // when a Postgres table's headline column isn't named name/title/etc.

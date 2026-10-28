@@ -38,6 +38,19 @@ export interface PrimaryFieldRequirement {
 export type NameLengthUnit = 'characters' | 'utf8Bytes';
 
 /**
+ * Characters a connector can't hold in a table or field name (`SchemaCreationCapabilities.nameCharacterRules`).
+ * Each flag that is set forbids one kind of character. (DEV-12413)
+ */
+export interface NameCharacterRules {
+  /** No characters above U+FFFF, such as emoji. MySQL stores names as 3-byte UTF-8, which can't hold them. */
+  basicMultilingualPlaneOnly?: boolean;
+  /** No control characters (U+0000–U+001F and U+007F), such as a tab or a line break. */
+  noControlCharacters?: boolean;
+  /** No space at the end of a name. */
+  noTrailingSpace?: boolean;
+}
+
+/**
  * Declarative, connector-agnostic description of what a connector can create.
  * The generic validator consumes this to fail fast (without hardcoding connector
  * rules in the server or any frontend); a connector with a mandatory title field
@@ -56,6 +69,13 @@ export interface SchemaCreationCapabilities {
    * name, or any non-ASCII letter) would land under a different name than requested. Absent ⇒ `'characters'`.
    */
   nameLengthUnit?: NameLengthUnit;
+  /**
+   * Characters the connector can't hold in a table or field name, e.g. MySQL's emoji, control characters,
+   * and trailing spaces. The plan generator removes them from the names it generates, before shortening
+   * and deduplicating, and notes the rename, so the plan never asks for a name the connector would refuse.
+   * Absent ⇒ any character is allowed. (DEV-12413)
+   */
+  nameCharacterRules?: NameCharacterRules;
   /**
    * The maximum number of fields a single table may contain, when the connector enforces one — e.g.
    * Airtable rejects a table with more than 500 fields. Counts the plan's FINAL field list (including
@@ -248,9 +268,10 @@ export interface FieldMappingNote {
    */
   existingDestinationColumnId?: string;
   /**
-   * Set when the field's name changed from the source's — because a numeric suffix
-   * was appended to keep names unique within the table, and/or because it was
-   * middle-elided to fit the destination's `maxFieldNameLength`: the original,
+   * Set when the field's name changed from the source's — because characters the
+   * destination can't hold were removed (`nameCharacterRules`), because it was
+   * middle-elided to fit the destination's `maxFieldNameLength`, and/or because a
+   * numeric suffix was appended to keep names unique within the table: the original,
    * pre-change name. `fieldName` holds the final name actually used in the plan, and
    * `message` explains why it changed.
    */
@@ -261,7 +282,8 @@ export interface FieldMappingNote {
  * Outcome of resolving a generated table's name. Emitted ONLY when a new table's
  * name had to change — because a numeric suffix was appended to avoid a collision
  * (with another new table in the same plan, or a table already on the destination),
- * and/or because it was middle-elided to fit the destination's identifier limit.
+ * because characters the destination can't hold were removed, and/or because it was
+ * middle-elided to fit the destination's identifier limit.
  * `tableName` is the final name used in the plan; nothing is renamed silently.
  */
 export interface TableMappingNote {
@@ -269,18 +291,24 @@ export interface TableMappingNote {
   sourceDataFolderId: string;
   /** The table's correlation ref in the plan (unchanged by the rename). */
   ref: string;
-  /** The final table name actually used in the plan (post-suffix, post-elision). */
+  /** The final table name actually used in the plan (after removing characters, elision, and any suffix). */
   tableName: string;
   /** The original, pre-rename name. */
   renamedFromName: string;
   /**
    * `duplicate_in_plan` — collided with another table being created in this plan;
    * `conflicts_with_existing_table` — collided with a table already on the destination;
+   * `unsupported_characters` — characters the destination can't hold were removed
+   * (`nameCharacterRules`, no collision);
    * `truncated_to_length_limit` — the name was only shortened to fit the destination's
-   * `maxTableNameLength` (no collision). When a name both collides and overflows, the
-   * collision reason is reported and the elision is noted in `message`.
+   * `maxTableNameLength`. When more than one applies, a collision wins, then
+   * `unsupported_characters`; `message` names every change.
    */
-  reason: 'duplicate_in_plan' | 'conflicts_with_existing_table' | 'truncated_to_length_limit';
+  reason:
+    | 'duplicate_in_plan'
+    | 'conflicts_with_existing_table'
+    | 'unsupported_characters'
+    | 'truncated_to_length_limit';
   message: string;
 }
 
@@ -320,8 +348,9 @@ export interface GenerateCreatePlanResponse {
   /** Per-field mapping outcome — nothing is dropped silently. */
   notes: FieldMappingNote[];
   /**
-   * Per-table rename outcome — one entry for each new table whose name had to be
-   * suffixed to avoid a collision (in-plan or with an existing destination table).
+   * Per-table rename outcome — one entry for each new table whose name had to change:
+   * suffixed to avoid a collision (in-plan or with an existing destination table),
+   * stripped of characters the destination can't hold, or shortened to fit.
    * Empty when no table was renamed.
    */
   tableNotes: TableMappingNote[];

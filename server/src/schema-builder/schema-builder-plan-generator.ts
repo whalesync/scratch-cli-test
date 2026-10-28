@@ -6,6 +6,7 @@ import type {
   CreateTableSpec,
   FieldMappingNote,
   ForeignKeyTarget,
+  NameCharacterRules,
   NameLengthUnit,
   NativeFieldType,
   Service,
@@ -21,7 +22,17 @@ import {
   firstIndexedValueForLookupKeys,
   linkedTableIdLookupKeysForConnectorForeignKey,
 } from './foreign-key-linked-table-id';
-import { allocateUniqueName, elideNameToMaxLength, normalizeNameForUniqueness } from './schema-builder-unique-names';
+import {
+  allocateUniqueName,
+  elideNameToMaxLength,
+  fitNameToCharacterRules,
+  normalizeNameForUniqueness,
+} from './schema-builder-unique-names';
+
+/** The name a field gets when removing the characters its destination can't hold leaves nothing. */
+const FALLBACK_FIELD_NAME = 'Field';
+/** The name a table gets when removing the characters its destination can't hold leaves nothing. */
+const FALLBACK_TABLE_NAME = 'Table';
 
 /**
  * Plan generation for create-schema (DEV-10378): turn one or more existing
@@ -214,6 +225,13 @@ export function generateCreatePlanFromSources(args: {
    */
   destinationNameLengthUnit?: NameLengthUnit;
   /**
+   * Characters the destination can't hold in a table or field name (`SchemaCreationCapabilities.nameCharacterRules`),
+   * e.g. MySQL's emoji, control characters, and trailing spaces. Generated names have them removed before they are
+   * shortened and deduplicated, with a note, so the connector never has to refuse the name at create (DEV-12413).
+   * Absent ⇒ any character is allowed.
+   */
+  destinationNameCharacterRules?: NameCharacterRules;
+  /**
    * Whether the destination can represent a many-to-many link — a link field on each side holding a
    * list of linked records (`SchemaCreationCapabilities.supportsManyToManyForeignKeys`). Used only to
    * decide a reciprocal N→N pair from a symmetric source (Airtable/Notion): when false (e.g.
@@ -275,6 +293,7 @@ export function generateCreatePlanFromSources(args: {
           args.destinationReservedFieldNames,
           args.destinationMaxFieldNameLength,
           destinationNameLengthUnit,
+          args.destinationNameCharacterRules,
           args.destinationSupportsManyToManyForeignKeys ?? true,
           args.destinationServiceDisplayName,
           args.destinationFieldTypeSupport,
@@ -290,6 +309,7 @@ export function generateCreatePlanFromSources(args: {
           reservedFieldNames: args.destinationReservedFieldNames,
           maxFieldNameLength: args.destinationMaxFieldNameLength,
           nameLengthUnit: destinationNameLengthUnit,
+          nameCharacterRules: args.destinationNameCharacterRules,
           destinationSupportsManyToManyForeignKeys: args.destinationSupportsManyToManyForeignKeys ?? true,
           destinationFieldTypeSupport: args.destinationFieldTypeSupport,
         },
@@ -329,26 +349,33 @@ export function generateCreatePlanFromSources(args: {
       if (args.destinationRequiresPrimaryField) {
         designateFallbackPrimaryFieldIfMissing(fields, args.destinationPrimaryFieldKinds);
       }
-      // A table name over the destination's limit is middle-elided to fit; the
-      // elided name is what collision detection and dedup then work against.
-      const elidedTableName = elideNameToMaxLength(
+      // Characters the destination can't hold are removed first, then a name over the
+      // destination's limit is middle-elided to fit; the elided name is what collision
+      // detection and dedup then work against.
+      const fittedTableName = fitNameToCharacterRules(
         source.tableName,
+        args.destinationNameCharacterRules,
+        FALLBACK_TABLE_NAME,
+      );
+      const elidedTableName = elideNameToMaxLength(
+        fittedTableName,
         args.destinationMaxTableNameLength,
         destinationNameLengthUnit,
       );
-      const wasTableNameShortenedToFit = elidedTableName !== source.tableName;
+      const wereTableNameCharactersRemoved = fittedTableName !== source.tableName;
+      const wasTableNameShortenedToFit = elidedTableName !== fittedTableName;
       // Classify the collision BEFORE allocating: `takenTableNames` merges existing
       // and in-plan names, so the distinction must be read off the frozen set first.
       // Compared on the elided name, since that's the name that actually collides.
       const conflictsWithExistingTable = existingDestinationTableNames.has(normalizeNameForUniqueness(elidedTableName));
       const tableName = allocateUniqueName(
-        source.tableName,
+        fittedTableName,
         takenTableNames,
         args.destinationMaxTableNameLength,
         destinationNameLengthUnit,
       );
       const wasTableNameDeduplicated = tableName !== elidedTableName;
-      if (wasTableNameShortenedToFit || wasTableNameDeduplicated) {
+      if (wereTableNameCharactersRemoved || wasTableNameShortenedToFit || wasTableNameDeduplicated) {
         tableNotes.push({
           sourceDataFolderId: source.dataFolderId,
           ref: source.ref,
@@ -358,10 +385,13 @@ export function generateCreatePlanFromSources(args: {
             ? conflictsWithExistingTable
               ? 'conflicts_with_existing_table'
               : 'duplicate_in_plan'
-            : 'truncated_to_length_limit',
+            : wereTableNameCharactersRemoved
+              ? 'unsupported_characters'
+              : 'truncated_to_length_limit',
           message: tableRenameMessage({
-            requestedName: source.tableName,
+            requestedName: fittedTableName,
             finalName: tableName,
+            wereCharactersRemoved: wereTableNameCharactersRemoved,
             wasShortenedToFit: wasTableNameShortenedToFit,
             wasDeduplicated: wasTableNameDeduplicated,
             conflictsWithExistingTable,
@@ -558,6 +588,7 @@ function buildAddFieldsPlanForSource(
   reservedFieldNames: string[] | undefined,
   maxFieldNameLength: number | undefined,
   nameLengthUnit: NameLengthUnit,
+  nameCharacterRules: NameCharacterRules | undefined,
   destinationSupportsManyToManyForeignKeys: boolean,
   destinationServiceDisplayName: string | undefined,
   destinationFieldTypeSupport: DestinationFieldTypeSupport | undefined,
@@ -575,6 +606,7 @@ function buildAddFieldsPlanForSource(
       reservedFieldNames,
       maxFieldNameLength,
       nameLengthUnit,
+      nameCharacterRules,
       destinationSupportsManyToManyForeignKeys,
       destinationFieldTypeSupport,
     },
@@ -616,6 +648,8 @@ interface CreateFieldSpecOptions {
   maxFieldNameLength?: number;
   /** The unit `maxFieldNameLength` is measured in (UTF-8 bytes for Postgres). Absent ⇒ characters. */
   nameLengthUnit?: NameLengthUnit;
+  /** Characters the destination can't hold in a field name, removed before eliding and dedup (DEV-12413). */
+  nameCharacterRules?: NameCharacterRules;
   /**
    * Whether the destination can represent a many-to-many foreign key (a link field holding a list of ids).
    * When false (Postgres/Supabase, whose FK is a single scalar column), a multi-valued source foreign key is
@@ -673,9 +707,10 @@ function collectCreateFieldSpecsForSource(
  * omitted — it is emitted with a pending `{ unresolvedLinkedTableId }` target and a
  * `needs_target` note so it survives into the plan/draft to be resolved later.
  *
- * A field that IS emitted is given a name unique within the table (via
- * `takenFieldNames`): if its requested name collides, a numeric suffix is
- * appended and the note records `renamedFromName`.
+ * A field that IS emitted is given a name the destination can hold and unique
+ * within the table (via `takenFieldNames`): characters the destination can't use
+ * are removed, a name over the limit is elided, and a colliding name gets a numeric
+ * suffix. Any change is recorded in the note's `renamedFromName`.
  */
 function mapSchemaFieldToCreateFieldSpec(
   source: PlanGeneratorSource,
@@ -741,12 +776,13 @@ function mapSchemaFieldToCreateFieldSpec(
     displayFieldName,
     maxFieldNameLength: options.maxFieldNameLength,
     nameLengthUnit: options.nameLengthUnit ?? 'characters',
+    nameCharacterRules: options.nameCharacterRules,
     existingColumnPathsAdoptedInThisTable,
   });
   if (existingFieldMatch) {
-    const { existingField, fullNameElidedToMatch } = existingFieldMatch;
-    const renamedFromFullNameIfElided =
-      fullNameElidedToMatch !== undefined ? { renamedFromName: fullNameElidedToMatch } : {};
+    const { existingField, fullNameChangedToMatch } = existingFieldMatch;
+    const renamedFromFullNameIfChanged =
+      fullNameChangedToMatch !== undefined ? { renamedFromName: fullNameChangedToMatch } : {};
     if (!schemaField.foreignKey) {
       // Compatible when the existing column's kind matches what this field maps to now OR what it mapped to
       // before the destination's richer types were considered — a column created back when a `text[]`/JSON
@@ -773,7 +809,7 @@ function mapSchemaFieldToCreateFieldSpec(
           mappedKind: existingField.kind,
           existingDestinationColumnId: existingField.columnPath,
           message: `a "${existingField.kind}" field named "${existingField.name}" already exists on the destination; mapping to it`,
-          ...renamedFromFullNameIfElided,
+          ...renamedFromFullNameIfChanged,
         });
         return null;
       }
@@ -786,7 +822,7 @@ function mapSchemaFieldToCreateFieldSpec(
       message: `Skipping "${existingField.name}", a field with that name already exists in ${
         options.destinationServiceDisplayName ?? 'the destination'
       } with an incompatible type`,
-      ...renamedFromFullNameIfElided,
+      ...renamedFromFullNameIfChanged,
     });
     return null;
   }
@@ -827,29 +863,37 @@ function mapSchemaFieldToCreateFieldSpec(
     }
   }
 
-  // This field will be emitted — give it a name unique within the table, elided to
-  // the destination's field-name limit when it has one.
+  // This field will be emitted — give it a name the destination can hold (characters it can't use
+  // removed), elided to the destination's field-name limit when it has one, and unique within the table.
   const nameLengthUnit = options.nameLengthUnit ?? 'characters';
-  const elidedRequestedFieldName = elideNameToMaxLength(requestedFieldName, options.maxFieldNameLength, nameLengthUnit);
-  const fieldName = allocateUniqueName(requestedFieldName, takenFieldNames, options.maxFieldNameLength, nameLengthUnit);
-  const wasFieldNameShortenedToFit = elidedRequestedFieldName !== requestedFieldName;
-  const wasFieldNameDeduplicated = fieldName !== elidedRequestedFieldName;
-  const renamedFromName = wasFieldNameShortenedToFit || wasFieldNameDeduplicated ? requestedFieldName : undefined;
+  const fittedFieldName = fitNameToCharacterRules(requestedFieldName, options.nameCharacterRules, FALLBACK_FIELD_NAME);
+  const elidedFittedFieldName = elideNameToMaxLength(fittedFieldName, options.maxFieldNameLength, nameLengthUnit);
+  const fieldName = allocateUniqueName(fittedFieldName, takenFieldNames, options.maxFieldNameLength, nameLengthUnit);
+  const wereFieldNameCharactersRemoved = fittedFieldName !== requestedFieldName;
+  const wasFieldNameShortenedToFit = elidedFittedFieldName !== fittedFieldName;
+  const wasFieldNameDeduplicated = fieldName !== elidedFittedFieldName;
+  const renamedFromName =
+    wereFieldNameCharactersRemoved || wasFieldNameShortenedToFit || wasFieldNameDeduplicated
+      ? requestedFieldName
+      : undefined;
   const renamedForReservedName =
     wasFieldNameDeduplicated &&
     (options.reservedFieldNames ?? []).some(
-      (reserved) => normalizeNameForUniqueness(reserved) === normalizeNameForUniqueness(requestedFieldName),
+      (reserved) => normalizeNameForUniqueness(reserved) === normalizeNameForUniqueness(fittedFieldName),
     );
+  const charactersClause = wereFieldNameCharactersRemoved
+    ? `removed characters the destination can't use in a field name`
+    : undefined;
   const dedupClause = wasFieldNameDeduplicated
     ? renamedForReservedName
-      ? `renamed from "${requestedFieldName}" — "${requestedFieldName}" is reserved by the destination`
+      ? `renamed from "${requestedFieldName}" — "${fittedFieldName}" is reserved by the destination`
       : `renamed from "${requestedFieldName}" to keep field names unique`
     : undefined;
   const shortenClause =
     wasFieldNameShortenedToFit && options.maxFieldNameLength !== undefined
       ? `shortened to fit the destination's ${options.maxFieldNameLength}-${nameLengthUnitLabel(nameLengthUnit)} field-name limit`
       : undefined;
-  const renameClause = composeNoteMessage(shortenClause, dedupClause);
+  const renameClause = composeNoteMessage(charactersClause, shortenClause, dedupClause);
 
   if (foreignKeyType) {
     if (foreignKeyNeedsTargetLinkedTableId !== null) {
@@ -921,10 +965,10 @@ function mapSchemaFieldToCreateFieldSpec(
 interface ExistingDestinationFieldMatch {
   existingField: ExistingDestinationField;
   /**
-   * Set when the match was on the name the source field is middle-elided to under the destination's
-   * field-name limit, not on its full name: the full name that was elided.
+   * Set when the match was on the name the source field is created under — characters the destination
+   * can't use removed, then middle-elided to its field-name limit — not on its full name: the full name.
    */
-  fullNameElidedToMatch?: string;
+  fullNameChangedToMatch?: string;
 }
 
 /**
@@ -935,13 +979,13 @@ interface ExistingDestinationFieldMatch {
  *  2. its display label — a destination table created before same-type-system columns kept their source
  *     names holds the display-labelled column ("Pharmacies Desired"), and re-planning against it must still
  *     find that column rather than propose a duplicate under the new name (DEV-11903);
- *  3. either of those middle-elided to the destination's field-name limit — the name a long field was
- *     actually created under (DEV-10816). Without this a re-plan misses the shortened column and proposes a
- *     second, suffixed one beside it (DEV-10906).
+ *  3. either of those as it was actually created: characters the destination can't use removed (DEV-12413),
+ *     then middle-elided to its field-name limit (DEV-10816). Without this a re-plan misses the changed
+ *     column and proposes a second, suffixed one beside it (DEV-10906).
  *
- * An elided-name match skips a column an earlier field of this table already adopted: two long names
- * can elide to the same `head…tail`, and only the first was created under it, so mapping both to that
- * column would silently merge two source fields into one.
+ * A changed-name match skips a column an earlier field of this table already adopted: two long names
+ * can elide to the same `head…tail` (or two names lose their emoji to the same name), and only the first
+ * was created under it, so mapping both to that column would silently merge two source fields into one.
  */
 function findExistingDestinationFieldMatchingSourceField(args: {
   existingDestinationFieldsByName: Map<string, ExistingDestinationField> | undefined;
@@ -949,6 +993,7 @@ function findExistingDestinationFieldMatchingSourceField(args: {
   displayFieldName: string;
   maxFieldNameLength: number | undefined;
   nameLengthUnit: NameLengthUnit;
+  nameCharacterRules: NameCharacterRules | undefined;
   existingColumnPathsAdoptedInThisTable: Set<string>;
 }): ExistingDestinationFieldMatch | undefined {
   const { existingDestinationFieldsByName } = args;
@@ -959,11 +1004,15 @@ function findExistingDestinationFieldMatchingSourceField(args: {
     if (existingField) return { existingField };
   }
   for (const fullName of fullNamesInLookupOrder) {
-    const elidedName = elideNameToMaxLength(fullName, args.maxFieldNameLength, args.nameLengthUnit);
-    if (elidedName === fullName) continue;
-    const existingField = existingDestinationFieldsByName.get(normalizeNameForUniqueness(elidedName));
+    const createdName = elideNameToMaxLength(
+      fitNameToCharacterRules(fullName, args.nameCharacterRules, FALLBACK_FIELD_NAME),
+      args.maxFieldNameLength,
+      args.nameLengthUnit,
+    );
+    if (createdName === fullName) continue;
+    const existingField = existingDestinationFieldsByName.get(normalizeNameForUniqueness(createdName));
     if (existingField && !args.existingColumnPathsAdoptedInThisTable.has(existingField.columnPath)) {
-      return { existingField, fullNameElidedToMatch: fullName };
+      return { existingField, fullNameChangedToMatch: fullName };
     }
   }
   return undefined;
@@ -987,14 +1036,16 @@ function nativeColumnTypeSharedWithDestination(
 }
 
 /**
- * Compose the human-readable message for a `TableMappingNote` covering any mix of a
- * dedup rename (collision with an existing or in-plan table) and a length-limit
- * elision. The dedup-only wording is unchanged from before the elision feature, so a
- * plain collision reads exactly as it always did.
+ * Compose the human-readable message for a `TableMappingNote` covering any mix of
+ * removed characters the destination can't use, a dedup rename (collision with an
+ * existing or in-plan table), and a length-limit elision. The dedup-only wording is
+ * unchanged from before the elision feature, so a plain collision reads exactly as it
+ * always did. `requestedName` is the name after removing characters, the one that collided.
  */
 function tableRenameMessage(args: {
   requestedName: string;
   finalName: string;
+  wereCharactersRemoved: boolean;
   wasShortenedToFit: boolean;
   wasDeduplicated: boolean;
   conflictsWithExistingTable: boolean;
@@ -1002,6 +1053,9 @@ function tableRenameMessage(args: {
   nameLengthUnit: NameLengthUnit;
 }): string {
   const clauses: string[] = [];
+  if (args.wereCharactersRemoved) {
+    clauses.push(`the name had characters the destination can't use`);
+  }
   if (args.wasDeduplicated) {
     clauses.push(
       args.conflictsWithExistingTable

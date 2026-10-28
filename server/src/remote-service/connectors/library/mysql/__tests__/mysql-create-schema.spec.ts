@@ -1,5 +1,6 @@
 import { CREATE_FIELD_KINDS, type CreateFieldSpec, type CreateFieldType } from '@spinner/shared-types';
 import knex, { type Knex } from 'knex';
+import { fitNameToCharacterRules } from 'src/schema-builder/schema-builder-unique-names';
 import { MySqlClientError, MySqlClientProblem } from '../mysql-client-error';
 import {
   buildAddMySqlColumnQuery,
@@ -74,7 +75,7 @@ const resolvedForeignKeyToCompanies: ResolvedMySqlForeignKey = {
 };
 
 describe('MYSQL_SCHEMA_CREATION_CAPABILITIES', () => {
-  it('declares every kind but multiSelect, 64-character names, a 180-field cap and the reserved id', () => {
+  it('declares every kind but multiSelect, 64-character names and their character rules, a 180-field cap and the reserved id', () => {
     expect(MYSQL_SCHEMA_CREATION_CAPABILITIES).toEqual({
       supportedFieldKinds: CREATE_FIELD_KINDS.filter((fieldKind) => fieldKind !== 'multiSelect'),
       primaryField: null,
@@ -85,6 +86,7 @@ describe('MYSQL_SCHEMA_CREATION_CAPABILITIES', () => {
       supportsManyToManyForeignKeys: false,
       requiresUniqueTableNames: true,
       nativeTypeSystem: 'mysql',
+      nameCharacterRules: { basicMultilingualPlaneOnly: true, noControlCharacters: true, noTrailingSpace: true },
     });
     expect(MYSQL_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds).not.toContain('multiSelect');
     expect(MYSQL_SCHEMA_CREATION_CAPABILITIES).not.toHaveProperty('supportedArrayElementKinds');
@@ -588,6 +590,27 @@ describe('findMySqlIdentifierProblem', () => {
   it('names the role in the message', () => {
     expect(findMySqlIdentifierProblem('', 'table')).toContain('table name');
     expect(findMySqlIdentifierProblem('', 'column')).toContain('field name');
+  });
+
+  // DEV-12413: plan generation removes what the declared `nameCharacterRules` forbid, so every name it produces
+  // must pass this check. Ties the declared rules to the rules enforced here, so the two can't drift apart.
+  it.each([
+    '   ',
+    'tab\tname',
+    'line\nbreak',
+    'sentinel\u0000name',
+    'Deals 🚀',
+    '🚀',
+    'Family 👨\u200d👩\u200d👧',
+    'trailing ',
+    'Mood 😀 ',
+  ])('accepts %j once plan generation applies the declared name rules', (identifier) => {
+    const fittedIdentifier = fitNameToCharacterRules(
+      identifier,
+      MYSQL_SCHEMA_CREATION_CAPABILITIES.nameCharacterRules,
+      'Field',
+    );
+    expect(findMySqlIdentifierProblem(fittedIdentifier, 'column')).toBeUndefined();
   });
 });
 

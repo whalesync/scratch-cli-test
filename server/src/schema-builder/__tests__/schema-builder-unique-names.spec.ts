@@ -1,4 +1,10 @@
-import { allocateUniqueName, elideNameToMaxLength, normalizeNameForUniqueness } from '../schema-builder-unique-names';
+import type { NameCharacterRules } from '@spinner/shared-types';
+import {
+  allocateUniqueName,
+  elideNameToMaxLength,
+  fitNameToCharacterRules,
+  normalizeNameForUniqueness,
+} from '../schema-builder-unique-names';
 
 describe('normalizeNameForUniqueness', () => {
   it('trims and lowercases (matching the zod duplicate rule)', () => {
@@ -86,5 +92,61 @@ describe('elideNameToMaxLength', () => {
     const result = elideNameToMaxLength('a_very_long_field_name_that_overflows', 20);
     expect(result.length).toBeLessThanOrEqual(20);
     expect(result).toContain('…');
+  });
+});
+
+describe('fitNameToCharacterRules (DEV-12413)', () => {
+  const ALL_RULES: NameCharacterRules = {
+    basicMultilingualPlaneOnly: true,
+    noControlCharacters: true,
+    noTrailingSpace: true,
+  };
+
+  it('returns the name unchanged when no rules are given', () => {
+    expect(fitNameToCharacterRules('Mood \u{1F600} ', undefined, 'Field')).toBe('Mood \u{1F600} ');
+  });
+
+  it.each([
+    ['an emoji at the end', 'Mood \u{1F600}', 'Mood'],
+    ['an emoji in the middle', 'Hot \u{1F525} Deals', 'Hot Deals'],
+    ['an emoji at the start', '\u{1F525} Deals', 'Deals'],
+    ['an emoji between letters', 'Hot\u{1F525}Deals', 'Hot Deals'],
+    ['several emoji in a row', 'Mood \u{1F600}\u{1F622}', 'Mood'],
+    ['a zero-width-joiner sequence', 'Family \u{1F468}\u200d\u{1F469}\u200d\u{1F467} Plan', 'Family Plan'],
+    ['a skin-tone modifier', 'Likes \u{1F44D}\u{1F3FD}', 'Likes'],
+    ['a heart with a variation selector joined to an emoji', 'Hot \u2764\ufe0f\u200d\u{1F525}', 'Hot \u2764'],
+    ['a line break', 'First\nName', 'First Name'],
+    ['a tab with spaces around it', 'First \t Name', 'First Name'],
+    ['a NUL character', 'sentinel\u0000name', 'sentinel name'],
+    ['a trailing space', 'Trailing space ', 'Trailing space'],
+    ['several trailing spaces', 'Trailing   ', 'Trailing'],
+  ])('removes %s', (_label, name, expected) => {
+    expect(fitNameToCharacterRules(name, ALL_RULES, 'Field')).toBe(expected);
+  });
+
+  it.each([
+    ['only emoji', '\u{1F600}'],
+    ['only spaces', '   '],
+    ['only emoji and spaces', ' \u{1F600} \u{1F525} '],
+  ])('falls back when the name is %s', (_label, name) => {
+    expect(fitNameToCharacterRules(name, ALL_RULES, 'Field')).toBe('Field');
+  });
+
+  it.each([
+    ['a plain name', 'Customer Name'],
+    ['a heart below U+FFFF', 'Love \u2764\ufe0f'],
+    ['accented and CJK letters', 'Größe 名前'],
+    ['a leading space', ' Leading'],
+    ['an ellipsis from elision', 'Customer…Name'],
+  ])('leaves %s unchanged', (_label, name) => {
+    expect(fitNameToCharacterRules(name, ALL_RULES, 'Field')).toBe(name);
+  });
+
+  it('removes only what the rules forbid', () => {
+    expect(fitNameToCharacterRules('Mood \u{1F600} ', { noTrailingSpace: true }, 'Field')).toBe('Mood \u{1F600}');
+    expect(fitNameToCharacterRules('First\nName \u{1F600}', { noControlCharacters: true }, 'Field')).toBe(
+      'First Name \u{1F600}',
+    );
+    expect(fitNameToCharacterRules('Mood \u{1F600} ', { basicMultilingualPlaneOnly: true }, 'Field')).toBe('Mood');
   });
 });

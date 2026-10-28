@@ -25,7 +25,8 @@
  *   knex would otherwise fall back to the connection's `charset` option — a collation name in mysql2, which would
  *   produce invalid DDL.
  * - Every identifier segment (database, table, column) is sentinel-encoded, so `.`, ` as ` and `?` in a name reach
- *   MySQL verbatim inside backticks (Connector Prime Directive: names are never folded or renamed).
+ *   MySQL verbatim inside backticks (Connector Prime Directive: names are never folded or renamed here). Characters
+ *   MySQL can't hold in a name are removed earlier, by plan generation, from `nameCharacterRules` (DEV-12413).
  */
 import { CREATE_FIELD_KINDS, isDataFolderId, type SchemaCreationCapabilities } from '@spinner/shared-types';
 import { createHash } from 'crypto';
@@ -105,13 +106,17 @@ export const MYSQL_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
   requiresUniqueTableNames: true,
   // A source column annotated with its exact MySQL type (MySQL, MariaDB, TiDB, ...) is recreated with that type.
   nativeTypeSystem: MYSQL_NATIVE_TYPE_SYSTEM,
+  // The character rules of findMySqlIdentifierProblem, so plan generation removes what MySQL would refuse (DEV-12413).
+  nameCharacterRules: { basicMultilingualPlaneOnly: true, noControlCharacters: true, noTrailingSpace: true },
 };
 
 /**
  * Why MySQL can't use `identifier` as a table or column name, or `undefined` when it can. Checked up front so the
- * user gets a precise reason instead of an opaque server error — and because Scratch never renames a column
+ * user gets a precise reason instead of an opaque server error — and because the connector never renames a column
  * (`findCreatedDestinationField` resolves created fields by the requested name, so a silent rename would break the
- * sync draft). Rules (MySQL "Schema Object Names"):
+ * sync draft). Plan generation already removes the characters these rules forbid
+ * (`MYSQL_SCHEMA_CREATION_CAPABILITIES.nameCharacterRules`), so this mostly catches a name a person typed. Rules
+ * (MySQL "Schema Object Names"):
  * - at most 64 characters;
  * - no control characters (U+0000 is illegal in MySQL; U+0000/U+0001 are also our knex identifier sentinels, so a
  *   raw one would be decoded into a different name);
