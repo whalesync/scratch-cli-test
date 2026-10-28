@@ -151,6 +151,10 @@ export function parseMySqlCredentialsFromUserInput(
  *   and a newly added CA upgrades an inherited REQUIRED / DISABLED to VERIFY_CA.
  * - Stored keys are PICKED (the blob may carry other connectors' keys or the account row); a stored
  *   `connectionString` is ignored, so the first real edit purges it.
+ * - The stored password is never reused for a different connection target: an edit that changes the Host, Port
+ *   or Username must send the Password (or a connection string) too, else it is rejected. Otherwise anyone who can
+ *   edit the connection could point it at a server they control and collect the password on the next connect. A
+ *   stored target that can't be read counts as changed.
  */
 export function applyMySqlCredentialPatch(
   patch: Record<string, unknown>,
@@ -186,7 +190,17 @@ export function applyMySqlCredentialPatch(
     // An unreadable stored SSL mode is dropped (it never took effect: connecting rejects it).
     const inheritedSslMode =
       storedSslModeText === undefined ? undefined : mapMySqlSslModeSpellingToSslMode(storedSslModeText);
-    return validateMySqlCredentialValues(mergedValues, { inheritedSslMode });
+    const parsedCredentials = validateMySqlCredentialValues(mergedValues, { inheritedSslMode });
+
+    // The stored password is read only when it is inherited (no password key and no connection string in the patch).
+    const editInheritsStoredPassword = storedValuesExceptSslMode.password !== undefined;
+    if (editInheritsStoredPassword) {
+      assertConnectionTargetUnchangedWhenInheritingStoredPassword(
+        parsedCredentials.connectionOptions,
+        existingCredentials ?? {},
+      );
+    }
+    return parsedCredentials;
   });
 }
 
@@ -429,6 +443,68 @@ function parseMySqlPortFieldValue(portText: string | undefined): number {
     );
   }
   return port;
+}
+
+/** The host, port and username a connection's stored settings connect to. */
+interface StoredMySqlConnectionTarget {
+  readonly host: string;
+  readonly port: number;
+  readonly username: string;
+}
+
+/**
+ * An edit that reuses the stored password must keep the host, port and username it was entered for: rejects the
+ * edit when any of them changed, or when the stored ones can't be read (fail closed). Compares the normalized
+ * values connect uses, so resending the same host (or `[::1]` for `::1`) is not a change.
+ */
+function assertConnectionTargetUnchangedWhenInheritingStoredPassword(
+  editedConnectionOptions: MySqlConnectionOptions,
+  existingCredentials: object,
+): void {
+  const storedConnectionTarget = readStoredMySqlConnectionTargetOrUndefinedWhenUnreadable(existingCredentials);
+  const connectionTargetIsUnchanged =
+    storedConnectionTarget !== undefined &&
+    storedConnectionTarget.host === editedConnectionOptions.host &&
+    storedConnectionTarget.port === editedConnectionOptions.port &&
+    storedConnectionTarget.username === editedConnectionOptions.username;
+  if (!connectionTargetIsUnchanged) {
+    throw new MySqlCredentialsInvalidError(
+      MySqlCredentialProblem.PasswordRequiredForConnectionTargetChange,
+      'Enter the password again when you change the host, port or username, or paste the full connection string. ' +
+        'Scratch only reuses a saved password for the server and user it was entered for.',
+    );
+  }
+}
+
+/** The stored target, normalized the way connect reads it; `undefined` when a key is missing, not text or invalid. */
+function readStoredMySqlConnectionTargetOrUndefinedWhenUnreadable(
+  existingCredentials: object,
+): StoredMySqlConnectionTarget | undefined {
+  try {
+    const storedConnectionTargetValues = nonEmptySubmittedValues(
+      readSubmittedMySqlCredentialValues(existingCredentials, {
+        keysToRead: ['databaseHost', 'databasePort', 'username'],
+        rejectUnknownKeys: false,
+        describeNonTextValue: describeNonTextStoredValue,
+      }),
+    );
+    if (
+      storedConnectionTargetValues.databaseHost === undefined ||
+      storedConnectionTargetValues.username === undefined
+    ) {
+      return undefined;
+    }
+    return {
+      host: normalizeMySqlDatabaseHost(storedConnectionTargetValues.databaseHost),
+      port: parseMySqlPortFieldValue(storedConnectionTargetValues.databasePort),
+      username: storedConnectionTargetValues.username,
+    };
+  } catch (error) {
+    if (error instanceof MySqlCredentialsInvalidError) {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 function assertMySqlDatabaseNameIsValid(databaseName: string | undefined): void {

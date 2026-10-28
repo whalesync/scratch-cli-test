@@ -181,7 +181,8 @@ describe('MySqlAuthParser', () => {
       expect(await parsePatch({ password: '' }, existingCredentials)).not.toHaveProperty('password');
       expect(await parsePatch({ password: null }, existingCredentials)).not.toHaveProperty('password');
       expect(await parsePatch({ databaseName: '' }, existingCredentials)).not.toHaveProperty('databaseName');
-      expect((await parsePatch({ databasePort: '' }, existingCredentials)).databasePort).toBe('3306');
+      // Clearing the port changes the target (3307 → 3306), so the password comes along.
+      expect((await parsePatch({ databasePort: '', password: 'new' }, existingCredentials)).databasePort).toBe('3306');
       expect((await parsePatch({ sslMode: '' }, { ...existingCredentials, sslMode: 'VERIFY_IDENTITY' })).sslMode).toBe(
         'REQUIRED',
       );
@@ -317,8 +318,12 @@ describe('MySqlAuthParser', () => {
       expect(credentialsInvalidError.problem).toBe(MySqlCredentialProblem.StoredSettingNotText);
       expect(credentialsInvalidError.message).toContain('Port');
 
-      expect((await parsePatch({ databasePort: '3308' }, existingWithNumericPort)).databasePort).toBe('3308');
-      expect((await parsePatch({ databasePort: '' }, existingWithNumericPort)).databasePort).toBe('3306');
+      expect((await parsePatch({ databasePort: '3308', password: 'new' }, existingWithNumericPort)).databasePort).toBe(
+        '3308',
+      );
+      expect((await parsePatch({ databasePort: '', password: 'new' }, existingWithNumericPort)).databasePort).toBe(
+        '3306',
+      );
       expect(
         (await parsePatch({ connectionString: 'mysql://app@db2.example.com:3309' }, existingWithNumericPort))
           .databasePort,
@@ -345,7 +350,12 @@ describe('MySqlAuthParser', () => {
       );
       expect(credentialsInvalidError.problem).toBe(MySqlCredentialProblem.SslModeVerifyIdentityRequiresHostname);
       expect(
-        (await parsePatch({ databaseHost: '203.0.113.10', sslMode: 'VERIFY_CA' }, existingWithVerifyIdentity)).sslMode,
+        (
+          await parsePatch(
+            { databaseHost: '203.0.113.10', sslMode: 'VERIFY_CA', password: 'new' },
+            existingWithVerifyIdentity,
+          )
+        ).sslMode,
       ).toBe('VERIFY_CA');
     });
 
@@ -356,6 +366,94 @@ describe('MySqlAuthParser', () => {
     ])('rejects a patch with %s', async (_description, patch, expectedProblem) => {
       const credentialsInvalidError = await captureParserRejection(() => parsePatch(patch, existingCredentials));
       expect(credentialsInvalidError.problem).toBe(expectedProblem);
+    });
+
+    describe('the stored password is reused only for the same host, port and username', () => {
+      const connectionTargetEdits: [string, Record<string, unknown>][] = [
+        ['the host', { databaseHost: 'attacker.example.net' }],
+        ['the port', { databasePort: '3308' }],
+        ['the port back to the default', { databasePort: '' }],
+        ['the username', { username: 'root' }],
+      ];
+
+      it.each(connectionTargetEdits)('rejects changing %s without the password', async (_changedTarget, patch) => {
+        const credentialsInvalidError = await captureParserRejection(() => parsePatch(patch, existingCredentials));
+        expect(credentialsInvalidError.problem).toBe(MySqlCredentialProblem.PasswordRequiredForConnectionTargetChange);
+        expect(credentialsInvalidError.message).not.toContain('attacker');
+        expect(credentialsInvalidError.message).not.toContain('old-password');
+      });
+
+      it.each(connectionTargetEdits)('accepts changing %s with the password', async (_changedTarget, patch) => {
+        expect((await parsePatch({ ...patch, password: sentinelPassword }, existingCredentials)).password).toBe(
+          sentinelPassword,
+        );
+      });
+
+      it.each(connectionTargetEdits)(
+        'accepts changing %s while clearing the password (nothing is reused)',
+        async (_changedTarget, patch) => {
+          expect(await parsePatch({ ...patch, password: '' }, existingCredentials)).not.toHaveProperty('password');
+        },
+      );
+
+      it('accepts resending the stored host, port and username unchanged, compared after normalization', async () => {
+        expect(
+          await parsePatch(
+            { databaseHost: ' db.example.com ', databasePort: '3307', username: 'app' },
+            existingCredentials,
+          ),
+        ).toStrictEqual(existingStoredCredentials);
+
+        const existingWithIpv6HostAndDefaultPort = {
+          ...existingCredentials,
+          databaseHost: '2001:db8::1',
+          databasePort: '3306',
+        };
+        expect(
+          await parsePatch({ databaseHost: '[2001:db8::1]', databasePort: '' }, existingWithIpv6HostAndDefaultPort),
+        ).toMatchObject({ databaseHost: '2001:db8::1', databasePort: '3306', password: 'old-password' });
+      });
+
+      it.each<[string, Record<string, unknown>]>([
+        ['Database', { databaseName: 'other_db' }],
+        ['SSL Mode', { sslMode: 'VERIFY_CA' }],
+        ['CA Certificate', { sslCaCertificate: caCertificatePem }],
+      ])('keeps reusing the stored password for a %s-only edit', async (_editedSetting, patch) => {
+        expect((await parsePatch(patch, existingCredentials)).password).toBe('old-password');
+      });
+
+      it('accepts a target change when no password is stored (there is nothing to reuse)', async () => {
+        const existingWithoutPassword = {
+          ...existingAccountRowKeysAndForeignCredentials,
+          databaseHost: 'db.example.com',
+          databasePort: '3307',
+          username: 'app',
+          sslMode: 'REQUIRED',
+        };
+        expect(await parsePatch({ databaseHost: 'db2.example.com' }, existingWithoutPassword)).toStrictEqual({
+          databaseHost: 'db2.example.com',
+          databasePort: '3307',
+          username: 'app',
+          sslMode: 'REQUIRED',
+        });
+      });
+
+      it.each<[string, Record<string, unknown>, Record<string, unknown>]>([
+        ['an invalid stored host', { databaseHost: 'db.example.com:3306' }, { databaseHost: 'db.example.com' }],
+        ['a missing stored host', { databaseHost: undefined }, { databaseHost: 'db.example.com' }],
+        ['a non-text stored port', { databasePort: 3307 }, { databasePort: '3307' }],
+        ['a missing stored username', { username: null }, { username: 'app' }],
+      ])(
+        'requires the password when %s is replaced (an unreadable stored target counts as changed)',
+        async (_unreadableStoredSetting, storedOverrides, patch) => {
+          const credentialsInvalidError = await captureParserRejection(() =>
+            parsePatch(patch, { ...existingCredentials, ...storedOverrides }),
+          );
+          expect(credentialsInvalidError.problem).toBe(
+            MySqlCredentialProblem.PasswordRequiredForConnectionTargetChange,
+          );
+        },
+      );
     });
 
     it('treats an empty existing blob like a create', async () => {

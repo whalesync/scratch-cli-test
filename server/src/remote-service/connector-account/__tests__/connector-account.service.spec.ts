@@ -20,7 +20,10 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import type { AuthParser } from '../../connectors/connector';
 import { ConnectorsService } from '../../connectors/connectors.service';
 import { MySqlAuthParser } from '../../connectors/library/mysql/mysql-auth-parser';
-import { MySqlCredentialsInvalidError } from '../../connectors/library/mysql/mysql-credential-errors';
+import {
+  MySqlCredentialProblem,
+  MySqlCredentialsInvalidError,
+} from '../../connectors/library/mysql/mysql-credential-errors';
 import { ConnectorAccountService } from '../connector-account.service';
 
 const WORKBOOK_ID = 'wkb_test' as WorkbookId;
@@ -352,6 +355,38 @@ describe('ConnectorAccountService', () => {
       ).rejects.toThrow(MySqlCredentialsInvalidError);
       expect(credentialEncryptionService.encryptCredentials).not.toHaveBeenCalled();
       expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
+    });
+
+    it('MySQL: a host change without the password is rejected and the stored credentials stay as they are', async () => {
+      mockStoredAccount('MYSQL', STORED_MYSQL_CREDENTIALS);
+
+      await expect(
+        service.update(
+          WORKBOOK_ID,
+          ACCOUNT_ID,
+          { userProvidedParams: { databaseHost: 'attacker.example.net' } },
+          ACTOR,
+        ),
+      ).rejects.toMatchObject({ problem: MySqlCredentialProblem.PasswordRequiredForConnectionTargetChange });
+      expect(credentialEncryptionService.encryptCredentials).not.toHaveBeenCalled();
+      expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
+    });
+
+    it('MySQL: a host change that sends the password again is stored', async () => {
+      mockStoredAccount('MYSQL', STORED_MYSQL_CREDENTIALS);
+
+      await service.update(
+        WORKBOOK_ID,
+        ACCOUNT_ID,
+        { userProvidedParams: { databaseHost: 'new.example.com', password: 'new-secret' } },
+        ACTOR,
+      );
+
+      expect(credentialsPassedToEncryption()).toEqual({
+        ...STORED_MYSQL_CREDENTIALS,
+        databaseHost: 'new.example.com',
+        password: 'new-secret',
+      });
     });
 
     it('a parser that does not handle edits is skipped, and the edit is merged into the stored credentials', async () => {

@@ -27,6 +27,8 @@ export enum MySqlCredentialProblem {
   UsernameRequired = 'USERNAME_REQUIRED',
   UsernameInvalid = 'USERNAME_INVALID',
   ConnectionStringCombinedWithDiscreteFields = 'CONNECTION_STRING_COMBINED_WITH_DISCRETE_FIELDS',
+  /** An edit would send the saved password to a different host, port or username. */
+  PasswordRequiredForConnectionTargetChange = 'PASSWORD_REQUIRED_FOR_CONNECTION_TARGET_CHANGE',
 
   // Host / port / database.
   HostContainsUrl = 'HOST_CONTAINS_URL',
