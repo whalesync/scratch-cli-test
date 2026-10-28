@@ -31,6 +31,8 @@
  *                               <source>.env); e.g. mysql-mariadb.env for a second server
  *   --dest-creds file           the same for the destination (default <dest>.env)
  *   --skip-fields "A,B"         destination field names to leave unselected
+ *   --select-over-limit-fields  also send fields the plan notes `over_field_limit` (past the destination's
+ *                               field cap), which dusky leaves unselected; exercises the save backstop
  *   --report path               where to write report.json (default ./live-export-audit-report.json)
  *   --rerun                     skip setup, just trigger the routine again and report
  *                               (requires --workbook; used for CRUD verification passes)
@@ -393,6 +395,7 @@ async function sampleFolder(dataFolderId, maxFiles = 8) {
 // unresolvedLinkedTableId; the server resolves them against the draft at save).
 const draft = (await api('POST', `/workbooks/${wb}/sync-drafts`, {})).body;
 const skipFields = new Set(String(args['skip-fields'] ?? '').split(',').filter(Boolean));
+const selectOverLimitFields = Boolean(args['select-over-limit-fields']);
 const selectedRemoteLeafIds = new Set(folders.flatMap((f) => f.remoteId));
 const tableMappings = [];
 
@@ -415,11 +418,22 @@ for (const f of folders) {
     fields: spec.fields.map((fl) => ({ name: fl.name, kind: fl.fieldType.kind, isPrimary: !!fl.isPrimary, isSourceRecordId: !!fl.isSourceRecordId })),
     notes: plan.notes.map((n) => ({ field: n.fieldName, sourcePath: n.sourceFieldPath, status: n.status, mappedKind: n.mappedKind, message: n.message ?? null })),
     droppedForeignKeys: [],
+    fieldsOverLimit: [],
     ...(await sampleFolder(f.dataFolderId)),
   };
   report.tables.push(tableReport);
 
-  let fields = spec.fields.filter((fl) => !skipFields.has(fl.name));
+  // Fields past the destination's per-table field cap stay in the plan but are noted `over_field_limit`; leave
+  // them unselected like dusky does, unless asked to send them (DEV-12414).
+  const overLimitFieldNames = new Set(
+    plan.notes
+      .filter((n) => n.status === 'over_field_limit' && n.sourceDataFolderId === f.dataFolderId)
+      .map((n) => n.fieldName),
+  );
+  tableReport.fieldsOverLimit = [...overLimitFieldNames];
+  let fields = spec.fields.filter(
+    (fl) => !skipFields.has(fl.name) && (selectOverLimitFields || !overLimitFieldNames.has(fl.name)),
+  );
   fields = fields.flatMap((fl) => {
     if (fl.fieldType.kind !== 'foreignKey') return [fl];
     const tgt = fl.fieldType.target ?? {};
@@ -532,6 +546,7 @@ const digest = {
     records: t.fileCount,
     downgraded: t.notes.filter((n) => n.status !== 'mapped').map((n) => `${n.field}: ${n.message}`),
     droppedForeignKeys: t.droppedForeignKeys,
+    fieldsOverLimit: t.fieldsOverLimit,
   })),
   firstRun: report.runs[0]?.resultSummary,
   publishFailures: report.runs[0]?.steps.find((s) => s.action === 'publish')?.publish?.failedOperations?.map((f) => f.error.slice(0, 200)) ?? [],

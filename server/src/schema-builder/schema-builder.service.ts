@@ -435,6 +435,11 @@ export class SchemaBuilderService {
         : {}),
       // Characters the destination can't hold in a name (MySQL's emoji, trailing spaces) are removed from the plan.
       destinationNameCharacterRules: destinationCapabilities?.nameCharacterRules,
+      // Fields past the destination's per-table cap stay in the plan but are noted `over_field_limit`, so a
+      // client leaves them unselected instead of the save failing at create (DEV-12414).
+      ...(destinationCapabilities?.maxFieldsPerTable !== undefined
+        ? { destinationMaxFieldsPerTable: destinationCapabilities.maxFieldsPerTable }
+        : {}),
       destinationRequiresPrimaryField: destinationCapabilities?.primaryField != null,
       ...(destinationCapabilities?.primaryField
         ? { destinationPrimaryFieldKinds: destinationCapabilities.primaryField.kinds }
@@ -949,12 +954,16 @@ function errorMessage(error: unknown): string {
  * client needs to bring a plan into compliance before creating it. The connector's
  * `primaryField` requirement (or `null`) carries straight through, so a connector
  * that declares no capabilities or no primary field yields `{ primaryField: null }`
- * and the client can treat the object uniformly.
+ * and the client can treat the object uniformly. `maxFieldsPerTable` is present only
+ * when the connector caps the field count.
  */
 function schemaCreationPrerequisitesFromCapabilities(
   capabilities: SchemaCreationCapabilities | undefined,
 ): CreateSchemaPrerequisites {
-  return { primaryField: capabilities?.primaryField ?? null };
+  return {
+    primaryField: capabilities?.primaryField ?? null,
+    ...(capabilities?.maxFieldsPerTable !== undefined ? { maxFieldsPerTable: capabilities.maxFieldsPerTable } : {}),
+  };
 }
 
 function aggregateTableStatus(results: CreateTableResult[]): CreateSchemaStatus {

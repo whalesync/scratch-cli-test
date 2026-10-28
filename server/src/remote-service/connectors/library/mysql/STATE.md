@@ -336,8 +336,16 @@ writes the draft again later in the same save, and that write lands the checkpoi
 |---|---|---|
 | [DEV-12412](https://linear.app/whalesync/issue/DEV-12412) | High | A created field MySQL skipped or rejected (no REFERENCES privilege, PlanetScale without foreign keys, a name MySQL can't hold) leaves the table `partial`; apply then fails with "Could not resolve created field …" on every save, and the real cause is lost |
 | [DEV-12413](https://linear.app/whalesync/issue/DEV-12413) | High | The plan kept field names MySQL can't use (emoji, trailing space), which led into DEV-12412. **Fixed:** the plan removes those characters (see "Names can't hold emoji" above) |
-| [DEV-12414](https://linear.app/whalesync/issue/DEV-12414) | Medium | A table over the 180-field cap fails the whole save and blames every table in it; the plan doesn't apply the cap |
+| [DEV-12414](https://linear.app/whalesync/issue/DEV-12414) | Medium | A table over the 180-field cap fails the whole save and blames every table in it; the plan didn't apply the cap. **Fixed:** the plan keeps every field but notes the ones past the cap `over_field_limit` (and reports the cap as `prerequisites.maxFieldsPerTable`); a save that still sends too many fails only that table, and any table linking to it, by name |
 | [DEV-12415](https://linear.app/whalesync/issue/DEV-12415) | Low | MySQL → MySQL: a JSON integer above 2^53 makes every run rewrite the record |
+
+DEV-12414 follow-ups (the fix is Scratch-only):
+
+- dusky `live-export-fk.ts` `warnedFieldNames`: treat an `over_field_limit` note like a `downgraded` one with a message, so those fields start unselected with the warning glyph. Until then dusky selects them and the save fails on the wide table.
+- dusky: block a selection over `prerequisites.maxFieldsPerTable` before save, counting the source-record-id and primary fields it force-adds.
+- dusky `creation.ts`: label a failed table by its `createSpec.name` rather than its ref.
+- bottlenose: report the status and the cap in `live_export_list_source_fields`, and check the field count in `validate_mappings`.
+- Scratch: apply the cap to add-fields plans (the existing columns plus the new ones); `createFields` doesn't check the count today.
 
 ## Integration tests
 

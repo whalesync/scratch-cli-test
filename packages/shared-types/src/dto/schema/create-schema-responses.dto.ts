@@ -148,6 +148,13 @@ export interface CreateSchemaPrerequisites {
    * validation time.
    */
   primaryField: PrimaryFieldRequirement | null;
+  /**
+   * The destination's maximum number of fields per table (`SchemaCreationCapabilities.maxFieldsPerTable`),
+   * present only when the connector enforces one. Counts a table's FINAL field list — including the
+   * source-record-id and primary fields a client force-adds — so a client can stop a selection from going
+   * over it before create. Fields past it in a generated plan carry an `over_field_limit` note.
+   */
+  maxFieldsPerTable?: number;
 }
 
 /** Per-field outcome of a create operation. */
@@ -248,9 +255,22 @@ export interface FieldMappingNote {
    * and was skipped. `skipped_reciprocal` is a symmetric-service (Airtable/Notion)
    * link field omitted because the OTHER side of the same relationship is being
    * suggested instead — or, for a many-to-many whose destination can't represent
-   * one, because neither side is (DEV-10753).
+   * one, because neither side is (DEV-10753). `over_field_limit` is a field kept in
+   * `plan.tables[].fields` that lies past the destination's `maxFieldsPerTable`:
+   * creating it along with every field before it would exceed the cap, so a client
+   * should leave it unselected by default and let the user pick it in place of
+   * another field. A plan still carrying these fields is over the cap if POSTed to
+   * /schema/tables as-is (DEV-12414).
    */
-  status: 'mapped' | 'downgraded' | 'unsupported' | 'exists' | 'adopted' | 'needs_target' | 'skipped_reciprocal';
+  status:
+    | 'mapped'
+    | 'downgraded'
+    | 'unsupported'
+    | 'exists'
+    | 'adopted'
+    | 'needs_target'
+    | 'skipped_reciprocal'
+    | 'over_field_limit';
   mappedKind?: CreateFieldKind;
   message?: string;
   /**

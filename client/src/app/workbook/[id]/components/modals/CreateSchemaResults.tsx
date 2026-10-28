@@ -76,6 +76,7 @@ function noteColor(status: FieldMappingNote['status']): 'green' | 'gray' | 'red'
   if (status === 'downgraded') return 'gray';
   if (status === 'exists') return 'gray'; // already on destination — skipped, not an error
   if (status === 'skipped_reciprocal') return 'gray'; // other side of a symmetric link suggested instead — intentional
+  if (status === 'over_field_limit') return 'gray'; // past the destination's field cap — left out, can be swapped in
   return 'red'; // unsupported / needs_target — needs action before this field can be created
 }
 
@@ -88,10 +89,20 @@ function PlanResultView({ planResult }: { planResult: PlanResult }) {
   const exists = planResult.notes.filter((note) => note.status === 'exists');
   // Symmetric-service link fields omitted because the other side is suggested instead (DEV-10753).
   const skippedReciprocal = planResult.notes.filter((note) => note.status === 'skipped_reciprocal');
+  // Fields past the destination's per-table field cap, left out of the prefilled plan (DEV-12414).
+  const overFieldLimit = planResult.notes.filter((note) => note.status === 'over_field_limit');
   const mapped = planResult.notes.filter((note) => note.status === 'mapped');
   const tableNotes = planResult.tableNotes;
   // All notes, most-severe first, for the collapsible details panel.
-  const orderedNotes = [...unsupported, ...needsTarget, ...downgraded, ...exists, ...skippedReciprocal, ...mapped];
+  const orderedNotes = [
+    ...unsupported,
+    ...needsTarget,
+    ...overFieldLimit,
+    ...downgraded,
+    ...exists,
+    ...skippedReciprocal,
+    ...mapped,
+  ];
 
   return (
     <Stack gap="sm">
@@ -113,6 +124,7 @@ function PlanResultView({ planResult }: { planResult: PlanResult }) {
             ? `, ${skippedReciprocal.length} reciprocal link${skippedReciprocal.length === 1 ? '' : 's'} omitted`
             : ''}
           {needsTarget.length > 0 ? `, ${needsTarget.length} need a destination table` : ''}
+          {overFieldLimit.length > 0 ? `, ${overFieldLimit.length} over the destination's field limit (left out)` : ''}
           {unsupported.length > 0 ? `, ${unsupported.length} unsupported (omitted)` : ''}
           {tableNotes.length > 0 ? `, ${tableNotes.length} table${tableNotes.length === 1 ? '' : 's'} renamed` : ''}.
         </Text13Regular>

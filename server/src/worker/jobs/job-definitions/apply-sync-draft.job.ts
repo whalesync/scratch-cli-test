@@ -67,6 +67,24 @@ function collectPlaceholderRefs(tableMappings: DraftTableMapping[]): {
   return { allPlaceholderRefs, alreadyResolvedRefs };
 }
 
+/**
+ * A human label for each placeholder ref, so the job's failure message names the table or field at fault
+ * (`table "contacts"`) instead of an opaque ref (`dfd_CSaThraFb3`) — DEV-12414. A ref the draft doesn't
+ * describe falls back to the raw ref.
+ */
+function labelPlaceholderRefsByName(tableMappings: DraftTableMapping[]): Map<string, string> {
+  const labelByPlaceholderRef = new Map<string, string>();
+  for (const tableMapping of tableMappings) {
+    if (tableMapping.destination.kind === 'placeholderTable') {
+      labelByPlaceholderRef.set(tableMapping.destination.ref, `table "${tableMapping.destination.createSpec.name}"`);
+    }
+    for (const addition of tableMapping.fieldAdditions ?? []) {
+      labelByPlaceholderRef.set(addition.ref, `field "${addition.createFieldSpec.name}"`);
+    }
+  }
+  return labelByPlaceholderRef;
+}
+
 export class ApplySyncDraftJobHandler implements JobHandlerBuilder<ApplySyncDraftJobDefinition> {
   constructor(
     private readonly prisma: PrismaClient,
@@ -187,9 +205,15 @@ export class ApplySyncDraftJobHandler implements JobHandlerBuilder<ApplySyncDraf
       if (failedResults.length > 0) {
         failedRefs = failedResults.map((result) => ({ ref: result.ref, error: result.error ?? 'Creation failed' }));
         await checkpointCurrentProgress();
+        const labelByPlaceholderRef = labelPlaceholderRefsByName(tableMappings);
         throw new Error(
           `Failed to create ${failedResults.length} of ${totalPlaceholders} tables/fields on the destination: ` +
-            failedResults.map((result) => `${result.ref}: ${result.error ?? 'Creation failed'}`).join('; '),
+            failedResults
+              .map(
+                (result) =>
+                  `${labelByPlaceholderRef.get(result.ref) ?? result.ref}: ${result.error ?? 'Creation failed'}`,
+              )
+              .join('; '),
         );
       }
 

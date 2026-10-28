@@ -7,6 +7,7 @@ import {
   CreateFieldResult,
   CreateSchemaTablesDto,
   CreateTableResult,
+  FieldMappingNote,
   PrimaryFieldRequirement,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -401,6 +402,33 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
         .expect(201);
 
       expect(res.body.prerequisites).toEqual({ primaryField: null });
+    });
+
+    it("surfaces the destination's field cap and notes the fields past it over_field_limit (DEV-12414)", async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+      connectorsService.getConnector.mockResolvedValue(
+        connectorStub({
+          getSchemaCreationCapabilities: () => ({
+            supportedFieldKinds: ['text', 'longText', 'number'],
+            primaryField: null,
+            maxFieldsPerTable: 3,
+          }),
+        }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({ sources: [{ dataFolderId: 'src_authors' }], destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID })
+        .expect(201);
+
+      expect(res.body.prerequisites).toEqual({ primaryField: null, maxFieldsPerTable: 3 });
+      // name, bio, age + the injected source_record_id: every field stays in the plan, the last data field is noted.
+      expect(res.body.plan.tables[0].fields).toHaveLength(4);
+      const overLimitFieldNames = (res.body.notes as FieldMappingNote[])
+        .filter((note) => note.status === 'over_field_limit')
+        .map((note) => note.fieldName);
+      expect(overLimitFieldNames).toEqual(['age']);
     });
 
     it('diffs against an existing destination folder and emits an add-fields plan', async () => {

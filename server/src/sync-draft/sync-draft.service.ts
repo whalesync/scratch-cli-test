@@ -69,6 +69,10 @@ import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
+import {
+  findTablesLinkingToUncreatableTables,
+  groupCreateSchemaIssuesByTableIndex,
+} from './create-tables-issue-attribution';
 import { CreateSyncDraftDtoClass, PatchSyncDraftDtoClass } from './dto/sync-draft.dto';
 import { SyncDraftEntity } from './entities/sync-draft.entity';
 import {
@@ -1083,77 +1087,137 @@ export class SyncDraftService {
       const placeholderRefByCreateSpecRef = new Map(
         group.placeholders.map((placeholder) => [placeholder.createSpec.ref, placeholder.ref]),
       );
-      try {
-        const dto: CreateSchemaTablesDto = {
-          connectorAccountId: group.connectorAccountId,
-          ...(group.remoteParentId ? { remoteParentId: group.remoteParentId } : {}),
-          ...(newParentName ? { newParentName } : {}),
-          tables: group.placeholders.map((placeholder) =>
-            resolveCreateSpecForeignKeyTargets(placeholder.createSpec, foreignKeyResolutionMap),
-          ),
-          materializeLocally: false,
-        };
-        let provisionedRemoteParentIdPersisted = false;
-        const response = await this.schemaBuilderService.createTables(workbookId, dto, actor, {
-          onTableResult: async (tableResult) => {
-            // A connector that provisions the parent picks its name at create time (Supabase's "New schema"
-            // takes the first unused schema name), so a retry would pick a DIFFERENT one. Persist the pin the
-            // moment the first table reports it, not after the whole batch, so a crash mid-batch retries
-            // into the schema already made instead of splitting the export across two.
-            if (tableResult.remoteParentId && !provisionedRemoteParentIdPersisted) {
-              provisionedRemoteParentIdPersisted = true;
-              for (const placeholder of group.placeholders) {
-                placeholder.remoteParentId = tableResult.remoteParentId;
+      // The tables still to send. A batch rejected at validation names the tables at fault (each issue's
+      // path starts with its `tables[i]`), so those — and any table linking to them — fail on their own
+      // and the rest are sent again, instead of one bad table failing the whole batch under the same
+      // message (DEV-12414). Every pass that doesn't stop removes at least one table, so this ends.
+      let placeholdersToCreate = group.placeholders;
+      while (placeholdersToCreate.length > 0) {
+        const tablesToCreate = placeholdersToCreate.map((placeholder) =>
+          resolveCreateSpecForeignKeyTargets(placeholder.createSpec, foreignKeyResolutionMap),
+        );
+        try {
+          const dto: CreateSchemaTablesDto = {
+            connectorAccountId: group.connectorAccountId,
+            ...(group.remoteParentId ? { remoteParentId: group.remoteParentId } : {}),
+            ...(newParentName ? { newParentName } : {}),
+            tables: tablesToCreate,
+            materializeLocally: false,
+          };
+          let provisionedRemoteParentIdPersisted = false;
+          const response = await this.schemaBuilderService.createTables(workbookId, dto, actor, {
+            onTableResult: async (tableResult) => {
+              // A connector that provisions the parent picks its name at create time (Supabase's "New schema"
+              // takes the first unused schema name), so a retry would pick a DIFFERENT one. Persist the pin the
+              // moment the first table reports it, not after the whole batch, so a crash mid-batch retries
+              // into the schema already made instead of splitting the export across two.
+              if (tableResult.remoteParentId && !provisionedRemoteParentIdPersisted) {
+                provisionedRemoteParentIdPersisted = true;
+                for (const placeholder of group.placeholders) {
+                  placeholder.remoteParentId = tableResult.remoteParentId;
+                }
+                await this.persistTableMappings(draftId, tableMappings);
               }
-              await this.persistTableMappings(draftId, tableMappings);
+              if (tableResult.status === 'failed' || !tableResult.remoteTableId) return;
+              const placeholderRef = placeholderRefByCreateSpecRef.get(tableResult.ref);
+              if (placeholderRef) await onPlaceholderCreatedInBatch?.(placeholderRef);
+            },
+          });
+          for (const placeholder of placeholdersToCreate) {
+            const tableResult = response.tables.find((table) => table.ref === placeholder.createSpec.ref);
+            if (tableResult && tableResult.status !== 'failed' && tableResult.remoteTableId) {
+              placeholder.resolved = { remoteTableId: tableResult.remoteTableId, actualName: tableResult.name };
+              results.push({
+                ref: placeholder.ref,
+                kind: 'table',
+                status: 'created',
+                actualName: tableResult.name,
+                remoteTableId: tableResult.remoteTableId,
+              });
+            } else {
+              results.push({
+                ref: placeholder.ref,
+                kind: 'table',
+                status: 'failed',
+                error: tableResult?.error ?? response.unsupported?.message ?? 'Table creation failed',
+              });
             }
-            if (tableResult.status === 'failed' || !tableResult.remoteTableId) return;
-            const placeholderRef = placeholderRefByCreateSpecRef.get(tableResult.ref);
-            if (placeholderRef) await onPlaceholderCreatedInBatch?.(placeholderRef);
-          },
-        });
-        for (const placeholder of group.placeholders) {
-          const tableResult = response.tables.find((table) => table.ref === placeholder.createSpec.ref);
-          if (tableResult && tableResult.status !== 'failed' && tableResult.remoteTableId) {
-            placeholder.resolved = { remoteTableId: tableResult.remoteTableId, actualName: tableResult.name };
+          }
+          // The connector may have PROVISIONED the parent container during this
+          // batch rather than being handed an existing one (Google Sheets' "new
+          // spreadsheet" sentinel). Pin EVERY placeholder in the group — including
+          // ones that failed and will be retried — to the parent it actually used,
+          // so a later materialize adds tables to that same container instead of
+          // provisioning a second one and splitting the export across two.
+          const provisionedRemoteParentId = response.tables.find((table) => table.remoteParentId)?.remoteParentId;
+          if (provisionedRemoteParentId) {
+            for (const placeholder of group.placeholders) {
+              placeholder.remoteParentId = provisionedRemoteParentId;
+            }
+          }
+          // Checkpoint the whole batch's successes — and the pin above — the instant they land.
+          await this.persistTableMappings(draftId, tableMappings);
+          break;
+        } catch (error) {
+          const issuesByTableIndex = groupCreateSchemaIssuesByTableIndex(error);
+          const issuesNameOnlyTablesInThisBatch =
+            issuesByTableIndex !== null &&
+            [...issuesByTableIndex.keys()].every((tableIndex) => tableIndex < placeholdersToCreate.length);
+          if (!issuesByTableIndex || !issuesNameOnlyTablesInThisBatch) {
+            // Not attributable to particular tables (a connector/transport error, or an issue naming no
+            // table): nothing was created, so every table still to send fails with the whole error.
+            for (const placeholder of placeholdersToCreate) {
+              results.push({
+                ref: placeholder.ref,
+                kind: 'table',
+                status: 'failed',
+                error: schemaCreationErrorMessage(error),
+              });
+            }
+            break;
+          }
+
+          const tableRefsThatFailedValidation = new Set<string>();
+          for (const [tableIndex, issuesForTable] of issuesByTableIndex) {
+            tableRefsThatFailedValidation.add(tablesToCreate[tableIndex].ref);
+            const issueMessagesForTable = issuesForTable.map((issue) => issue.message).filter(Boolean);
             results.push({
-              ref: placeholder.ref,
-              kind: 'table',
-              status: 'created',
-              actualName: tableResult.name,
-              remoteTableId: tableResult.remoteTableId,
-            });
-          } else {
-            results.push({
-              ref: placeholder.ref,
+              ref: placeholdersToCreate[tableIndex].ref,
               kind: 'table',
               status: 'failed',
-              error: tableResult?.error ?? response.unsupported?.message ?? 'Table creation failed',
+              error:
+                issueMessagesForTable.length > 0 ? issueMessagesForTable.join('; ') : schemaCreationErrorMessage(error),
             });
           }
-        }
-        // The connector may have PROVISIONED the parent container during this
-        // batch rather than being handed an existing one (Google Sheets' "new
-        // spreadsheet" sentinel). Pin EVERY placeholder in the group — including
-        // ones that failed and will be retried — to the parent it actually used,
-        // so a later materialize adds tables to that same container instead of
-        // provisioning a second one and splitting the export across two.
-        const provisionedRemoteParentId = response.tables.find((table) => table.remoteParentId)?.remoteParentId;
-        if (provisionedRemoteParentId) {
-          for (const placeholder of group.placeholders) {
-            placeholder.remoteParentId = provisionedRemoteParentId;
+          const linkedUncreatableTableNameByTableIndex = findTablesLinkingToUncreatableTables(
+            tablesToCreate,
+            tableRefsThatFailedValidation,
+          );
+          for (const [tableIndex, linkedUncreatableTableName] of linkedUncreatableTableNameByTableIndex) {
+            results.push({
+              ref: placeholdersToCreate[tableIndex].ref,
+              kind: 'table',
+              status: 'failed',
+              error: `links to table "${linkedUncreatableTableName}", which couldn't be created — fix that table and save again`,
+            });
           }
-        }
-        // Checkpoint the whole batch's successes — and the pin above — the instant they land.
-        await this.persistTableMappings(draftId, tableMappings);
-      } catch (error) {
-        for (const placeholder of group.placeholders) {
-          results.push({
-            ref: placeholder.ref,
-            kind: 'table',
-            status: 'failed',
-            error: schemaCreationErrorMessage(error),
-          });
+          const placeholdersStillCreatable = placeholdersToCreate.filter(
+            (_placeholder, tableIndex) =>
+              !issuesByTableIndex.has(tableIndex) && !linkedUncreatableTableNameByTableIndex.has(tableIndex),
+          );
+          if (placeholdersStillCreatable.length > 0) {
+            WSLogger.warn({
+              source: 'SyncDraftService.materialize',
+              message: 'Create-tables batch rejected for some tables; creating the rest without them',
+              draftId,
+              connectorAccountId: group.connectorAccountId,
+              failedTableRefs: placeholdersToCreate
+                .filter((placeholder) => !placeholdersStillCreatable.includes(placeholder))
+                .map((placeholder) => placeholder.ref),
+              remainingTableRefs: placeholdersStillCreatable.map((placeholder) => placeholder.ref),
+            });
+          }
+          placeholdersToCreate = placeholdersStillCreatable;
         }
       }
       await onBatchProgress?.('tables', results);

@@ -232,6 +232,14 @@ export function generateCreatePlanFromSources(args: {
    */
   destinationNameCharacterRules?: NameCharacterRules;
   /**
+   * The destination connector's maximum number of fields per table, if it caps one
+   * (`SchemaCreationCapabilities.maxFieldsPerTable`). A new table whose final field list
+   * is longer keeps every field in the plan, but the ones past the cap get an
+   * `over_field_limit` note so a client leaves them unselected — see
+   * `markFieldsBeyondDestinationFieldLimit` (DEV-12414). Absent ⇒ no limit.
+   */
+  destinationMaxFieldsPerTable?: number;
+  /**
    * Whether the destination can represent a many-to-many link — a link field on each side holding a
    * list of linked records (`SchemaCreationCapabilities.supportsManyToManyForeignKeys`). Used only to
    * decide a reciprocal N→N pair from a symmetric source (Airtable/Notion): when false (e.g.
@@ -348,6 +356,17 @@ export function generateCreatePlanFromSources(args: {
       // for connectors like Airtable and Notion rather than failing validation.
       if (args.destinationRequiresPrimaryField) {
         designateFallbackPrimaryFieldIfMissing(fields, args.destinationPrimaryFieldKinds);
+      }
+      // Counted on the FINAL field list (injected source-record-id and promoted primary
+      // included), which is exactly what the destination's field cap is checked against.
+      if (args.destinationMaxFieldsPerTable !== undefined) {
+        markFieldsBeyondDestinationFieldLimit({
+          source,
+          fields,
+          maxFieldsPerTable: args.destinationMaxFieldsPerTable,
+          destinationServiceDisplayName: args.destinationServiceDisplayName,
+          notes,
+        });
       }
       // Characters the destination can't hold are removed first, then a name over the
       // destination's limit is middle-elided to fit; the elided name is what collision
@@ -1527,6 +1546,75 @@ function designateFallbackPrimaryFieldIfMissing(
   // 3. Last resort: the first primary-eligible data column in source order.
   if (dataFieldsEligibleAsPrimary.length > 0) {
     dataFieldsEligibleAsPrimary[0].isPrimary = true;
+  }
+}
+
+/** Note statuses the generator gives a field it EMITS into the plan (as opposed to one it omits, e.g. `exists`). */
+const EMITTED_FIELD_NOTE_STATUSES: ReadonlySet<FieldMappingNote['status']> = new Set([
+  'mapped',
+  'downgraded',
+  'needs_target',
+]);
+
+/**
+ * Whether a field always survives the destination's field cap: the primary field and the injected
+ * source-record-id are created no matter what the user selects (clients force-add both), so they are
+ * never the ones left out.
+ */
+function isFieldAlwaysKeptUnderFieldLimit(field: CreateFieldSpec): boolean {
+  return field.isPrimary === true || field.isSourceRecordId === true;
+}
+
+/**
+ * Mark the fields of a new table that lie past the destination's `maxFieldsPerTable` (DEV-12414). Without
+ * this a source wider than the cap (185 columns into MySQL's 180) is planned in full, selected in full, and
+ * only rejected at save. The primary and source-record-id fields are always kept; the remaining slots go to
+ * the other fields in source order, and every field after that is beyond the limit.
+ *
+ * A field beyond the limit STAYS in `fields`, in place — so the user can still pick it in place of another —
+ * but its note becomes `over_field_limit`, telling a client to leave it unselected by default, with a message
+ * saying how many fields were left out and why. Any earlier explanation (a downgrade, a link still needing a
+ * target) is kept after it.
+ */
+function markFieldsBeyondDestinationFieldLimit(args: {
+  source: PlanGeneratorSource;
+  fields: CreateFieldSpec[];
+  maxFieldsPerTable: number;
+  destinationServiceDisplayName: string | undefined;
+  notes: FieldMappingNote[];
+}): void {
+  const { source, fields, maxFieldsPerTable } = args;
+  if (fields.length <= maxFieldsPerTable) return;
+
+  const alwaysKeptFieldCount = fields.filter(isFieldAlwaysKeptUnderFieldLimit).length;
+  const slotsForOtherFields = Math.max(0, maxFieldsPerTable - alwaysKeptFieldCount);
+  const fieldNamesBeyondLimit = new Set<string>();
+  let otherFieldsKeptCount = 0;
+  for (const field of fields) {
+    if (isFieldAlwaysKeptUnderFieldLimit(field)) continue;
+    if (otherFieldsKeptCount < slotsForOtherFields) {
+      otherFieldsKeptCount += 1;
+      continue;
+    }
+    fieldNamesBeyondLimit.add(field.name);
+  }
+  if (fieldNamesBeyondLimit.size === 0) return;
+
+  const destinationName = args.destinationServiceDisplayName ?? 'the destination';
+  const leftOutFieldCount = fieldNamesBeyondLimit.size;
+  const overLimitClause =
+    `left unselected — ${destinationName} allows at most ${maxFieldsPerTable} fields per table and this table has ` +
+    `${fields.length}, so ${leftOutFieldCount} field${leftOutFieldCount === 1 ? ' was' : 's were'} left out; ` +
+    'select it in place of another field to include it';
+
+  // Field names are unique within the table (deduped above), so a field's emitted note is the one from this
+  // source carrying its name.
+  for (const note of args.notes) {
+    if (note.sourceDataFolderId !== source.dataFolderId) continue;
+    if (!EMITTED_FIELD_NOTE_STATUSES.has(note.status)) continue;
+    if (!fieldNamesBeyondLimit.has(note.fieldName)) continue;
+    note.status = 'over_field_limit';
+    note.message = composeNoteMessage(overLimitClause, note.message);
   }
 }
 

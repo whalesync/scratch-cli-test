@@ -2197,3 +2197,132 @@ describe('generateCreatePlanFromSources — MySQL native column types (DEV-12035
     expect(mySqlDestinationSupport.supportedFieldKinds).not.toContain('multiSelect');
   });
 });
+
+describe('generateCreatePlanFromSources — destination field cap (DEV-12414)', () => {
+  const numberColumns = (count: number): SchemaField[] =>
+    Array.from({ length: count }, (_, index) => field({ path: `col_${index + 1}`, type: 'number' }));
+  const wideSource = (overrides: Partial<PlanGeneratorSource> = {}): PlanGeneratorSource => ({
+    ref: 'wide',
+    dataFolderId: 'wide',
+    tableName: 'Wide',
+    remoteTableIds: ['tblWide'],
+    idFieldPath: 'id',
+    connectorService: 'POSTGRES',
+    schemaFields: [field({ path: 'id', type: 'string' }), ...numberColumns(5)],
+    ...overrides,
+  });
+  const fieldNamesOverLimit = (notes: { fieldName: string; status: string }[]): string[] =>
+    notes.filter((note) => note.status === 'over_field_limit').map((note) => note.fieldName);
+
+  it('keeps every field in the plan but notes the ones past the cap over_field_limit, in source order', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [wideSource()],
+      destinationConnectorAccountId: 'destConn',
+      destinationServiceDisplayName: 'MySQL',
+      destinationMaxFieldsPerTable: 4,
+    });
+
+    // 5 columns + the injected source-record-id = 6 fields against a cap of 4.
+    expect(tables[0].fields.map((planField) => planField.name)).toEqual([
+      'col_1',
+      'col_2',
+      'col_3',
+      'col_4',
+      'col_5',
+      'postgres_record_id',
+    ]);
+    expect(fieldNamesOverLimit(notes)).toEqual(['col_4', 'col_5']);
+    expect(notes.find((note) => note.fieldName === 'col_5')).toMatchObject({
+      status: 'over_field_limit',
+      mappedKind: 'number',
+      message:
+        'left unselected — MySQL allows at most 4 fields per table and this table has 6, so 2 fields were left out; ' +
+        'select it in place of another field to include it',
+    });
+    expect(notes.find((note) => note.fieldName === 'col_3')?.status).toBe('mapped');
+  });
+
+  it('always keeps the source-record-id and primary fields, even when they come last', () => {
+    const { notes } = generateCreatePlanFromSources({
+      sources: [
+        wideSource({
+          primaryFieldPath: 'title',
+          schemaFields: [field({ path: 'id', type: 'string' }), ...numberColumns(3), field({ path: 'title' })],
+        }),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxFieldsPerTable: 3,
+    });
+
+    // title (primary) and postgres_record_id take two of the three slots; col_1 gets the last one.
+    expect(fieldNamesOverLimit(notes)).toEqual(['col_2', 'col_3']);
+    expect(notes.find((note) => note.fieldName === 'title')?.status).toBe('mapped');
+    expect(notes.find((note) => note.fieldName === 'postgres_record_id')?.status).toBe('mapped');
+  });
+
+  it('keeps a downgrade explanation after the field-limit one, and names "the destination" when unknown', () => {
+    const { notes } = generateCreatePlanFromSources({
+      sources: [
+        wideSource({
+          schemaFields: [
+            field({ path: 'id', type: 'string' }),
+            ...numberColumns(4),
+            field({ path: 'tags', type: 'array' }),
+          ],
+        }),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxFieldsPerTable: 5,
+    });
+
+    expect(notes.find((note) => note.fieldName === 'tags')).toMatchObject({
+      status: 'over_field_limit',
+      mappedKind: 'text',
+      message:
+        'left unselected — the destination allows at most 5 fields per table and this table has 6, so 1 field was ' +
+        "left out; select it in place of another field to include it; Can't unpack this array field, syncing as plain text",
+    });
+  });
+
+  it('notes nothing when the table is exactly at the cap, or the destination has no cap', () => {
+    const atTheCap = generateCreatePlanFromSources({
+      sources: [wideSource()],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxFieldsPerTable: 6,
+    });
+    const noCap = generateCreatePlanFromSources({ sources: [wideSource()], destinationConnectorAccountId: 'destConn' });
+
+    expect(fieldNamesOverLimit(atTheCap.notes)).toEqual([]);
+    expect(fieldNamesOverLimit(noCap.notes)).toEqual([]);
+  });
+
+  it("leaves 6 of a 185-column MySQL source's fields unselected under MySQL's 180-field cap", () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [
+        wideSource({ connectorService: 'MYSQL', schemaFields: [field({ path: 'id' }), ...numberColumns(185)] }),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      destinationConnectorService: 'MYSQL',
+      destinationServiceDisplayName: 'MySQL',
+      destinationMaxFieldsPerTable: MYSQL_SCHEMA_CREATION_CAPABILITIES.maxFieldsPerTable,
+    });
+
+    expect(tables[0].fields).toHaveLength(186);
+    expect(fieldNamesOverLimit(notes)).toEqual(['col_180', 'col_181', 'col_182', 'col_183', 'col_184', 'col_185']);
+  });
+
+  it('does not cap an add-fields plan for an existing destination table', () => {
+    const { fieldPlans, notes } = generateCreatePlanFromSources({
+      sources: [
+        wideSource({
+          existingDestination: { dataFolderId: 'dfd_existing', remoteTableId: ['tbl'], existingFields: [] },
+        }),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxFieldsPerTable: 2,
+    });
+
+    expect(fieldPlans[0].fields).toHaveLength(5);
+    expect(fieldNamesOverLimit(notes)).toEqual([]);
+  });
+});

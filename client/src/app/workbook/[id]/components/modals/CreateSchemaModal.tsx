@@ -199,7 +199,21 @@ export function CreateSchemaModal({
         return;
       }
 
-      const seeded = fromCreateTablesDto(response.plan);
+      // Leave out fields past the destination's per-table field cap, the way a Live Export client leaves them
+      // unselected: the plan as returned would be rejected as too wide (DEV-12414). A table's ref is its
+      // source folder id, which is what the notes key on.
+      const overFieldLimitKeys = new Set(
+        response.notes
+          .filter((note) => note.status === 'over_field_limit')
+          .map((note) => `${note.sourceDataFolderId}\u0000${note.fieldName}`),
+      );
+      const seeded = fromCreateTablesDto({
+        ...response.plan,
+        tables: response.plan.tables.map((table) => ({
+          ...table,
+          fields: table.fields.filter((field) => !overFieldLimitKeys.has(`${table.ref}\u0000${field.name}`)),
+        })),
+      });
       setTables(seeded.tables);
       if (seeded.remoteParentId) setRemoteParentId(seeded.remoteParentId);
       ScratchpadNotifications.success({

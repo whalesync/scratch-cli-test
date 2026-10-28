@@ -185,7 +185,10 @@ describe('ApplySyncDraftJobHandler', () => {
       status: 'failed',
     });
 
-    await expect(run(handler, checkpoint)).rejects.toThrow(/name collision/);
+    // Names the table, not its opaque placeholder ref (DEV-12414).
+    await expect(run(handler, checkpoint)).rejects.toThrow(
+      'Failed to create 1 of 1 tables/fields on the destination: table "Contacts": name collision',
+    );
 
     expect(syncDraftService.apply).not.toHaveBeenCalled();
     // The stale id must not outlive the failed job (a stale id would reopen a dead progress view).

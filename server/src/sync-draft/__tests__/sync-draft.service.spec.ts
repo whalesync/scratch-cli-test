@@ -1243,6 +1243,103 @@ describe('SyncDraftService', () => {
       });
     });
 
+    describe('a batch rejected at validation for some of its tables (DEV-12414)', () => {
+      const tooWideTableMessage =
+        "this table has 186 fields, which exceeds the connector's maximum of 180 fields per table";
+      const wideTableDraft = (): Record<string, unknown> => ({
+        ...placeholderTableDraft({
+          ref: 'ph_wide',
+          createSpec: {
+            ref: 'spec_wide',
+            name: 'fable_qa_my_wide',
+            fields: [{ name: 'A', fieldType: { kind: 'text' } }],
+          },
+        }),
+        ref: 'tm_wide',
+        source: { dataFolderId: 'dfd_wide' },
+      });
+      const tooManyFieldsOnFirstTable = new BadRequestException({
+        message: 'create-schema validation failed',
+        issues: [{ path: 'tables[0].fields', code: 'TOO_MANY_FIELDS', message: tooWideTableMessage }],
+      });
+
+      it('fails only the table at fault, with its own message, and creates the rest', async () => {
+        const row = makeDraftRow({ tableMappings: [wideTableDraft(), placeholderTableDraft()] });
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+        schemaBuilderService.createTables.mockRejectedValueOnce(tooManyFieldsOnFirstTable).mockResolvedValueOnce({
+          status: 'ok',
+          tables: [
+            { ref: 'spec_contacts', name: 'Contacts', status: 'created', remoteTableId: ['base1', 'tbl1'], fields: [] },
+          ],
+        } as never);
+
+        const res = await service.materialize(DRAFT_ID, ACTOR);
+
+        expect(schemaBuilderService.createTables).toHaveBeenCalledTimes(2);
+        expect(schemaBuilderService.createTables.mock.calls[1][1].tables.map((table) => table.ref)).toEqual([
+          'spec_contacts',
+        ]);
+        expect(res.status).toBe('partial');
+        expect(res.results).toEqual(
+          expect.arrayContaining([
+            { ref: 'ph_wide', kind: 'table', status: 'failed', error: tooWideTableMessage },
+            expect.objectContaining({ ref: 'ph_contacts', status: 'created', remoteTableId: ['base1', 'tbl1'] }),
+          ]),
+        );
+      });
+
+      it('also fails a table whose foreign key links to the table at fault, without sending it', async () => {
+        const contactsLinkingToWide = placeholderTableDraft({
+          createSpec: {
+            ref: 'spec_contacts',
+            name: 'Contacts',
+            fields: [
+              { name: 'Name', fieldType: { kind: 'text' } },
+              { name: 'Wide', fieldType: { kind: 'foreignKey', target: { ref: 'spec_wide' } } },
+            ],
+          },
+        });
+        const row = makeDraftRow({ tableMappings: [wideTableDraft(), contactsLinkingToWide] });
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+        schemaBuilderService.createTables.mockRejectedValueOnce(tooManyFieldsOnFirstTable);
+
+        const res = await service.materialize(DRAFT_ID, ACTOR);
+
+        expect(schemaBuilderService.createTables).toHaveBeenCalledTimes(1);
+        expect(res.status).toBe('failed');
+        expect(res.results).toEqual(
+          expect.arrayContaining([
+            { ref: 'ph_wide', kind: 'table', status: 'failed', error: tooWideTableMessage },
+            {
+              ref: 'ph_contacts',
+              kind: 'table',
+              status: 'failed',
+              error: 'links to table "fable_qa_my_wide", which couldn\'t be created — fix that table and save again',
+            },
+          ]),
+        );
+      });
+
+      it('fails every table with the whole error when an issue names no table', async () => {
+        const row = makeDraftRow({ tableMappings: [wideTableDraft(), placeholderTableDraft()] });
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+        schemaBuilderService.createTables.mockRejectedValueOnce(
+          new BadRequestException({
+            message: 'create-schema validation failed',
+            issues: [{ path: 'connectorAccountId', code: 'SOMETHING_GLOBAL', message: 'the whole batch is wrong' }],
+          }),
+        );
+
+        const res = await service.materialize(DRAFT_ID, ACTOR);
+
+        expect(schemaBuilderService.createTables).toHaveBeenCalledTimes(1);
+        expect(res.results.map((result) => [result.ref, result.status, result.error])).toEqual([
+          ['ph_wide', 'failed', 'the whole batch is wrong'],
+          ['ph_contacts', 'failed', 'the whole batch is wrong'],
+        ]);
+      });
+    });
+
     it('picks the sync transform for a created column from its real schema and writes it to the draft', async () => {
       const packHint = { type: 'wrap_object', options: { template: { rich_text: '$value' } } };
       const row = makeDraftRow({
