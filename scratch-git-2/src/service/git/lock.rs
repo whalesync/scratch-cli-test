@@ -552,7 +552,17 @@ mod tests {
         )
         .await
         .expect("orphaned work never released the lock");
-        assert!(lock_activity_for_repo(&locks, "repo-orphan").is_empty());
+        // A guard releases its mutex before it removes its holder from the registry (field
+        // order), so the lock above can be acquired an instant before the orphaned work's dirty
+        // holder leaves the snapshot. There is no handle to join the orphaned work on, so wait
+        // for the snapshot to empty rather than asserting on the first look.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !lock_activity_for_repo(&locks, "repo-orphan").is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("orphaned work's lock holders never left the activity snapshot");
     }
 
     #[tokio::test]
