@@ -34,6 +34,7 @@ describe('RoutineDefinitionStoreService', () => {
   let executeRaw: jest.Mock;
   let listRepoFiles: jest.Mock;
   let readRepoFiles: jest.Mock;
+  let repoExists: jest.Mock;
   let service: RoutineDefinitionStoreService;
 
   /** A workbook whose routines still live only in git. */
@@ -68,6 +69,7 @@ describe('RoutineDefinitionStoreService', () => {
     executeRaw = jest.fn().mockResolvedValue(undefined);
     listRepoFiles = jest.fn().mockResolvedValue([]);
     readRepoFiles = jest.fn().mockResolvedValue([]);
+    repoExists = jest.fn().mockResolvedValue({ exists: true, hasHead: true });
 
     const routineDefinitionDelegate = {
       findMany: definitionFindMany,
@@ -88,7 +90,7 @@ describe('RoutineDefinitionStoreService', () => {
         ),
     };
     const db = { client } as unknown as DbService;
-    const scratchGitService = { listRepoFiles, readRepoFiles } as unknown as ScratchGitService;
+    const scratchGitService = { listRepoFiles, readRepoFiles, repoExists } as unknown as ScratchGitService;
     service = new RoutineDefinitionStoreService(db, scratchGitService);
   });
 
@@ -98,7 +100,13 @@ describe('RoutineDefinitionStoreService', () => {
 
       const outcome = await service.ensureImportedFromGit(WORKBOOK_ID);
 
-      expect(outcome).toEqual({ attempted: false, imported: 0, skippedExisting: 0, skippedInvalid: 0 });
+      expect(outcome).toEqual({
+        attempted: false,
+        configRepoMissing: false,
+        imported: 0,
+        skippedExisting: 0,
+        skippedInvalid: 0,
+      });
       expect(listRepoFiles).not.toHaveBeenCalled();
       expect(workbookUpdateMany).not.toHaveBeenCalled();
     });
@@ -148,19 +156,62 @@ describe('RoutineDefinitionStoreService', () => {
         where: { id: WORKBOOK_ID, routinesPendingGitImport: true },
         data: { routinesPendingGitImport: false },
       });
-      expect(outcome).toEqual({ attempted: true, imported: 2, skippedExisting: 0, skippedInvalid: 0 });
+      expect(outcome).toEqual({
+        attempted: true,
+        configRepoMissing: false,
+        imported: 2,
+        skippedExisting: 0,
+        skippedInvalid: 0,
+      });
     });
 
-    it('clears the flag with no rows when git has no routines folder (scratch-git maps 404 to [])', async () => {
+    it('clears the flag with no rows when the repo exists but has no routines folder', async () => {
       workbookPendingImport();
       listRepoFiles.mockResolvedValue([]);
+      repoExists.mockResolvedValue({ exists: true, hasHead: true });
 
       const outcome = await service.ensureImportedFromGit(WORKBOOK_ID);
 
+      expect(repoExists).toHaveBeenCalledWith(REPO_ID);
       expect(definitionCreateMany).not.toHaveBeenCalled();
       expect(readRepoFiles).not.toHaveBeenCalled();
       expect(workbookUpdateMany).toHaveBeenCalledTimes(1);
-      expect(outcome).toEqual({ attempted: true, imported: 0, skippedExisting: 0, skippedInvalid: 0 });
+      expect(outcome).toEqual({
+        attempted: true,
+        configRepoMissing: false,
+        imported: 0,
+        skippedExisting: 0,
+        skippedInvalid: 0,
+      });
+    });
+
+    it('keeps the flag set (imports nothing, clears nothing) when the empty listing comes from a repo that does not exist on the git host', async () => {
+      workbookPendingImport();
+      listRepoFiles.mockResolvedValue([]); // scratch-git maps "no such repo" (404) to []
+      repoExists.mockResolvedValue({ exists: false, hasHead: false });
+
+      const outcome = await service.ensureImportedFromGit(WORKBOOK_ID);
+
+      expect(outcome).toEqual({
+        attempted: true,
+        configRepoMissing: true,
+        imported: 0,
+        skippedExisting: 0,
+        skippedInvalid: 0,
+      });
+      expect(definitionCreateMany).not.toHaveBeenCalled();
+      expect(workbookUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it('does not probe repo existence when the listing is non-empty', async () => {
+      workbookPendingImport();
+      listRepoFiles.mockResolvedValue([{ name: 'a.yaml', path: 'routines/a.yaml', type: 'file' }]);
+      readRepoFiles.mockResolvedValue([{ path: 'routines/a.yaml', content: 'name: A\n' }]);
+
+      await service.ensureImportedFromGit(WORKBOOK_ID);
+
+      expect(repoExists).not.toHaveBeenCalled();
+      expect(workbookUpdateMany).toHaveBeenCalledTimes(1);
     });
 
     it('lets an existing DB row win over the git copy (skipDuplicates) and reports it as skippedExisting', async () => {
@@ -179,7 +230,13 @@ describe('RoutineDefinitionStoreService', () => {
       const outcome = await service.ensureImportedFromGit(WORKBOOK_ID);
 
       expect(definitionCreateMany).toHaveBeenCalledWith(expect.objectContaining({ skipDuplicates: true }));
-      expect(outcome).toEqual({ attempted: true, imported: 1, skippedExisting: 1, skippedInvalid: 0 });
+      expect(outcome).toEqual({
+        attempted: true,
+        configRepoMissing: false,
+        imported: 1,
+        skippedExisting: 1,
+        skippedInvalid: 0,
+      });
     });
 
     it('skips a git file whose path fails the routine path rules and still clears the flag', async () => {
@@ -198,7 +255,13 @@ describe('RoutineDefinitionStoreService', () => {
       expect(definitionCreateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: [expect.objectContaining({ filePath: 'routines/ok.yaml' })] }),
       );
-      expect(outcome).toEqual({ attempted: true, imported: 1, skippedExisting: 0, skippedInvalid: 1 });
+      expect(outcome).toEqual({
+        attempted: true,
+        configRepoMissing: false,
+        imported: 1,
+        skippedExisting: 0,
+        skippedInvalid: 1,
+      });
       expect(workbookUpdateMany).toHaveBeenCalledTimes(1);
     });
 

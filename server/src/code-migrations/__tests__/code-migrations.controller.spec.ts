@@ -96,6 +96,7 @@ describe('CodeMigrationsController', () => {
     scratchGitService = {
       resolveConnectionRepoPath: jest.fn().mockResolvedValue('repo-1'),
       moveFolder: jest.fn().mockResolvedValue({ moved: true }),
+      repoExists: jest.fn().mockResolvedValue({ exists: true, hasHead: true }),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     connectionQuiesceService = {
@@ -110,9 +111,13 @@ describe('CodeMigrationsController', () => {
     } as unknown as jest.Mocked<CustomMetricsService>;
 
     routineDefinitionStore = {
-      ensureImportedFromGit: jest
-        .fn()
-        .mockResolvedValue({ attempted: true, imported: 0, skippedExisting: 0, skippedInvalid: 0 }),
+      ensureImportedFromGit: jest.fn().mockResolvedValue({
+        attempted: true,
+        configRepoMissing: false,
+        imported: 0,
+        skippedExisting: 0,
+        skippedInvalid: 0,
+      }),
       readRoutineFilesFromGit: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<RoutineDefinitionStoreService>;
     scratchConfigService = {
@@ -700,8 +705,20 @@ describe('CodeMigrationsController', () => {
       (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue(flaggedWorkbooks);
       (dbService.client.workbook.count as jest.Mock).mockResolvedValue(5);
       routineDefinitionStore.ensureImportedFromGit
-        .mockResolvedValueOnce({ attempted: true, imported: 2, skippedExisting: 1, skippedInvalid: 0 })
-        .mockResolvedValueOnce({ attempted: true, imported: 0, skippedExisting: 0, skippedInvalid: 0 });
+        .mockResolvedValueOnce({
+          attempted: true,
+          configRepoMissing: false,
+          imported: 2,
+          skippedExisting: 1,
+          skippedInvalid: 0,
+        })
+        .mockResolvedValueOnce({
+          attempted: true,
+          configRepoMissing: false,
+          imported: 0,
+          skippedExisting: 0,
+          skippedInvalid: 0,
+        });
 
       const result = await controller.runMigration(makeReqWithUser(), { migration: 'routine-git-import', qty: 2 });
 
@@ -732,7 +749,13 @@ describe('CodeMigrationsController', () => {
       (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue(flaggedWorkbooks);
       routineDefinitionStore.ensureImportedFromGit
         .mockRejectedValueOnce(new Error('scratch-git 503'))
-        .mockResolvedValueOnce({ attempted: true, imported: 1, skippedExisting: 0, skippedInvalid: 0 });
+        .mockResolvedValueOnce({
+          attempted: true,
+          configRepoMissing: false,
+          imported: 1,
+          skippedExisting: 0,
+          skippedInvalid: 0,
+        });
 
       const result = await controller.runMigration(makeReqWithUser(), { migration: 'routine-git-import', qty: 2 });
 
@@ -740,6 +763,52 @@ describe('CodeMigrationsController', () => {
       expect(result.summary).toEqual(
         expect.arrayContaining([{ label: 'workbooks errored (flag kept, retried next run)', count: 1 }]),
       );
+    });
+
+    it('routine-git-import does not count a workbook whose config repo is missing on the git host as migrated', async () => {
+      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue(flaggedWorkbooks);
+      (dbService.client.workbook.count as jest.Mock).mockResolvedValue(1);
+      routineDefinitionStore.ensureImportedFromGit
+        .mockResolvedValueOnce({
+          attempted: true,
+          configRepoMissing: true,
+          imported: 0,
+          skippedExisting: 0,
+          skippedInvalid: 0,
+        })
+        .mockResolvedValueOnce({
+          attempted: true,
+          configRepoMissing: false,
+          imported: 1,
+          skippedExisting: 0,
+          skippedInvalid: 0,
+        });
+
+      const result = await controller.runMigration(makeReqWithUser(), { migration: 'routine-git-import', qty: 2 });
+
+      expect(result.migratedIds).toEqual(['wkb_old2']);
+      expect(result.remainingCount).toBe(1);
+      expect(result.summary).toEqual(
+        expect.arrayContaining([
+          { label: 'workbooks whose config repo is missing on the git host (flag kept — investigate)', count: 1 },
+        ]),
+      );
+    });
+
+    it('routine-git-import dry-run leaves a workbook whose config repo is missing out of the would-migrate list', async () => {
+      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue([flaggedWorkbooks[0]]);
+      routineDefinitionStore.readRoutineFilesFromGit.mockResolvedValue([]);
+      (scratchGitService.repoExists as jest.Mock).mockResolvedValue({ exists: false, hasHead: false });
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'routine-git-import',
+        ids: ['wkb_old1'],
+        dryRun: true,
+      });
+
+      expect(scratchGitService.repoExists).toHaveBeenCalledWith('org_a/wkb_old1/wkb_old1');
+      expect(result.migratedIds).toEqual([]);
+      expect(routineDefinitionStore.ensureImportedFromGit).not.toHaveBeenCalled();
     });
 
     it('routine-git-import dry-run reads git but writes nothing and clears no flag', async () => {

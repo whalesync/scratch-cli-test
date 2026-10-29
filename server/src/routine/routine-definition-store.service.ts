@@ -40,6 +40,13 @@ export type RoutineDefinitionPushResult =
 export interface RoutineGitImportOutcome {
   /** False when the workbook's flag was already clear — nothing was read from git. */
   attempted: boolean;
+  /**
+   * True when the routines listing was empty AND scratch-git reports no such repo. The flag is
+   * left SET in that case: an absent repo on the git host we are talking to cannot prove the
+   * workbook has no routines (a misrouted or partially-restored git host looks exactly like this),
+   * so the import is retried on the next read instead of silently finishing with nothing.
+   */
+  configRepoMissing: boolean;
   imported: number;
   /** Git files whose path already had a row (a user wrote it after the flag was set) — the row wins. */
   skippedExisting: number;
@@ -243,9 +250,10 @@ export class RoutineDefinitionStoreService {
    * then clears the flag. A cleared flag returns immediately with no git access.
    *
    * Throws — rather than importing a partial set — when scratch-git fails for any reason other
-   * than "repo/folder does not exist" (which the client maps to an empty listing). A partial
-   * import would let `reloadRoutines` orphan-clean the schedules of routines that merely failed
-   * to load; a thrown error leaves the flag set so the next read retries.
+   * than "folder does not exist". A partial import would let `reloadRoutines` orphan-clean the
+   * schedules of routines that merely failed to load; a thrown error leaves the flag set so the
+   * next read retries. An empty listing clears the flag only once scratch-git confirms the repo
+   * exists (see {@link RoutineGitImportOutcome.configRepoMissing}).
    */
   async ensureImportedFromGit(workbookId: WorkbookId): Promise<RoutineGitImportOutcome> {
     const workbook = await this.db.client.workbook.findFirst({
@@ -256,11 +264,28 @@ export class RoutineDefinitionStoreService {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
     }
     if (!workbook.routinesPendingGitImport) {
-      return { attempted: false, imported: 0, skippedExisting: 0, skippedInvalid: 0 };
+      return { attempted: false, configRepoMissing: false, imported: 0, skippedExisting: 0, skippedInvalid: 0 };
     }
 
     const repoId = getWorkbookRepoPath(workbook.organizationId, workbookId);
     const gitFiles = await this.readRoutineFilesFromGit(repoId);
+
+    // An empty listing is ambiguous: scratch-git answers `[]` both for "no routines/ folder" and for
+    // "no such repo" (its 404 is mapped to an empty list). Only the first may clear the flag — the
+    // second means we are not looking at this workbook's repo at all (wrong git host, repo not yet
+    // restored), and clearing the flag would silently lose every routine it holds. Same guard as
+    // the fileindex code migrations' "prove the repo is readable before an empty listing counts".
+    if (gitFiles.length === 0) {
+      const { exists } = await this.scratchGitService.repoExists(repoId);
+      if (!exists) {
+        WSLogger.warn({
+          source: 'RoutineDefinitionStoreService.ensureImportedFromGit',
+          message: `Config repo ${repoId} does not exist on the git host; leaving routinesPendingGitImport set`,
+          workbookId,
+        });
+        return { attempted: true, configRepoMissing: true, imported: 0, skippedExisting: 0, skippedInvalid: 0 };
+      }
+    }
 
     const importableFiles: { filePath: string; content: string }[] = [];
     let skippedInvalid = 0;
@@ -309,7 +334,7 @@ export class RoutineDefinitionStoreService {
       message: `Imported ${imported} routine file(s) from git (${skippedExisting} already in DB, ${skippedInvalid} invalid path(s))`,
       workbookId,
     });
-    return { attempted: true, imported, skippedExisting, skippedInvalid };
+    return { attempted: true, configRepoMissing: false, imported, skippedExisting, skippedInvalid };
   }
 
   /**

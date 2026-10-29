@@ -304,6 +304,19 @@ export class ScratchGitClient {
     return result.sha ?? null;
   }
 
+  /**
+   * Whether the bare repo directory exists on the git host (and has a HEAD). Unlike the read
+   * endpoints, which map a missing repo to an empty result, this answers the question directly, so
+   * a caller can tell "this repo holds nothing" apart from "there is no such repo here".
+   */
+  async repoExists(repoId: string): Promise<{ exists: boolean; hasHead: boolean }> {
+    const result = (await this.callGitApi(`/api/repo/manage/${this.encodeRepoId(repoId)}/exists`, 'GET')) as {
+      exists: boolean;
+      hasHead: boolean;
+    };
+    return { exists: result.exists === true, hasHead: result.hasHead === true };
+  }
+
   async commitFiles(
     repoId: string,
     branch: string,

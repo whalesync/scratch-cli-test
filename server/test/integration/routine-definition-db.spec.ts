@@ -20,6 +20,7 @@ describe('RoutineDefinitionStoreService (real DB)', () => {
   let store: RoutineDefinitionStoreService;
   let listRepoFiles: jest.Mock;
   let readRepoFiles: jest.Mock;
+  let repoExists: jest.Mock;
 
   let orgId: string;
   let workbookId: WorkbookId;
@@ -31,9 +32,10 @@ describe('RoutineDefinitionStoreService (real DB)', () => {
   beforeEach(async () => {
     listRepoFiles = jest.fn().mockResolvedValue([]);
     readRepoFiles = jest.fn().mockResolvedValue([]);
+    repoExists = jest.fn().mockResolvedValue({ exists: true, hasHead: true });
     store = new RoutineDefinitionStoreService(
       { client: prisma } as unknown as DbService,
-      { listRepoFiles, readRepoFiles } as unknown as ScratchGitService,
+      { listRepoFiles, readRepoFiles, repoExists } as unknown as ScratchGitService,
     );
 
     const org = await prisma.organization.create({
@@ -222,7 +224,13 @@ describe('RoutineDefinitionStoreService (real DB)', () => {
       const outcome = await store.ensureImportedFromGit(workbookId);
       const definitions = await store.listDefinitions(workbookId);
 
-      expect(outcome).toEqual({ attempted: true, imported: 1, skippedExisting: 1, skippedInvalid: 0 });
+      expect(outcome).toEqual({
+        attempted: true,
+        configRepoMissing: false,
+        imported: 1,
+        skippedExisting: 1,
+        skippedInvalid: 0,
+      });
       expect(definitions.map((d) => [d.filePath, d.content, d.source])).toEqual([
         ['routines/a.yaml', 'name: A (user)\n', 'web'],
         ['routines/b.yaml', 'name: B (git)\n', 'git-import'],
@@ -243,6 +251,25 @@ describe('RoutineDefinitionStoreService (real DB)', () => {
       expect(await prisma.routineDefinition.count({ where: { workbookId } })).toBe(2);
       const workbook = await prisma.workbook.findUniqueOrThrow({ where: { id: workbookId } });
       expect(workbook.routinesPendingGitImport).toBe(false);
+    });
+
+    it('keeps the flag set when the git host has no such repo, and imports on a later read once it does', async () => {
+      listRepoFiles.mockResolvedValueOnce([]); // what scratch-git answers for a repo it does not have
+      repoExists.mockResolvedValueOnce({ exists: false, hasHead: false });
+
+      const firstOutcome = await store.ensureImportedFromGit(workbookId);
+      expect(firstOutcome.configRepoMissing).toBe(true);
+      expect((await prisma.workbook.findUniqueOrThrow({ where: { id: workbookId } })).routinesPendingGitImport).toBe(
+        true,
+      );
+      expect(await prisma.routineDefinition.count({ where: { workbookId } })).toBe(0);
+
+      // The right git host answers next time (mocks fall back to the beforeEach defaults).
+      const secondOutcome = await store.ensureImportedFromGit(workbookId);
+      expect(secondOutcome.imported).toBe(2);
+      expect((await prisma.workbook.findUniqueOrThrow({ where: { id: workbookId } })).routinesPendingGitImport).toBe(
+        false,
+      );
     });
 
     it('a deleted routine does not resurrect from git after the import', async () => {

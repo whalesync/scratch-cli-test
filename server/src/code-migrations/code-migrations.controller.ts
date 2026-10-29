@@ -221,7 +221,9 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'Every routine read already does this lazily for the workbook it touches; this run drains the long ' +
       'tail proactively. Idempotent (rows a user wrote meanwhile win; a re-run skips imported workbooks) and ' +
       'non-destructive (git is left untouched — see routine-git-cleanup). A scratch-git failure skips that ' +
-      'workbook with its flag still set so the next run retries it. remainingCount = workbooks still flagged; ' +
+      'workbook with its flag still set so the next run retries it, and a workbook whose config repo does not ' +
+      'exist on the git host keeps its flag too (an absent repo cannot prove "no routines" — check the git host ' +
+      'before clearing it by hand). remainingCount = workbooks still flagged; ' +
       'when it holds at 0 the git fallback code can be removed. Dry-run lists the files each workbook would ' +
       'import. `ids` targets workbooks; `qty` takes that many still-flagged workbooks, oldest first.',
   },
@@ -365,6 +367,7 @@ export class CodeMigrationsController {
     let skippedInvalidFileCount = 0;
     let erroredWorkbookCount = 0;
     let workbooksWithNoRoutineFiles = 0;
+    let workbooksWithMissingConfigRepo = 0;
 
     for (const workbook of candidateWorkbooks) {
       const workbookId = workbook.id as WorkbookId;
@@ -372,10 +375,20 @@ export class CodeMigrationsController {
         if (dryRun) {
           const repoId = getWorkbookRepoPath(workbook.organizationId, workbookId);
           const gitFiles = await this.routineDefinitionStore.readRoutineFilesFromGit(repoId);
-          importedFileCount += gitFiles.length;
           if (gitFiles.length === 0) {
+            // Same guard as the real import: an empty listing from a repo that does not exist on
+            // this git host would be left flagged, not counted as done.
+            const { exists } = await this.scratchGitService.repoExists(repoId);
+            if (!exists) {
+              workbooksWithMissingConfigRepo += 1;
+              this.logger.warn(
+                `routine-git-import (dry-run): workbook ${workbook.id} config repo ${repoId} does not exist on the git host; its flag would be kept`,
+              );
+              continue;
+            }
             workbooksWithNoRoutineFiles += 1;
           }
+          importedFileCount += gitFiles.length;
           migratedIds.push(workbook.id);
           this.logger.log(
             `routine-git-import (dry-run): workbook ${workbook.id} would import ${gitFiles.length} file(s): ${gitFiles
@@ -385,6 +398,11 @@ export class CodeMigrationsController {
           continue;
         }
         const outcome = await this.routineDefinitionStore.ensureImportedFromGit(workbookId);
+        if (outcome.configRepoMissing) {
+          // Flag deliberately kept by the store (see RoutineGitImportOutcome.configRepoMissing).
+          workbooksWithMissingConfigRepo += 1;
+          continue;
+        }
         importedFileCount += outcome.imported;
         skippedExistingFileCount += outcome.skippedExisting;
         skippedInvalidFileCount += outcome.skippedInvalid;
@@ -404,7 +422,8 @@ export class CodeMigrationsController {
     });
     this.logger.log(
       `routine-git-import${dryRun ? ' (dry-run)' : ''} complete: ${migratedIds.length} workbook(s), ` +
-        `${importedFileCount} file(s) imported, ${erroredWorkbookCount} errored; remaining=${remainingCount}`,
+        `${importedFileCount} file(s) imported, ${erroredWorkbookCount} errored, ` +
+        `${workbooksWithMissingConfigRepo} with no config repo on the git host (flag kept); remaining=${remainingCount}`,
     );
 
     return {
@@ -418,6 +437,10 @@ export class CodeMigrationsController {
         { label: 'routine files already in the DB (row kept)', count: skippedExistingFileCount },
         { label: 'routine files with an invalid path (left in git)', count: skippedInvalidFileCount },
         { label: 'workbooks with no routine files in git', count: workbooksWithNoRoutineFiles },
+        {
+          label: 'workbooks whose config repo is missing on the git host (flag kept — investigate)',
+          count: workbooksWithMissingConfigRepo,
+        },
         { label: 'workbooks errored (flag kept, retried next run)', count: erroredWorkbookCount },
       ],
     };
