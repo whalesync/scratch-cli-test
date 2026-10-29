@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 import {
   StripeCharge,
@@ -121,16 +122,19 @@ export class StripeApiClient {
     this.rateLimiter = opts?.rateLimiter;
 
     const headers: RawAxiosRequestHeaders = {
-      Authorization: `Bearer ${credentials.apiKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept: 'application/json',
       'Stripe-Version': STRIPE_CONNECTOR_API_VERSION,
     };
 
-    this.client = createApiClient({
-      baseURL: 'https://api.stripe.com',
-      headers,
-    });
+    const secretKeyOrOAuthAccessTokenProvider = toConnectorAuthTokenProvider(credentials.secretKeyOrOAuthAccessToken);
+    this.client = createApiClient(
+      {
+        baseURL: 'https://api.stripe.com',
+        headers,
+      },
+      { authorizationHeaderValueProvider: async () => `Bearer ${await secretKeyOrOAuthAccessTokenProvider()}` },
+    );
   }
 
   /**
@@ -145,8 +149,8 @@ export class StripeApiClient {
   }
 
   /**
-   * Validate the API key by fetching account info.
-   * @throws StripeError if the API key is invalid.
+   * Validate the secret key or OAuth access token by listing one customer.
+   * @throws StripeError if Stripe refuses it.
    */
   async validateCredentials(): Promise<void> {
     try {

@@ -1,7 +1,14 @@
 import { TSchema } from '@sinclair/typebox';
 import { AxiosError } from 'axios';
+import {
+  connectorRegistry,
+  type ConnectorFactoryContext,
+  type ConnectorRegistration,
+} from '../../../connector-registry';
+import { ConnectorInstantiationError } from '../../../error';
 import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
+import { StripeApiClient } from '../stripe-api-client';
 import { StripeConnector } from '../stripe-connector';
 import { StripeEntityType } from '../stripe-types';
 
@@ -57,12 +64,74 @@ async function* asyncGen<T>(pages: T[][]): AsyncGenerator<T[], void> {
   }
 }
 
+function getStripeRegistration(): ConnectorRegistration {
+  const stripeRegistration = connectorRegistry.get(Service.STRIPE);
+  if (!stripeRegistration) throw new Error('Stripe connector did not register itself');
+  return stripeRegistration;
+}
+
+function buildConnectorFactoryContext(overrides: Partial<ConnectorFactoryContext>): ConnectorFactoryContext {
+  return {
+    connectorAccount: { id: 'coa_stripe_unit', authType: 'user_provided_params', extras: null, version: 1 },
+    decryptedCredentials: { apiKey: 'sk_test_pasted' },
+    createOAuthAccessTokenProvider: jest.fn(),
+    createRateLimiter: jest.fn(),
+    getFolderOptionsByTableId: jest.fn(),
+    listFolderTableIds: jest.fn(),
+    isFeatureEnabled: jest.fn(),
+    ...overrides,
+  };
+}
+
+describe('Stripe connector registration', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('offers the sign-in first and the pasted secret key as the alternative', () => {
+    expect(getStripeRegistration().supportedAuthMethods).toEqual(['oauth', 'user_provided_params']);
+    expect(StripeConnector.metadata.oauth).toEqual({ label: 'Connect with Stripe' });
+  });
+
+  it("sends an OAuth connection's current access token, re-resolved per request, after checking it resolves", async () => {
+    const oauthAccessTokenProvider = jest.fn().mockResolvedValue('stripe-oauth-access');
+    const createOAuthAccessTokenProvider = jest.fn().mockReturnValue(oauthAccessTokenProvider);
+
+    const connector = await getStripeRegistration().createConnector(
+      buildConnectorFactoryContext({
+        connectorAccount: { id: 'coa_stripe_oauth', authType: 'OAUTH', extras: null, version: 1 },
+        decryptedCredentials: { oauthAccessToken: 'stripe-oauth-access' },
+        createOAuthAccessTokenProvider,
+      }),
+    );
+
+    expect(connector).toBeInstanceOf(StripeConnector);
+    expect(createOAuthAccessTokenProvider).toHaveBeenCalledWith('coa_stripe_oauth');
+    expect(oauthAccessTokenProvider).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(StripeApiClient).mock.calls[0][0]).toEqual({
+      secretKeyOrOAuthAccessToken: oauthAccessTokenProvider,
+    });
+  });
+
+  it('sends the pasted secret key for a key connection', async () => {
+    await getStripeRegistration().createConnector(buildConnectorFactoryContext({}));
+
+    expect(jest.mocked(StripeApiClient).mock.calls[0][0]).toEqual({ secretKeyOrOAuthAccessToken: 'sk_test_pasted' });
+  });
+
+  it('refuses a key connection with no stored key', async () => {
+    const creation = getStripeRegistration().createConnector(
+      buildConnectorFactoryContext({ decryptedCredentials: {} }),
+    );
+
+    await expect(creation).rejects.toBeInstanceOf(ConnectorInstantiationError);
+  });
+});
+
 describe('StripeConnector', () => {
   let connector: StripeConnector;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    connector = new StripeConnector({ apiKey: 'sk_test_123' });
+    connector = new StripeConnector({ secretKeyOrOAuthAccessToken: 'sk_test_123' });
   });
 
   // ---------------------------------------------------------------------------

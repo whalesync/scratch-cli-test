@@ -12,7 +12,7 @@
 - **Trial:** <plan + days left as of date → cancel-by date>  | or  "No trial / paid / free tier"
 - **API key / credentials:** *omitted here.* Where to find them: decrypt `ConnectorAccount.encryptedCredentials` for `<coa_id>` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in server/.env, AAD `connector-account`; see `server/tools/decrypt-credentials.js`), or regenerate in the service's settings (<path>).
 - **Scratch side:** workbook `<wkb_id>` / connection `<coa_id>` · local workspace `<path>`
-- **Auth method:** `<user_provided_params | oauth>` <— user_provided_params is CLI-connectable; oauth must be done in the web app>
+- **Auth method:** `oauth` (Whalesync's Stripe app; web app / Live Export) or `user_provided_params` (secret key; CLI-connectable, and the only way to connect a test-mode account in production)
 - **OAuth account (if OAuth):** <the account that owns / authorizes the OAuth client + connection, e.g. `team@whalesync.com` — never a secret. Omit for creds-only connectors.>
 - **Provenance:** <user-provided | reused existing browser session | created by the skill on <date>>
 
@@ -36,7 +36,7 @@ At-a-glance progress through the build journey, so anyone can see where this con
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | |
 | 7 | **Edge cases & quirks tested** (Pass 2 tricky parts) | ⬜ | |
 | 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics — e.g. custom fields, plugin fields, real-vs-meta) | ⬜ | |
-| 9 | **OAuth** (final / pre-release — OAuth client created with the user, *or* requirements documented) | ⬜ | API-key covers all testing; this is the last step |
+| 9 | **OAuth** (final / pre-release — OAuth client created with the user, *or* requirements documented) | 🔄 | Provider wired and unit-tested through Whalesync's Stripe app; sign-in not yet run live (needs `STRIPE_OAUTH_*` provisioned — see OAuth) |
 
 ## TODOs — known pending tasks
 Living checklist of what's left: gaps found while adopting human-built code, unfinished entities/fields, deferred edge cases, and follow-up issues. Check items off as they land. Coarser than the coverage matrix; broader than **Open issues** (which is only for broken ❌ cells with Linear links).
@@ -174,12 +174,14 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Still open, not connector-layer:** [DEV-11146](https://linear.app/whalesync/issue/DEV-11146) (orphaned routine runs wedge a sync — `[core]`) and the generic steady-state republish churn ([DEV-10556](https://linear.app/whalesync/issue/DEV-10556)). Neither is addressed by the above.
 
 ## OAuth (final milestone — create the client with the user, or document what it takes)
-API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-release nicety done *with* the user. Fill this in when you reach Milestone 9.
-- **Requires:** <dev account? app registration? review/approval? specific scopes?>
-- **Endpoints:** authorize `<url>` · token `<url>` · redirect URI = Scratch callback `REDIRECT_URI` (`<https://test.scratch.md/oauth/callback>`)
-- **App / client:** <where the app is registered; client id/secret in `server/.env` as `<SERVICE>_CLIENT_ID`/`_SECRET` — never paste the secret here>
-- **Status:** <not started | documented (requirements only) | client created | provider wired (CONNECTOR_GUIDE → Server — OAuth)>
-- **Blockers:** <approval pending / paid dev account / none>
+API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-release nicety done *with* the user.
+- **Requires:** nothing new on Stripe's side. Scratch shares **Whalesync's published Stripe app** (`whalesync/extensions/stripe`, owned by the Whalesync Stripe Apps account `acct_1UTnbqPi0s0AjjMs`). Its manifest already lists Scratch's redirect (`/oauth-callback/connector/stripe` on `app.`/`test.whalesync.com`), and its 20 read permissions cover all seven tables (prices under `plan_read`, subscription items under `subscription_read`). The app is read-only, as is this connector.
+- **Endpoints:** authorize `https://marketplace.stripe.com/oauth/v2/authorize` in production, the app's External test link (`…/oauth/v2/chnlink_61VdC9PS9Zq71csij41Pi0s0AjjMsRgW/authorize`, env `STRIPE_OAUTH_AUTHORIZE_URL`) elsewhere · token `https://api.stripe.com/v1/oauth/token` · redirect URI = `REDIRECT_URI_WHALESYNC` + `/oauth-callback/connector/stripe` (Whalesync's callback hands Scratch's state back to Scratch or Live Export).
+- **App / client:** `STRIPE_OAUTH_CLIENT_ID` = the app's client id for the environment's mode (production live `ca_VUnc4j…`, elsewhere test-mode `ca_VUnckA…`); `STRIPE_OAUTH_CLIENT_SECRET` = the Whalesync Stripe Apps account's `sk_live_…` / `sk_test_…` key (the same values as Whalesync's `connector-oauth_stripe` secret; restricted keys are refused). Not `STRIPE_API_KEY`, which is Scratch's billing key.
+- **How it works** (`server/src/oauth/providers/stripe-oauth.provider.ts`): authorization code with PKCE. The token endpoint takes the secret key as the HTTP Basic user name and only `grant_type` + `code`/`refresh_token` (+ `code_verifier`). Stripe sends no `expires_in`, so tokens are recorded as 1-hour tokens; refresh tokens rotate on every refresh. The installing account (`stripe_user_id`) is kept in `oauthWorkspaceId`.
+- **Status:** provider wired, unit-tested; consent flow not yet run live.
+- **Limits:** in production the sign-in reaches live mode only, so a test-mode account connects with a pasted secret key. A second sign-in to the same Stripe account (another Scratch connection, or a Whalesync one) may revoke the first's access tokens on refresh — untested.
+- **Blockers:** `STRIPE_OAUTH_CLIENT_ID`/`_SECRET` must be filled in Secret Manager for `spv1eu-test` and `spv1eu-production`, then `terraform apply` per env.
 
 ## UI quick-links (time-savers for the gstack browser)
 Direct URLs to common screens so the agent jumps straight there instead of clicking through the UI. Fill these in as you discover them during a browser pass (e.g. you find the clients table is at `x.com/ui/clients` → record it here).

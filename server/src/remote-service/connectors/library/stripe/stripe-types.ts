@@ -7,12 +7,18 @@
  * API Documentation: https://stripe.com/docs/api
  */
 
+import type { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
+
 /**
  * Credentials for authenticating with the Stripe API.
  */
 export interface StripeCredentials {
-  /** Stripe secret API key (sk_live_... or sk_test_...) */
-  apiKey: string;
+  /**
+   * What every request sends as its Bearer token: either a pasted secret key (`sk_live_…` / `sk_test_…`), or the OAuth
+   * access token of Whalesync's Stripe app installed in the account. The OAuth token comes as a provider, re-read on
+   * each request, so a refresh during a long pull is picked up.
+   */
+  secretKeyOrOAuthAccessToken: ConnectorAuthTokenOrProvider;
 }
 
 /**

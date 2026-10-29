@@ -15,6 +15,8 @@ interface OAuthAppEnvVarNames {
   readonly clientIdEnvVar: string;
   readonly clientSecretEnvVar: string;
   readonly redirectUri: (configService: ConfigService) => string;
+  /** The env var holding this environment's sign-in link, for a provider whose link differs per environment. */
+  readonly authorizeUrlEnvVar?: string;
 }
 
 function scratchRedirectUri(configService: ConfigService): string {
@@ -50,6 +52,7 @@ type OAuthAppServiceKey =
   | typeof Service.PIPEDRIVE
   | typeof Service.QUICKBOOKS
   | typeof Service.SALESFORCE
+  | typeof Service.STRIPE
   | typeof Service.SUPABASE
   | typeof Service.WEBFLOW
   | typeof Service.WIX_BLOG
@@ -177,6 +180,18 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       redirectUri: (config) => whalesyncRedirectUri(config, 'salesforce'),
     },
   },
+  // Shares Whalesync's Stripe app (whalesync/extensions/stripe). Its env vars carry the `_OAUTH_` infix because
+  // STRIPE_API_KEY is Scratch's own billing key. The client secret is the secret key of the Stripe account that owns
+  // the app: `sk_live_…` with the live client id in production, `sk_test_…` with the test-mode one elsewhere. Outside
+  // production the sign-in starts at the app's External test link, held in STRIPE_OAUTH_AUTHORIZE_URL.
+  [Service.STRIPE]: {
+    1: {
+      clientIdEnvVar: 'STRIPE_OAUTH_CLIENT_ID',
+      clientSecretEnvVar: 'STRIPE_OAUTH_CLIENT_SECRET',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'stripe'),
+      authorizeUrlEnvVar: 'STRIPE_OAUTH_AUTHORIZE_URL',
+    },
+  },
   [Service.ZOHO]: {
     1: {
       clientIdEnvVar: 'ZOHO_CLIENT_ID',
@@ -241,7 +256,15 @@ export class OAuthAppCredentialResolver {
       );
     }
 
-    return { clientId, clientSecret, redirectUri };
+    const authorizeUrlForThisEnvironment = envVars.authorizeUrlEnvVar
+      ? this.configService.get<string>(envVars.authorizeUrlEnvVar)
+      : undefined;
+    return {
+      clientId,
+      clientSecret,
+      redirectUri,
+      ...(authorizeUrlForThisEnvironment ? { authorizeUrl: authorizeUrlForThisEnvironment } : {}),
+    };
   }
 
   /**

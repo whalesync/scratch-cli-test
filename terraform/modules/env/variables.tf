@@ -373,6 +373,12 @@ variable "whalesync_oauth_base_url" {
   description = "Whalesync base URL (no path) for generation-2 OAuth redirects, e.g. 'https://app.whalesync.com'. The server appends the per-connector callback path (/oauth-callback/connector/<connectorType>)."
 }
 
+variable "stripe_oauth_authorize_url" {
+  type        = string
+  default     = ""
+  description = "Where a Stripe sign-in starts, for an environment that doesn't use the public link: the External test link of Whalesync's Stripe app outside production. Empty means the public link, https://marketplace.stripe.com/oauth/v2/authorize."
+}
+
 variable "enable_client_cdn" {
   type        = bool
   default     = true

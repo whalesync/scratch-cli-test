@@ -38,6 +38,10 @@ module "eu_test" {
   enable_client_cdn           = true
   api_domain                  = "test-api.scratch.md"
 
+  # Whalesync's Stripe app signs in at its External test link outside production; it pairs with the test-mode
+  # client id in STRIPE_OAUTH_CLIENT_ID (whalesync/extensions/stripe/README.md).
+  stripe_oauth_authorize_url = "https://marketplace.stripe.com/oauth/v2/chnlink_61VdC9PS9Zq71csij41Pi0s0AjjMsRgW/authorize"
+
   # Whalesync (Dusky) origins allowed to call the Scratch API directly from the browser as a shadow user.
   whalesync_app_origins = ["https://test.whalesync.com", "https://staging.whalesync.com"]
 

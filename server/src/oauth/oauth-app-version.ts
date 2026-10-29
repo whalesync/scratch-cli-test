@@ -44,6 +44,12 @@ export interface OAuthAppCredentials {
   readonly clientSecret: string;
   /** The redirect_uri registered on this app generation (must match at exchange time). */
   readonly redirectUri: string;
+  /**
+   * Where this environment's sign-in starts, for a provider whose authorize link differs per environment. Unset for
+   * every provider but Stripe, which signs in at the public link in production and at the app's External test link
+   * elsewhere. Not secret: it rides in the browser's address bar.
+   */
+  readonly authorizeUrl?: string;
 }
 
 /**

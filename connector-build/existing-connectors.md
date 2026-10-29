@@ -42,7 +42,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [Sanity](../server/src/remote-service/connectors/library/sanity/STATE.md) | ❌ | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | 2026-08-01 |
 | [Shopify](../server/src/remote-service/connectors/library/shopify/STATE.md) | ❌ | ✅ | 🟠 | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
 | [Square](../server/src/remote-service/connectors/library/square/STATE.md) | 🟠 | ✅ | ❌ | 🟠 | 🔒 | Free dev | ❌ | ❌ | 2026-10-26 |
-| [Stripe](../server/src/remote-service/connectors/library/stripe/STATE.md) | 🟠 | ✅ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
+| [Stripe](../server/src/remote-service/connectors/library/stripe/STATE.md) | ✅ | ✅ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
 | [Supabase](../server/src/remote-service/connectors/library/supabase/STATE.md) | ✅ | ✅ | ✅ | ✅ | 👁️ | Free tier | ❌ | ❌ | |
 | [Webflow](../server/src/remote-service/connectors/library/webflow/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ✅ | |
 | [Wix (Blog)](../server/src/remote-service/connectors/library/wix/wix-blog/STATE.md) | ✅ | ❌ | 🟠 | 🟠 | 👁️ | Free tier | ❌ | ❌ | |
@@ -63,6 +63,8 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 > **Acct upkeep is best-effort for un-reviewed connectors.** Confirmed for the skill-built ones (those with a Last Run): ClickUp/Attio/Zoho/YouTube = free tier, Copper = trial-only/no-free-tier, GoHighLevel = trial → paid, Affinity = the company's production org (no separate test tier). For the rest the value reflects the service's known offering at a glance and should be confirmed when a dedicated test account is actually provisioned.
 >
 > **Salesforce — OAuth only, not yet live-verified through the consent screen.** Salesforce has no API key, so **Creds = ❌**. The OAuth provider and connector are unit-tested and the connector is exercised live by `salesforce-connector.spec.ts` (password-grant token against Whalesync's Developer Edition org), but the browser consent flow needs `SALESFORCE_CLIENT_ID`/`_SECRET` provisioned per environment first — see its `STATE.md`.
+>
+> **Stripe — OAuth through Whalesync's Stripe app, not yet live-verified through the consent screen.** Signing in installs Whalesync's published Stripe app (`whalesync/extensions/stripe`), the same one Whalesync's own Stripe connector uses, so no Stripe-side change was needed. The provider and connector are unit-tested; the sign-in itself needs `STRIPE_OAUTH_CLIENT_ID`/`_SECRET` provisioned per environment first — see its `STATE.md`. In production the sign-in reaches live mode only, so the pasted secret key stays the way to connect a test-mode account.
 >
 > **Zoho — OAuth only for customers.** Zoho has no API key; the only customer login is OAuth. A `user_provided_params` ("Self Client") path exists but is **test/CLI-only** (hidden from the web UI via `supportedAuthMethods: ['oauth']`) and is itself a _manual OAuth_ refresh-token, not a real creds login — so **Creds = ❌**.
 

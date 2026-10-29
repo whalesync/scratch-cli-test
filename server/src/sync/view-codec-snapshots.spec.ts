@@ -137,7 +137,7 @@ const DEFAULT_VIEW_BUILDERS_BY_CONNECTOR: Record<string, (spec: BaseJsonTableSpe
     ),
   webflow: (spec) => new WebflowConnector('test-token').buildDefaultView(spec),
   hubspot: (spec) => new HubspotConnector('test-token').buildDefaultView(spec),
-  stripe: (spec) => new StripeConnector({ apiKey: 'test-key' }).buildDefaultView(spec),
+  stripe: (spec) => new StripeConnector({ secretKeyOrOAuthAccessToken: 'test-key' }).buildDefaultView(spec),
   notion: (spec) => new NotionConnector('test-key').buildDefaultView(spec),
   pipedrive: (spec) => new PipedriveConnector('test-token').buildDefaultView(spec),
   wix: (spec) => new WixBlogConnector('test-token').buildDefaultView(spec),

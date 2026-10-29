@@ -229,6 +229,8 @@ resource "google_cloud_run_v2_service" "api_service" {
             # Whalesync base URL (no path) for generation-2 OAuth; the server appends the
             # per-connector callback path (/oauth-callback/connector/<connectorType>).
             "REDIRECT_URI_WHALESYNC" : var.whalesync_oauth_base_url,
+            # Where a Stripe sign-in starts. Empty means Stripe's public link (production).
+            "STRIPE_OAUTH_AUTHORIZE_URL" : var.stripe_oauth_authorize_url,
             "REDIS_HOST" : module.redis.host,
             "REDIS_PORT" : module.redis.port,
             "RUNNING_IN_CLOUD" : "true",
@@ -311,6 +313,8 @@ resource "google_cloud_run_v2_service" "api_service" {
           "SHOPIFY_CLIENT_SECRET",
           "SLACK_NOTIFICATION_WEBHOOK_URL",
           "STRIPE_API_KEY",
+          "STRIPE_OAUTH_CLIENT_ID",
+          "STRIPE_OAUTH_CLIENT_SECRET",
           "STRIPE_WEBHOOK_SECRET",
           "WEBFLOW_CLIENT_ID",
           "WEBFLOW_CLIENT_SECRET",
@@ -534,6 +538,8 @@ resource "google_cloud_run_v2_service" "cron_service" {
             # Whalesync base URL (no path) for generation-2 OAuth; the server appends the
             # per-connector callback path (/oauth-callback/connector/<connectorType>).
             "REDIRECT_URI_WHALESYNC" : var.whalesync_oauth_base_url,
+            # Where a Stripe sign-in starts. Empty means Stripe's public link (production).
+            "STRIPE_OAUTH_AUTHORIZE_URL" : var.stripe_oauth_authorize_url,
             "REDIS_HOST" : module.redis.host,
             "REDIS_PORT" : module.redis.port,
             "RUNNING_IN_CLOUD" : "true",
@@ -607,6 +613,8 @@ resource "google_cloud_run_v2_service" "cron_service" {
           "SENDGRID_API_KEY",
           "SLACK_NOTIFICATION_WEBHOOK_URL",
           "STRIPE_API_KEY",
+          "STRIPE_OAUTH_CLIENT_ID",
+          "STRIPE_OAUTH_CLIENT_SECRET",
           "STRIPE_WEBHOOK_SECRET",
           "WEBFLOW_CLIENT_ID",
           "WEBFLOW_CLIENT_SECRET",
@@ -803,6 +811,8 @@ resource "google_cloud_run_v2_service" "worker_service" {
             # Whalesync base URL (no path) for generation-2 OAuth; the server appends the
             # per-connector callback path (/oauth-callback/connector/<connectorType>).
             "REDIRECT_URI_WHALESYNC" : var.whalesync_oauth_base_url,
+            # Where a Stripe sign-in starts. Empty means Stripe's public link (production).
+            "STRIPE_OAUTH_AUTHORIZE_URL" : var.stripe_oauth_authorize_url,
             "REDIS_HOST" : module.redis.host,
             "REDIS_PORT" : module.redis.port,
             "RUNNING_IN_CLOUD" : "true",
@@ -875,6 +885,8 @@ resource "google_cloud_run_v2_service" "worker_service" {
           "SENDGRID_API_KEY",
           "SLACK_NOTIFICATION_WEBHOOK_URL",
           "STRIPE_API_KEY",
+          "STRIPE_OAUTH_CLIENT_ID",
+          "STRIPE_OAUTH_CLIENT_SECRET",
           "STRIPE_WEBHOOK_SECRET",
           "WEBFLOW_CLIENT_ID",
           "WEBFLOW_CLIENT_SECRET",

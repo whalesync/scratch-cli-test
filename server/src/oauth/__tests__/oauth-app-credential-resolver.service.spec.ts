@@ -86,6 +86,34 @@ describe('OAuthAppCredentialResolver', () => {
       expect(resolver.resolveSystemAppCredentials(Service.WIX_BLOG, DEFAULT_OAUTH_APP_VERSION).clientId).toBe('wix-id');
     });
 
+    it("resolves Stripe from STRIPE_OAUTH_*, with Whalesync's stripe callback and the environment's sign-in link", () => {
+      const externalTestAuthorizeUrl = 'https://marketplace.stripe.com/oauth/v2/chnlink_test/authorize';
+      const resolver = makeResolver({
+        STRIPE_API_KEY: 'scratch-billing-key-not-the-oauth-app',
+        STRIPE_OAUTH_CLIENT_ID: 'ca_test',
+        STRIPE_OAUTH_CLIENT_SECRET: 'sk_test_app_owner',
+        STRIPE_OAUTH_AUTHORIZE_URL: externalTestAuthorizeUrl,
+        ...REDIRECTS,
+      });
+      expect(resolver.resolveSystemAppCredentials(Service.STRIPE, DEFAULT_OAUTH_APP_VERSION)).toEqual({
+        clientId: 'ca_test',
+        clientSecret: 'sk_test_app_owner',
+        redirectUri: 'https://app.whalesync.com/oauth-callback/connector/stripe',
+        authorizeUrl: externalTestAuthorizeUrl,
+      });
+    });
+
+    it("leaves Stripe's sign-in link to the provider's default when the environment sets none", () => {
+      const resolver = makeResolver({
+        STRIPE_OAUTH_CLIENT_ID: 'ca_live',
+        STRIPE_OAUTH_CLIENT_SECRET: 'sk_live_app_owner',
+        ...REDIRECTS,
+      });
+      expect(resolver.resolveSystemAppCredentials(Service.STRIPE, DEFAULT_OAUTH_APP_VERSION)).not.toHaveProperty(
+        'authorizeUrl',
+      );
+    });
+
     it('accepts a lowercase service key (normalizes to the registry key)', () => {
       const resolver = makeResolver({ NOTION_CLIENT_ID: 'id', NOTION_CLIENT_SECRET: 'secret', ...REDIRECTS });
       expect(resolver.resolveSystemAppCredentials('notion', DEFAULT_OAUTH_APP_VERSION).clientId).toBe('id');

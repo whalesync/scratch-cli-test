@@ -101,7 +101,7 @@ function buildOAuthService(args: {
   // are safe; the fields the refresh path actually reads are replaced below. The
   // intersection is deliberately NOT with OAuthService — `providers` is private
   // there, which would collapse the intersection to `never`.
-  const constructorArguments = [args.db, ...Array.from({ length: 19 }, () => ({}))] as unknown as ConstructorParameters<
+  const constructorArguments = [args.db, ...Array.from({ length: 20 }, () => ({}))] as unknown as ConstructorParameters<
     typeof OAuthService
   >;
   const oauthService = new OAuthService(...constructorArguments) as unknown as {

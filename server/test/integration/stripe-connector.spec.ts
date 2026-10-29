@@ -38,7 +38,7 @@ const ENTITY_IDS: Record<StripeEntityType, EntityId> = {
 };
 
 function createConnector(): StripeConnector {
-  return new StripeConnector({ apiKey: API_KEY! });
+  return new StripeConnector({ secretKeyOrOAuthAccessToken: API_KEY! });
 }
 
 /**
@@ -104,7 +104,7 @@ describeIfKey('StripeConnector — live API', () => {
     });
 
     it('rejects invalid credentials', async () => {
-      const badConnector = new StripeConnector({ apiKey: 'sk_test_invalid_key_123' });
+      const badConnector = new StripeConnector({ secretKeyOrOAuthAccessToken: 'sk_test_invalid_key_123' });
       await expect(badConnector.testConnection()).rejects.toThrow();
     });
   });

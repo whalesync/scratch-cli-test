@@ -16,7 +16,7 @@ describe('StripeApiClient', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    client = new StripeApiClient({ apiKey: 'sk_test_123' });
+    client = new StripeApiClient({ secretKeyOrOAuthAccessToken: 'sk_test_123' });
   });
 
   // ---------------------------------------------------------------------------
@@ -30,6 +30,26 @@ describe('StripeApiClient', () => {
     // toMatchObject rather than indexing: axios types `headers` as a union of AxiosHeaders and a
     // partial of its own known header names, so an arbitrary key like Stripe-Version can't index it.
     expect(config?.headers).toMatchObject({ 'Stripe-Version': STRIPE_CONNECTOR_API_VERSION });
+  });
+
+  it('sends a pasted secret key as the Bearer token', async () => {
+    const [, options] = jest.mocked(createApiClient).mock.calls[0];
+    await expect(options?.authorizationHeaderValueProvider?.()).resolves.toBe('Bearer sk_test_123');
+  });
+
+  // An OAuth access token lasts an hour, so a long pull must pick up the host's refresh instead of a token baked in
+  // at construction.
+  it("re-reads an OAuth connection's access token on every request", async () => {
+    jest.mocked(createApiClient).mockClear();
+    const oauthAccessTokenProvider = jest
+      .fn<Promise<string>, []>()
+      .mockResolvedValueOnce('first-access')
+      .mockResolvedValueOnce('refreshed-access');
+    new StripeApiClient({ secretKeyOrOAuthAccessToken: oauthAccessTokenProvider });
+
+    const [, options] = jest.mocked(createApiClient).mock.calls[0];
+    await expect(options?.authorizationHeaderValueProvider?.()).resolves.toBe('Bearer first-access');
+    await expect(options?.authorizationHeaderValueProvider?.()).resolves.toBe('Bearer refreshed-access');
   });
 
   // ---------------------------------------------------------------------------

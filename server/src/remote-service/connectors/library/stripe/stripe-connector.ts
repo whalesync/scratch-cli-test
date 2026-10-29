@@ -89,6 +89,9 @@ export class StripeConnector extends Connector {
     base: 'account',
     bases: 'accounts',
     logo: 'https://static.scratch.md/connector-icons/stripe.svg',
+    // Signing in installs Whalesync's Stripe app in the account. In production it reaches live mode only, so a
+    // test-mode account connects with a pasted secret key instead.
+    oauth: { label: 'Connect with Stripe' },
     credentialFields: {
       user_provided_params: [
         {
@@ -111,7 +114,7 @@ export class StripeConnector extends Connector {
   }
 
   /**
-   * Test the connection by validating the API key.
+   * Test the connection by validating the secret key or OAuth access token.
    */
   async testConnection(): Promise<void> {
     await this.client.validateCredentials();
@@ -289,7 +292,7 @@ connectorRegistry.register({
   service: Service.STRIPE,
   metadata: StripeConnector.metadata,
   advancedSettings: [],
-  supportedAuthMethods: ['user_provided_params'],
+  supportedAuthMethods: ['oauth', 'user_provided_params'],
   // Stripe enforces several ceilings at once: 100 requests/second globally in
   // live mode but only **25/s in sandbox**, and — regardless of mode — 25/s for
   // any single endpoint. A pull walks one entity's endpoint at a time, so the
@@ -300,17 +303,21 @@ connectorRegistry.register({
     points: 20,
     duration: 1,
   },
-  // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Stripe', Service.STRIPE);
     }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const oauthAccessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await oauthAccessTokenProvider();
+      return new StripeConnector({ secretKeyOrOAuthAccessToken: oauthAccessTokenProvider }, { rateLimiter });
+    }
     if (!ctx.decryptedCredentials?.apiKey) {
       throw new ConnectorInstantiationError('API key is required for Stripe', Service.STRIPE);
     }
-    return new StripeConnector(
-      { apiKey: ctx.decryptedCredentials.apiKey },
-      { rateLimiter: ctx.createRateLimiter(ctx.connectorAccount.id) },
-    );
+    return new StripeConnector({ secretKeyOrOAuthAccessToken: ctx.decryptedCredentials.apiKey }, { rateLimiter });
   },
 });
