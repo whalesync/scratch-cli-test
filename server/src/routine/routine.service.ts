@@ -4,6 +4,8 @@ import {
   CreateRoutineFileDto,
   isActiveRoutineRunStatus,
   Job,
+  ListRoutineFilesQueryDto,
+  ListRoutineFilesResponse,
   PushRoutineFilesBlockedStaleDto,
   PushRoutineFilesDto,
   PushRoutineFilesResponse,
@@ -20,12 +22,16 @@ import { jobEntityToJob } from 'src/job/entities/job.entity';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
 import { ScheduleService } from 'src/schedule/schedule.service';
-import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { Actor } from 'src/users/types';
-import { getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { RoutineRunEntity } from './entities/routine-run.entity';
 import { RoutineEntity } from './entities/routine.entity';
-import { assertValidRoutineFilePath, ROUTINES_DIRECTORY } from './routine-file-path';
+import {
+  RoutineDefinitionPushDelete,
+  RoutineDefinitionSource,
+  RoutineDefinitionStoreService,
+} from './routine-definition-store.service';
+import { assertValidRoutineFilePath } from './routine-file-path';
+import { RoutineGitMirrorService } from './routine-git-mirror.service';
 import { RoutineParserService } from './routine-parser.service';
 import { RoutineReferenceValidatorService, validateRoutineReferences } from './routine-reference-validator.service';
 import { ParsedRoutine, RoutineParseResult } from './routine.types';
@@ -36,11 +42,19 @@ const ROUTINE_RUNS_LIST_LIMIT = 100;
 /** What {@link RoutineService.upsertRoutineFile} did with the file. */
 export type RoutineFileUpsertOutcome = 'created' | 'updated' | 'unchanged';
 
+/**
+ * Routine definitions live in Postgres (`RoutineDefinition`, DEV-11399) behind
+ * {@link RoutineDefinitionStoreService}; this service adds validation, audit logging, the join with
+ * schedules + run history, and the transitional git mirror ({@link RoutineGitMirrorService}) that
+ * keeps `routines/*.yaml` in the config repo current for pre-DEV-11399 CLIs. "File" in the method
+ * names is the routine's identity (its `routines/<name>.yaml` path), not where it is stored.
+ */
 @Injectable()
 export class RoutineService {
   constructor(
     private readonly db: DbService,
-    private readonly scratchGitService: ScratchGitService,
+    private readonly routineDefinitionStore: RoutineDefinitionStoreService,
+    private readonly routineGitMirror: RoutineGitMirrorService,
     private readonly scheduleService: ScheduleService,
     private readonly parser: RoutineParserService,
     private readonly referenceValidator: RoutineReferenceValidatorService,
@@ -49,11 +63,11 @@ export class RoutineService {
   ) {}
 
   /**
-   * Reads `routines/*.yaml` from the workbook config repo and returns the discovered routines
-   * (malformed files carry a `parseError`), each joined with its ROUTINE Schedule row + latest run.
-   * The routine YAML no longer owns the schedule (DEV-10478), so reload performs no schedule writes
-   * other than orphan-cleaning ROUTINE schedules whose file no longer exists. It does NOT execute
-   * anything.
+   * Reads every routine definition (running the one-time git import for a workbook that predates
+   * the table) and returns the discovered routines (malformed YAML carries a `parseError`), each
+   * joined with its ROUTINE Schedule row + latest run. The routine YAML no longer owns the schedule
+   * (DEV-10478), so reload performs no schedule writes other than orphan-cleaning ROUTINE schedules
+   * whose routine no longer exists. It does NOT execute anything.
    */
   async reloadRoutines(workbookId: WorkbookId, actor: Actor): Promise<Routine[]> {
     const parseResultsByFilePath = await this.readAndParseRoutineFiles(workbookId);
@@ -80,7 +94,7 @@ export class RoutineService {
     return this.assembleRoutines(workbookId, parseResultsByFilePath);
   }
 
-  /** Lists routines by reading + parsing the config repo, joined with schedule + latest-run state. Read-only. */
+  /** Lists routines by reading + parsing every stored definition, joined with schedule + latest-run state. Read-only. */
   async listRoutines(workbookId: WorkbookId): Promise<Routine[]> {
     const parseResultsByFilePath = await this.readAndParseRoutineFiles(workbookId);
     return this.assembleRoutines(workbookId, parseResultsByFilePath);
@@ -232,12 +246,28 @@ export class RoutineService {
   /** Reads the raw YAML text of a single routine file. 404 if it doesn't exist. */
   async getRoutineFileContent(workbookId: WorkbookId, path: string): Promise<RoutineFileContent> {
     assertValidRoutineFilePath(path);
-    const repoId = await this.resolveConfigRepoId(workbookId);
-    const file = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, path);
-    if (file === null) {
+    const definition = await this.routineDefinitionStore.getDefinition(workbookId, path);
+    if (definition === null) {
       throw new NotFoundException(`Routine file ${path} not found`);
     }
-    return { path, content: file.content };
+    return { path, content: definition.content };
+  }
+
+  /**
+   * Every routine file with its optimistic-concurrency `version` (and, unless `metadataOnly`, its
+   * YAML text) — what an API-backed `scratchmd routines pull|status` materializes locally instead
+   * of fetching the config git repo.
+   */
+  async listRoutineFiles(workbookId: WorkbookId, query: ListRoutineFilesQueryDto): Promise<ListRoutineFilesResponse> {
+    const definitions = await this.routineDefinitionStore.listDefinitions(workbookId);
+    return {
+      files: definitions.map((definition) => ({
+        path: definition.filePath,
+        version: definition.version,
+        updatedAt: definition.updatedAt.toISOString(),
+        ...(query.metadataOnly ? {} : { content: definition.content }),
+      })),
+    };
   }
 
   /**
@@ -245,11 +275,15 @@ export class RoutineService {
    * already exists (409), or content that doesn't parse/validate (400) — nothing is committed
    * unless the YAML is a valid routine. The schedule is managed separately via the Schedule API.
    */
-  async createRoutineFile(workbookId: WorkbookId, dto: CreateRoutineFileDto, actor: Actor): Promise<Routine> {
+  async createRoutineFile(
+    workbookId: WorkbookId,
+    dto: CreateRoutineFileDto,
+    actor: Actor,
+    options: { source?: RoutineDefinitionSource } = {},
+  ): Promise<Routine> {
     assertValidRoutineFilePath(dto.path);
-    const repoId = await this.resolveConfigRepoId(workbookId);
 
-    const existing = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, dto.path);
+    const existing = await this.routineDefinitionStore.getDefinition(workbookId, dto.path);
     if (existing !== null) {
       throw new ConflictException(`Routine file ${dto.path} already exists`);
     }
@@ -260,12 +294,11 @@ export class RoutineService {
     }
     await this.assertRoutineReferencesExist(workbookId, parseResult.routine);
 
-    await this.scratchGitService.commitFilesToBranch(
-      repoId,
-      MAIN_BRANCH,
-      [{ path: dto.path, content: dto.content }],
-      `Create routine ${dto.path} (${actor.userId})`,
-    );
+    await this.routineDefinitionStore.upsertDefinition(workbookId, dto.path, dto.content, {
+      source: options.source ?? 'web',
+      updatedByUserId: actor.userId,
+    });
+    this.routineGitMirror.mirrorWorkbookRoutinesInBackground(workbookId, actor);
 
     await this.auditLogService.logEvent({
       actor,
@@ -283,11 +316,15 @@ export class RoutineService {
    * a missing file (404), or content that doesn't parse/validate (400). The schedule is managed
    * separately via the Schedule API and is unaffected by editing the routine file.
    */
-  async updateRoutineFile(workbookId: WorkbookId, dto: UpdateRoutineFileDto, actor: Actor): Promise<Routine> {
+  async updateRoutineFile(
+    workbookId: WorkbookId,
+    dto: UpdateRoutineFileDto,
+    actor: Actor,
+    options: { source?: RoutineDefinitionSource } = {},
+  ): Promise<Routine> {
     assertValidRoutineFilePath(dto.path);
-    const repoId = await this.resolveConfigRepoId(workbookId);
 
-    const existing = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, dto.path);
+    const existing = await this.routineDefinitionStore.getDefinition(workbookId, dto.path);
     if (existing === null) {
       throw new NotFoundException(`Routine file ${dto.path} not found`);
     }
@@ -298,12 +335,11 @@ export class RoutineService {
     }
     await this.assertRoutineReferencesExist(workbookId, parseResult.routine);
 
-    await this.scratchGitService.commitFilesToBranch(
-      repoId,
-      MAIN_BRANCH,
-      [{ path: dto.path, content: dto.content }],
-      `Update routine ${dto.path} (${actor.userId})`,
-    );
+    await this.routineDefinitionStore.upsertDefinition(workbookId, dto.path, dto.content, {
+      source: options.source ?? 'web',
+      updatedByUserId: actor.userId,
+    });
+    this.routineGitMirror.mirrorWorkbookRoutinesInBackground(workbookId, actor);
 
     await this.auditLogService.logEvent({
       actor,
@@ -318,23 +354,23 @@ export class RoutineService {
 
   /**
    * Creates the routine file when absent, replaces it when the stored content differs, and leaves
-   * it untouched (no commit, no audit event) when the stored content is byte-identical. Same
-   * validation as create/update: invalid path (400), unparseable YAML (400), dangling references
-   * (400). Used by callers that regenerate a routine on every save (the Live Export's generated
-   * `run-<syncId>.yaml`), so a generator improvement reaches existing routines instead of only
-   * brand-new ones.
+   * it untouched (no write, no audit event, no mirror) when the stored content is byte-identical.
+   * Same validation as create/update: invalid path (400), unparseable YAML (400), dangling
+   * references (400). Used by callers that regenerate a routine on every save (the Live Export's
+   * generated `run-<syncId>.yaml`, which passes `source: 'generated'`), so a generator improvement
+   * reaches existing routines instead of only brand-new ones.
    */
   async upsertRoutineFile(
     workbookId: WorkbookId,
     dto: CreateRoutineFileDto,
     actor: Actor,
+    options: { source?: RoutineDefinitionSource } = {},
   ): Promise<{ routine: Routine; outcome: RoutineFileUpsertOutcome }> {
     assertValidRoutineFilePath(dto.path);
-    const repoId = await this.resolveConfigRepoId(workbookId);
 
-    const existing = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, dto.path);
+    const existing = await this.routineDefinitionStore.getDefinition(workbookId, dto.path);
     if (existing === null) {
-      return { routine: await this.createRoutineFile(workbookId, dto, actor), outcome: 'created' };
+      return { routine: await this.createRoutineFile(workbookId, dto, actor, options), outcome: 'created' };
     }
     if (existing.content === dto.content) {
       const parseResult = this.parser.parse(dto.content);
@@ -343,25 +379,18 @@ export class RoutineService {
       }
       return { routine: await this.buildSingleRoutine(workbookId, dto.path, parseResult), outcome: 'unchanged' };
     }
-    return { routine: await this.updateRoutineFile(workbookId, dto, actor), outcome: 'updated' };
+    return { routine: await this.updateRoutineFile(workbookId, dto, actor, options), outcome: 'updated' };
   }
 
   /** Deletes a routine file and its ROUTINE schedule (if any). 404 if the file doesn't exist. */
   async deleteRoutineFile(workbookId: WorkbookId, path: string, actor: Actor): Promise<void> {
     assertValidRoutineFilePath(path);
-    const repoId = await this.resolveConfigRepoId(workbookId);
 
-    const existing = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, path);
-    if (existing === null) {
+    const deleted = await this.routineDefinitionStore.deleteDefinition(workbookId, path);
+    if (!deleted) {
       throw new NotFoundException(`Routine file ${path} not found`);
     }
-
-    await this.scratchGitService.deleteFilesFromBranch(
-      repoId,
-      MAIN_BRANCH,
-      [path],
-      `Delete routine ${path} (${actor.userId})`,
-    );
+    this.routineGitMirror.mirrorWorkbookRoutinesInBackground(workbookId, actor);
     await this.scheduleService.deleteRoutineScheduleByFilePath(workbookId, path);
 
     await this.auditLogService.logEvent({
@@ -375,17 +404,19 @@ export class RoutineService {
 
   /**
    * Batch-pushes routine files from the CLI: a set of upserts (created/edited files) and deletes
-   * (removed paths) committed to the config repo `main`, then reconciled via Reload Routines. This
-   * is the server side of `scratchmd routines push`.
+   * (removed paths) applied to the routine definitions atomically, then reconciled via Reload
+   * Routines. This is the server side of `scratchmd routines push`.
    *
    * Fail-fast at the boundary: every path is bounds-checked and every upsert is parsed +
-   * reference-validated BEFORE anything is written, so an invalid push commits nothing. Optimistic
-   * concurrency: when `baseHead` is provided it must still match the repo's current `main` head,
-   * otherwise the push is refused with a 409 `blocked_stale` (the CLI prompts a `routines pull` +
-   * retry) — a stale push never clobbers newer routines.
+   * reference-validated BEFORE anything is written, so an invalid push writes nothing. Optimistic
+   * concurrency is per file: an upsert/delete carrying `baseVersion` must still match the stored
+   * `RoutineDefinition.version` (or `null` for "expect new"), otherwise the whole push is refused
+   * with a 409 `blocked_stale` naming the stale files (the CLI prompts a `routines pull` + retry)
+   * — a stale push never clobbers newer routines. The pre-DEV-11399 `baseHead` git SHA is ignored
+   * (logged) because routine definitions no longer live in git.
    *
    * Unlike the single-file create/update endpoints this uses upsert semantics: a file is created or
-   * overwritten either way (no 409-on-exists), and deleting an absent file is a git-level no-op.
+   * overwritten either way (no 409-on-exists), and deleting an absent file is a no-op.
    */
   async pushRoutineFiles(
     workbookId: WorkbookId,
@@ -393,13 +424,18 @@ export class RoutineService {
     actor: Actor,
   ): Promise<PushRoutineFilesResponse> {
     // 1. Validate every path (upserts + deletes) up front; reject a path listed in both.
+    const deletes: RoutineDefinitionPushDelete[] = dto.deletes.map((deletion) =>
+      typeof deletion === 'string'
+        ? { filePath: deletion, baseVersion: undefined }
+        : { filePath: deletion.path, baseVersion: deletion.baseVersion },
+    );
     for (const upsert of dto.upserts) {
       assertValidRoutineFilePath(upsert.path);
     }
-    for (const deletePath of dto.deletes) {
-      assertValidRoutineFilePath(deletePath);
+    for (const deletion of deletes) {
+      assertValidRoutineFilePath(deletion.filePath);
     }
-    const deletePathSet = new Set(dto.deletes);
+    const deletePathSet = new Set(deletes.map((deletion) => deletion.filePath));
     const pathsBothUpsertedAndDeleted = dto.upserts
       .map((upsert) => upsert.path)
       .filter((path) => deletePathSet.has(path));
@@ -409,7 +445,17 @@ export class RoutineService {
       );
     }
 
-    const repoId = await this.resolveConfigRepoId(workbookId);
+    if (dto.baseHead) {
+      // A pre-DEV-11399 CLI. Its git-SHA guard has no meaning against Postgres-held definitions
+      // (and would false-positive against the lagging mirror), so it is ignored — but counted, so
+      // we can see when the old binaries are gone and the mirror can be switched off.
+      WSLogger.warn({
+        source: 'RoutineService.pushRoutineFiles',
+        message: 'Ignoring deprecated baseHead on routines push (pre-DEV-11399 CLI)',
+        workbookId,
+        userId: actor.userId,
+      });
+    }
 
     // 2. Parse + reference-validate every upsert before any write (the server is authoritative on
     //    references — the CLI cannot resolve a workbook's folders/connections).
@@ -421,54 +467,55 @@ export class RoutineService {
       await this.assertRoutineReferencesExist(workbookId, parseResult.routine);
     }
 
-    // 3. Optimistic-concurrency guard — refuse before any side effect if `main` moved.
-    if (dto.baseHead) {
-      const currentRemoteHead = await this.scratchGitService.getBranchHead(repoId, MAIN_BRANCH);
-      if (currentRemoteHead && dto.baseHead !== currentRemoteHead) {
-        const blockedStale: PushRoutineFilesBlockedStaleDto = {
-          status: 'blocked_stale',
-          baseHead: dto.baseHead,
-          currentRemoteHead,
-          message:
-            'Server routines have advanced past your local copy. Run `scratchmd routines pull`, then retry the push.',
-        };
-        throw new ConflictException(blockedStale);
-      }
+    // 3. Apply atomically under the per-workbook lock; the store checks every baseVersion first
+    //    and writes nothing when any is stale.
+    const pushResult = await this.routineDefinitionStore.applyPush(workbookId, {
+      upserts: dto.upserts.map((upsert) => ({
+        filePath: upsert.path,
+        content: upsert.content,
+        baseVersion: upsert.baseVersion,
+      })),
+      deletes,
+      source: 'cli',
+      updatedByUserId: actor.userId,
+    });
+    if (pushResult.status === 'blocked_stale') {
+      const blockedStale: PushRoutineFilesBlockedStaleDto = {
+        status: 'blocked_stale',
+        staleFiles: pushResult.staleFiles,
+        message: `Server routines have changed since your last pull (${pushResult.staleFiles
+          .map((staleFile) => staleFile.path)
+          .join(', ')}). Run \`scratchmd routines pull\`, then retry the push.`,
+      };
+      throw new ConflictException(blockedStale);
     }
 
-    // 4. Commit upserts then deletes (upserts first so a half-applied push never removes a file a
-    //    later step still needs; re-running push re-converges since it is diff-driven). Both calls
-    //    are no-ops on an empty list.
-    if (dto.upserts.length > 0) {
-      await this.scratchGitService.commitFilesToBranch(
-        repoId,
-        MAIN_BRANCH,
-        dto.upserts.map((upsert) => ({ path: upsert.path, content: upsert.content })),
-        `Push routines: ${dto.upserts.length} upsert(s) (${actor.userId})`,
-      );
-    }
-    if (dto.deletes.length > 0) {
-      await this.scratchGitService.deleteFilesFromBranch(
-        repoId,
-        MAIN_BRANCH,
-        dto.deletes,
-        `Push routines: ${dto.deletes.length} delete(s) (${actor.userId})`,
-      );
-    }
-
-    // 5. Reconcile all ROUTINE schedules from the just-committed files, then read the new head.
+    // 4. Reconcile all ROUTINE schedules from the just-written definitions, then mirror to git
+    //    synchronously so pre-DEV-11399 CLIs get the head they re-materialize to. A mirror failure
+    //    must not fail the push — the definitions are already saved — so it degrades to `head: ''`
+    //    (the old CLI's "nothing to re-materialize"; it cannot deserialize a null here).
     const routines = await this.reloadRoutines(workbookId, actor);
-    const head = (await this.scratchGitService.getBranchHead(repoId, MAIN_BRANCH)) ?? '';
+    let head = '';
+    try {
+      head = (await this.routineGitMirror.mirrorWorkbookRoutines(workbookId, actor)) ?? '';
+    } catch (error) {
+      WSLogger.warn({
+        source: 'RoutineService.pushRoutineFiles',
+        message: 'Routines were saved but mirroring them to the workbook config repo failed',
+        workbookId,
+        error,
+      });
+    }
 
     await this.auditLogService.logEvent({
       actor,
       eventType: 'update',
-      message: `Pushed routines: ${dto.upserts.length} upsert(s), ${dto.deletes.length} delete(s)`,
+      message: `Pushed routines: ${pushResult.upsertedFilePaths.length} upsert(s), ${pushResult.deletedFilePaths.length} delete(s)`,
       entityId: workbookId,
       organizationId: actor.organizationId,
     });
 
-    return { head, routines };
+    return { files: pushResult.files, head, routines };
   }
 
   // ── internals ────────────────────────────────────────────────────────────────
@@ -486,23 +533,16 @@ export class RoutineService {
     }
   }
 
-  /** Reads every `.yaml`/`.yml` file under `routines/` and parses each. Key = file path. */
+  /**
+   * Reads every stored routine definition and parses each. Key = file path. The store runs the
+   * one-time git import first, so this is always the COMPLETE set — `reloadRoutines` relies on
+   * that to orphan-clean schedules safely.
+   */
   private async readAndParseRoutineFiles(workbookId: WorkbookId): Promise<Map<string, RoutineParseResult>> {
-    const repoId = await this.resolveConfigRepoId(workbookId);
-    const entries = await this.scratchGitService.listRepoFiles(repoId, MAIN_BRANCH, ROUTINES_DIRECTORY);
-
-    const yamlFileEntries = entries.filter(
-      (entry) => entry.type === 'file' && (entry.path.endsWith('.yaml') || entry.path.endsWith('.yml')),
-    );
-
+    const definitions = await this.routineDefinitionStore.listDefinitions(workbookId);
     const parseResultsByFilePath = new Map<string, RoutineParseResult>();
-    for (const entry of yamlFileEntries) {
-      const file = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, entry.path);
-      if (file === null) {
-        // Listed but unreadable (raced deletion) — skip; orphan cleanup handles the schedule.
-        continue;
-      }
-      parseResultsByFilePath.set(entry.path, this.parser.parse(file.content));
+    for (const definition of definitions) {
+      parseResultsByFilePath.set(definition.filePath, this.parser.parse(definition.content));
     }
     return parseResultsByFilePath;
   }
@@ -554,18 +594,6 @@ export class RoutineService {
       }
     }
     return latestByFilePath;
-  }
-
-  /** Resolves the workbook config repo id (`{orgId}/{workbookId}/{workbookId}`). */
-  private async resolveConfigRepoId(workbookId: WorkbookId): Promise<string> {
-    const workbook = await this.db.client.workbook.findFirst({
-      where: { id: workbookId },
-      select: { organizationId: true },
-    });
-    if (!workbook) {
-      throw new NotFoundException(`Workbook ${workbookId} not found`);
-    }
-    return getWorkbookRepoPath(workbook.organizationId, workbookId);
   }
 
   /** Assembles the joined {@link Routine} for one file (schedule + latest run), mirroring `assembleRoutines`. */

@@ -920,7 +920,7 @@ export class SyncDraftService {
         incrementalPullDestinationConnectorAccountIds,
       });
 
-      const { outcome } = await this.routineService.upsertRoutineFile(workbookId, file, actor);
+      const { outcome } = await this.routineService.upsertRoutineFile(workbookId, file, actor, { source: 'generated' });
       WSLogger.info({
         source: 'SyncDraftService.apply',
         message: `Sync routine ${file.path} ${outcome}`,

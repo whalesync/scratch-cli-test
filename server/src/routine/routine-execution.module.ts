@@ -9,6 +9,7 @@ import { MetricsModule } from 'src/metrics/metrics.module';
 import { RunCountModule } from 'src/run-count/run-count.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
+import { RoutineDefinitionStoreService } from './routine-definition-store.service';
 import { RoutineExecutorService } from './routine-executor.service';
 import { RoutineParserService } from './routine-parser.service';
 import { RoutineReferenceValidatorService } from './routine-reference-validator.service';
@@ -19,7 +20,9 @@ import { WhalesyncRunNotifierService } from './whalesync-run-notifier.service';
  * on NOTHING that depends back on routines (in particular NOT ScheduleModule), so the schedule
  * evaluator, the REST controller, and the cron reaper can all drive routines by importing this
  * module without creating a circular module dependency. RoutineModule (file CRUD + read API) imports
- * this for the parser/validator + executor; ScheduleModule and CronModule import it for the executor.
+ * this for the definition store, parser/validator + executor; ScheduleModule and CronModule import it
+ * for the executor. The store (RoutineDefinitionStoreService) is the single owner of routine
+ * definitions in Postgres and of their one-time import from git (DEV-11399).
  */
 @Module({
   imports: [
@@ -35,12 +38,14 @@ import { WhalesyncRunNotifierService } from './whalesync-run-notifier.service';
     MetricsModule,
   ],
   providers: [
+    RoutineDefinitionStoreService,
     RoutineParserService,
     RoutineReferenceValidatorService,
     RoutineExecutorService,
     WhalesyncRunNotifierService,
   ],
   exports: [
+    RoutineDefinitionStoreService,
     RoutineParserService,
     RoutineReferenceValidatorService,
     RoutineExecutorService,

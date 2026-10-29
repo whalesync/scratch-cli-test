@@ -17,7 +17,12 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import type { PublishPlanChangedFilesResponse, PublishPlanFileDiff } from '@spinner/shared-types';
-import { DeleteWorkbookResponseDto, PushRoutineFilesResponse, WorkbookId } from '@spinner/shared-types';
+import {
+  DeleteWorkbookResponseDto,
+  ListRoutineFilesResponse,
+  PushRoutineFilesResponse,
+  WorkbookId,
+} from '@spinner/shared-types';
 import type { Request, Response } from 'express';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
@@ -31,6 +36,7 @@ import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.ser
 import { PublishPlanCrudService } from 'src/publish-plan/publish-plan-crud.service';
 import { PublishPlanDiffService } from 'src/publish-plan/publish-plan-diff.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
+import { ListRoutineFilesQueryDto } from 'src/routine/dto/list-routine-files-query.dto';
 import { PushRoutineFilesDto } from 'src/routine/dto/push-routine-files.dto';
 import { RoutineService } from 'src/routine/routine.service';
 import { getScratchRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -786,11 +792,31 @@ export class CliWorkbookController {
   }
 
   /**
-   * Batch-push routine files from the CLI (`scratchmd routines push`). Commits a set of upserts
-   * (created/edited routine YAML) and deletes to the config repo `main`, then reloads routines so
-   * schedules converge. The body's optional `baseHead` enables optimistic concurrency: a stale push
-   * is refused with `409 blocked_stale` (the CLI then pulls + retries) rather than clobbering newer
-   * routines. Validation, the concurrency guard, and the audit log all live in RoutineService.
+   * Every routine file of the workbook straight from Postgres (DEV-11399), each with the
+   * optimistic-concurrency `version` the CLI echoes back as `baseVersion` on push. `metadataOnly`
+   * omits the YAML text (for `scratchmd routines status`). This is what an API-backed
+   * `scratchmd routines pull` materializes instead of fetching the config git repo.
+   */
+  @Get(':id/routines/files')
+  async listRoutineFiles(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Query() query: ListRoutineFilesQueryDto,
+  ): Promise<ListRoutineFilesResponse> {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertReadableWorkbook(actor, id as WorkbookId);
+    return this.routineService.listRoutineFiles(id as WorkbookId, query);
+  }
+
+  /**
+   * Batch-push routine files from the CLI (`scratchmd routines push`). Applies a set of upserts
+   * (created/edited routine YAML) and deletes to the Postgres-held definitions atomically, reloads
+   * routines so schedules converge, then mirrors the result to the config repo `main` for
+   * pre-DEV-11399 CLIs (returned as `head`, "" once the mirror is off). Per-file `baseVersion`
+   * enables optimistic concurrency: a stale push is refused with `409 blocked_stale` naming the
+   * stale files (the CLI then pulls + retries) rather than clobbering newer routines. The legacy
+   * `baseHead` is ignored. Validation, the concurrency guard, and the audit log all live in
+   * RoutineService.
    */
   @Post(':id/routines/push')
   async pushRoutines(

@@ -211,6 +211,12 @@ model Workbook {
   // merge (null values delete keys), never wholesale-replaced. See WorkbookSettings.
   settings Json? @default("{}") // WorkbookSettings object
 
+  // True while this workbook's routine definitions may still live only as `routines/*.yaml` in
+  // its config git repo (DEV-11399). The first routine read imports them into RoutineDefinition
+  // rows and clears the flag; after that git is never consulted for definitions. The migration
+  // that added this column set it true for every pre-existing workbook; new workbooks start false.
+  routinesPendingGitImport Boolean @default(false)
+
   user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId         String?
   organizationId String
@@ -225,6 +231,7 @@ model Workbook {
   syncDrafts           SyncDraft[]
   assets               Asset[]
   routineRuns          RoutineRun[]
+  routineDefinitions   RoutineDefinition[]
   workspacePermissions WorkspacePermission[]
   workspaceInvites     WorkspaceInvites[]
 
@@ -1019,9 +1026,42 @@ model Schedule {
 
 //#region Routine
 
+/// A routine definition — the verbatim YAML text the user edits — one row per routine file.
+/// Postgres is the source of truth (DEV-11399): the server parses `content` on every read and
+/// never stores a parsed copy, so comments and formatting round-trip unchanged through the
+/// editor and the CLI. `routines/*.yaml` in the workbook config git repo is only (a) the one-time
+/// import source for workbooks that predate this table (see Workbook.routinesPendingGitImport)
+/// and (b) a one-way mirror written after each change while ROUTINES_GIT_MIRROR_ENABLED, so
+/// older `scratchmd routines pull` binaries keep working during the transition.
+/// `filePath` (e.g. "routines/daily-sync.yaml") stays the routine's identity everywhere:
+/// RoutineRun.routineFilePath, Schedule.entityId (action ROUTINE), Workbook.settings.sync_routine.
+model RoutineDefinition {
+  id        String   @id // type: RoutineDefinitionId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
+  workbookId String
+
+  /// Single `.yaml`/`.yml` file directly under `routines/` — validated by assertValidRoutineFilePath.
+  filePath        String
+  /// The verbatim YAML text of the routine file.
+  content         String
+  /// Optimistic-concurrency token, bumped on every content change. The CLI push echoes the
+  /// version it edited per file; a mismatch is a 409 blocked_stale (SyncDraft.version precedent).
+  version         Int     @default(1)
+  /// Where the current content came from: "web" | "cli" | "generated" | "git-import".
+  source          String
+  /// The user who last wrote the content (null for generated / git-import writes).
+  updatedByUserId String?
+
+  @@unique([workbookId, filePath])
+  @@index([workbookId])
+}
+
 /// Execution history for a single run of a routine (a file-defined workflow pipeline).
-/// The routine *definition* is never stored in the DB — it lives as a YAML file in the
-/// workbook config repo under routines/. Only run history is persisted here.
+/// The routine *definition* lives in RoutineDefinition (Postgres, DEV-11399); this table only
+/// persists run history, with the steps snapshotted at trigger time.
 /// NOTE: Keep this in sync with packages/shared-types/src/db/routine-run.ts
 model RoutineRun {
   id        String   @id // type: RoutineRunId

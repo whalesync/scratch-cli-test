@@ -37,7 +37,7 @@ export class RoutineController {
     private readonly workbookService: WorkbookService,
   ) {}
 
-  /** Re-read routine files from git and sync their ROUTINE schedule rows. A write — asserts writable. */
+  /** Re-read every routine definition and orphan-clean ROUTINE schedule rows. A write — asserts writable. */
   @Post('routines/reload')
   async reload(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<Routine[]> {
     const actor = userToActor(req.user);

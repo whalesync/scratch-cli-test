@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await */
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma, type DbJob } from '@prisma/client';
 import { RoutineAction, RoutineRunId, RoutineStep, RoutineStepOptions, WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
@@ -7,8 +7,8 @@ import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { LiveExportRunLifecycleService } from 'src/live-export-run-store/live-export-run-lifecycle.service';
 import { RunCountService } from 'src/run-count/run-count.service';
-import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { RoutineDefinitionStoreService } from '../routine-definition-store.service';
 import { RoutineExecutorService } from '../routine-executor.service';
 import { RoutineParserService } from '../routine-parser.service';
 import { RoutineReferenceValidatorService } from '../routine-reference-validator.service';
@@ -210,7 +210,7 @@ function makeService(deps: {
     deps.db as unknown as DbService,
     deps.bullEnqueuer as BullEnqueuerService,
     deps.jobService as JobService,
-    {} as ScratchGitService,
+    {} as RoutineDefinitionStoreService,
     {} as RoutineParserService,
     referenceValidator,
     { logEvent: jest.fn() } as unknown as AuditLogService,
@@ -1301,16 +1301,20 @@ describe('RoutineExecutorService.triggerRun', () => {
     ],
   };
 
-  function makeTriggerService(routineRunCreate: jest.Mock, parsedRoutine: typeof PARSED_ROUTINE = PARSED_ROUTINE) {
+  function makeTriggerService(
+    routineRunCreate: jest.Mock,
+    parsedRoutine: typeof PARSED_ROUTINE = PARSED_ROUTINE,
+    definitionContent: string | null = 'yaml',
+  ) {
     const db = {
       client: {
         workbook: { findFirst: jest.fn().mockResolvedValue({ organizationId: 'org_test1234' }) },
         routineRun: { create: routineRunCreate },
       },
     } as unknown as DbService;
-    const scratchGit = {
-      getRepoFile: jest.fn().mockResolvedValue({ content: 'yaml' }),
-    } as unknown as ScratchGitService;
+    const routineDefinitionStore = {
+      getDefinition: jest.fn().mockResolvedValue(definitionContent === null ? null : { content: definitionContent }),
+    } as unknown as RoutineDefinitionStoreService;
     const parser = { parse: jest.fn().mockReturnValue({ routine: parsedRoutine }) } as unknown as RoutineParserService;
     const referenceValidator = {
       validateRoutine: jest.fn().mockResolvedValue([]),
@@ -1320,7 +1324,7 @@ describe('RoutineExecutorService.triggerRun', () => {
       db,
       {} as BullEnqueuerService,
       {} as JobService,
-      scratchGit,
+      routineDefinitionStore,
       parser,
       referenceValidator,
       auditLog,
@@ -1440,6 +1444,14 @@ describe('RoutineExecutorService.triggerRun', () => {
       Prisma.DbNull,
       Prisma.DbNull,
     ]);
+  });
+
+  it('throws NotFound (and creates no run) when the routine definition does not exist', async () => {
+    const routineRunCreate = jest.fn();
+    const service = makeTriggerService(routineRunCreate, PARSED_ROUTINE, null);
+
+    await expect(service.triggerRun(WORKBOOK_ID, 'routines/missing.yaml', 'manual')).rejects.toThrow(NotFoundException);
+    expect(routineRunCreate).not.toHaveBeenCalled();
   });
 
   it('rejects with 409 when the routine already has an active run (unique-index P2002)', async () => {

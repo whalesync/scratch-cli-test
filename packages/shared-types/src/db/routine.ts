@@ -3,9 +3,12 @@ import { RoutineRunId, ScheduleId } from '../ids';
 import { RoutineRunStatus, RoutineRunTrigger } from './routine-run';
 
 ///
-/// A Routine is defined by a YAML file in the workbook config repo under routines/.
-/// The definition is never stored in the database — these types describe what the
-/// server parses out of the YAML and returns over the wire. See docs/routines-design.md.
+/// A Routine is defined by a YAML file (`routines/<name>.yaml`). Since DEV-11399 the YAML text is
+/// stored in Postgres (`RoutineDefinition`, one row per file) and parsed on every read; the file
+/// path remains the routine's identity. `routines/*.yaml` in the workbook config git repo is only
+/// the one-time import source for older workbooks plus a transitional one-way mirror. These types
+/// describe what the server parses out of the YAML and returns over the wire. See
+/// docs/routines-design.md.
 ///
 
 /**

@@ -37,6 +37,7 @@ export enum IdPrefixes {
   WORKSPACE_INVITE = 'win_', // Workspace invite
   ASSET = 'ast_', // Asset
   MCP_CLIENT = 'mcc_', // MCP OAuth client
+  ROUTINE_DEFINITION = 'rdf_', // Routine definition (the YAML text of one routine file, stored in Postgres)
   ROUTINE_RUN = 'rrn_', // Routine run (execution history)
   ROUTINE_RUN_STEP = 'rrs_', // Routine run step
   ORGANIZATION_MONTHLY_RUN_COUNT = 'omr_', // Per-organization monthly run-count bucket
@@ -247,6 +248,17 @@ export function isSyncDraftId(id: unknown): id is SyncDraftId {
 
 export function createSyncDraftId(): SyncDraftId {
   return createId(IdPrefixes.SYNC_DRAFT) as SyncDraftId;
+}
+
+// ------- Routine Definition -------
+export type RoutineDefinitionId = PrefixedId<IdPrefixes.ROUTINE_DEFINITION>;
+
+export function isRoutineDefinitionId(id: unknown): id is RoutineDefinitionId {
+  return isId(id, IdPrefixes.ROUTINE_DEFINITION);
+}
+
+export function createRoutineDefinitionId(): RoutineDefinitionId {
+  return createId(IdPrefixes.ROUTINE_DEFINITION) as RoutineDefinitionId;
 }
 
 // ------- Schedule -------

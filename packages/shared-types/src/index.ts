@@ -77,6 +77,7 @@ export * from './dto/workbook/update-workbook.dto';
 export * from './dto/publish-plan/publish-job-responses.dto';
 export * from './dto/publish-plan/publish-plan.dto';
 export * from './dto/routine/create-routine-file.dto';
+export * from './dto/routine/list-routine-files.dto';
 export * from './dto/routine/push-routine-files.dto';
 export * from './dto/routine/routine-run-get-query.dto';
 export * from './dto/routine/routine-run-list-query.dto';

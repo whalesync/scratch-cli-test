@@ -6,8 +6,8 @@ import type { UpdateRoutineFileDto } from '../../dto/routine/update-routine-file
 import type { Http } from '../http';
 
 /**
- * Routine operations for a workbook. Routines are YAML files in the workbook config repo under
- * `routines/`; `list`/`reload` return the parsed+joined view, the `*File` methods read and write
+ * Routine operations for a workbook. A routine is a YAML file (`routines/<name>.yaml`) whose text is
+ * stored server-side in Postgres; `list`/`reload` return the parsed+joined view, the `*File` methods read and write
  * the raw YAML text the editor edits, and `trigger`/`cancelRun`/`listRuns`/`getRun` drive and
  * observe routine runs. Reached as `client.routine.*`. CLIENT-ONLY.
  */
@@ -21,7 +21,7 @@ export function createRoutineApi(http: Http) {
       return res.data;
     },
 
-    /** POST /workbooks/:id/routines/reload — re-read routine files from git and sync their schedules. */
+    /** POST /workbooks/:id/routines/reload — re-read every routine and orphan-clean its schedules. */
     reload: async (workbookId: string): Promise<Routine[]> => {
       const res = await http.post<Routine[]>(`/workbooks/${workbookId}/routines/reload`, undefined, {
         fallbackMessage: 'Failed to reload routines',

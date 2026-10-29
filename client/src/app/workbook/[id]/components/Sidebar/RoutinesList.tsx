@@ -90,8 +90,8 @@ export function RoutinesList({ workbookId }: RoutinesListProps) {
           </Group>
         </UnstyledButton>
 
-        {/* Reload routines from git */}
-        <Tooltip label="Re-read routine files from the workbook repo" position="right">
+        {/* Reload routines: re-read every routine and clean up schedules whose routine is gone */}
+        <Tooltip label="Refresh routines and clean up stale schedules" position="right">
           <UnstyledButton
             onClick={handleReload}
             disabled={isReloading}

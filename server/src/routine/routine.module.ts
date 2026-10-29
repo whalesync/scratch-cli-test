@@ -9,6 +9,7 @@ import { ScheduleModule } from 'src/schedule/schedule.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { RoutineExecutionModule } from './routine-execution.module';
+import { RoutineGitMirrorService } from './routine-git-mirror.service';
 import { RoutineController } from './routine.controller';
 import { RoutineService } from './routine.service';
 
@@ -16,8 +17,9 @@ import { RoutineService } from './routine.service';
   // MetricsModule + ScratchConfigModule are required so the controller-level guards
   // (ApiRateLimitGuard → CustomMetricsService + ScratchConfigService) resolve in this
   // module's context — mirrors ScheduleModule, whose controller uses the same guards.
-  // RoutineExecutionModule provides the parser/validator (used by RoutineService) and the
-  // RoutineExecutorService (used by the controller's trigger/cancel endpoints).
+  // RoutineExecutionModule provides the definition store + parser/validator (used by RoutineService)
+  // and the RoutineExecutorService (used by the controller's trigger/cancel endpoints).
+  // ScratchGitModule is still needed by RoutineGitMirrorService (the transitional git mirror).
   imports: [
     DbModule,
     MetricsModule,
@@ -31,7 +33,7 @@ import { RoutineService } from './routine.service';
     JobModule,
   ],
   controllers: [RoutineController],
-  providers: [RoutineService],
+  providers: [RoutineService, RoutineGitMirrorService],
   exports: [RoutineService],
 })
 export class RoutineModule {}

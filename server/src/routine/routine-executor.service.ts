@@ -23,9 +23,7 @@ import { JobService } from 'src/job/job.service';
 import { LiveExportRunLifecycleService } from 'src/live-export-run-store/live-export-run-lifecycle.service';
 import { WSLogger } from 'src/logger';
 import { RunCountService } from 'src/run-count/run-count.service';
-import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { Actor } from 'src/users/types';
-import { getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext, RunContext } from 'src/worker/jobs/base-types';
 import { DiscardPendingChangesPublicProgress } from 'src/worker/jobs/job-definitions/discard-pending-changes.job';
@@ -33,6 +31,7 @@ import { PublishPublicProgress } from 'src/worker/jobs/job-definitions/publish.j
 import { PullLinkedFolderFilesPublicProgress } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
 import { SyncDataFoldersPublicProgress } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
 import { RoutineRunEntity } from './entities/routine-run.entity';
+import { RoutineDefinitionStoreService } from './routine-definition-store.service';
 import { assertValidRoutineFilePath } from './routine-file-path';
 import { RoutineParserService } from './routine-parser.service';
 import {
@@ -112,7 +111,7 @@ export class RoutineExecutorService {
     private readonly db: DbService,
     private readonly bullEnqueuer: BullEnqueuerService,
     private readonly jobService: JobService,
-    private readonly scratchGitService: ScratchGitService,
+    private readonly routineDefinitionStore: RoutineDefinitionStoreService,
     private readonly parser: RoutineParserService,
     private readonly referenceValidator: RoutineReferenceValidatorService,
     private readonly auditLogService: AuditLogService,
@@ -142,13 +141,12 @@ export class RoutineExecutorService {
   ): Promise<RoutineRun> {
     assertValidRoutineFilePath(routineFilePath);
 
-    const repoId = await this.resolveConfigRepoId(workbookId);
-    const file = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, routineFilePath);
-    if (file === null) {
+    const definition = await this.routineDefinitionStore.getDefinition(workbookId, routineFilePath);
+    if (definition === null) {
       throw new NotFoundException(`Routine file ${routineFilePath} not found`);
     }
 
-    const parseResult = this.parser.parse(file.content);
+    const parseResult = this.parser.parse(definition.content);
     if ('error' in parseResult) {
       throw new BadRequestException(parseResult.error);
     }
@@ -949,18 +947,6 @@ export class RoutineExecutorService {
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────
-
-  /** Resolves the workbook config repo id (`{orgId}/{workbookId}/{workbookId}`). */
-  private async resolveConfigRepoId(workbookId: WorkbookId): Promise<string> {
-    const workbook = await this.db.client.workbook.findFirst({
-      where: { id: workbookId },
-      select: { organizationId: true },
-    });
-    if (!workbook) {
-      throw new NotFoundException(`Workbook ${workbookId} not found`);
-    }
-    return getWorkbookRepoPath(workbook.organizationId, workbookId);
-  }
 
   /**
    * Builds the Actor the step jobs run as: the triggering user when known, else the org owner
