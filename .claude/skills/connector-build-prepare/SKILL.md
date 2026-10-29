@@ -8,7 +8,7 @@ description: One-time, near-fully-automated setup that makes a connector ready f
 
 `/connector-build-prepare <connector>` — **one parameter, the connector** (e.g. `/connector-build-prepare clickup`). Run this **once per connector**, before `/connector-build-execute`. It does the human-shaped setup work — provision a test account, wire up automated login — so that every later `/connector-build-execute` run on this connector is hands-off.
 
-Read [`connector-build/test-accounts-mechanism.md`](/connector-build/test-accounts-mechanism.md) first — it is the mechanism this skill implements (the shared Secret Manager store, the gstack session layer, the login-script convention, the three-layer login model).
+Read [`connector-build/test-accounts-mechanism.md`](/connector-build/test-accounts-mechanism.md) first — it is the mechanism this skill implements (the shared Secret Manager store, the saved browser sessions, the login-script convention, the three-layer login model).
 
 ## The contract — what you do autonomously vs. when you pause
 
@@ -42,8 +42,11 @@ All secrets live in the **shared test-credentials store**: Secret Manager in the
 ```
 H=.claude/skills/connector-build-prepare/lib/credential-helpers.sh
 bash $H gen-password   <svc> <SVC>_PASSWORD            # generate a strong random pw, store it (no echo)
+bash $H open-browser   <svc> [--headed]                # start the <svc> browser session, its secrets masked
 bash $H enter-secret   <svc> <SVC>_PASSWORD '#password' '#confirm-password'   # fill the field(s)
 bash $H type-secret    <svc> <SVC>_PASSWORD            # type into the focused element
+bash $H save-browser-session <svc>                     # keep the logged-in session for later runs
+bash $H load-browser-session <svc>                     # restore it into the open session
 printf '%s' "<token>" | bash $H set-secret <svc> <SVC>_API_TOKEN   # store a value from stdin
 bash $H require        <svc> <SVC>_API_TOKEN ...       # fail fast if missing/empty
 bash $H run            <svc> -- <command>              # run a command with the account's vars exported
@@ -51,7 +54,9 @@ bash $H set-header     <svc> < header.txt              # the comment lines descr
 bash $H names          <svc>                           # which vars are stored (never the values)
 ```
 
-You locate the password/email fields (you *can* see the form), pass their selectors to the script; the script supplies the value. You see only `set … (value hidden)`.
+You locate the password/email fields (you *can* see the form), pass their selectors to the script; the script supplies the value. You see only `set … (value hidden)`, and snapshots of the filled form show `<secret><SVC>_PASSWORD</secret>` in place of the password.
+
+**The browser is Playwright, through `playwright-cli`** — one session per account, named after it: every call carries `-s=<svc>` (`playwright-cli -s=<svc> goto <url>`, `snapshot`, `click e12`, `fill '<selector>' '<text>'`, `--raw eval '<js expression>'`, `screenshot`). `open-browser` registers the account's passwords and tokens as Playwright secrets, which masks them in everything the session prints — but only the values stored **when it opened**, so store a new password before opening (step 3). Never run `playwright-cli open` on a session that's already open: it restarts the browser and drops the login.
 
 `<svc>` is the account's secret name: the connector name in lowercase (`clickup`, `zoho`). `<SVC>` is the same name upper-cased, and **every variable must start with it** (`CLICKUP_API_TOKEN`); the store's tools skip any other name, so the helper refuses them. Default login email is **`testing@whalesync.com`** (`<SVC>_LOGIN_EMAIL`). Before creating a new secret, `bash $H list`: if `<svc>` already exists for a *different* account (Whalesync keeps its own test accounts here too, e.g. `airtable`, `attio`, `zoho`), use a suffixed name such as `<svc>-scratch`.
 
@@ -61,19 +66,19 @@ You locate the password/email fields (you *can* see the form), pass their select
 
 **2. Store preflight (fail fast).** `bash $H require <svc> <SVC>_...` for whatever should already exist. If the helper says it **can't read Secret Manager**, stop and tell the developer to fix their gcloud login (their own whalesync.com login or their read-only laptop service account), `/read`, and wait. If it says there's **no `<svc>` secret**, the account isn't provisioned yet — that's expected, continue to provision it. If it says the `<svc>` secret **exists but the vars are missing**, it is probably someone else's account (Whalesync keeps its own test accounts here, e.g. `asana`, `mailchimp`): read its header (`gcloud secrets versions access latest --secret=<svc> --project=whalesync-test-credentials --billing-project=whalesync-test-credentials | grep '^#'`). Unless it describes this exact account, use `<svc>-scratch` as the secret name for every later step, **before** any `gen-password` / `set-secret` — those write silently and would overwrite that account's keys.
 
-**3. Browser preflight — try the 3-rung ladder, use the first that works:** (1) **gstack headless** (`$B connect`), (2) **gstack headed** (`$B connect --headed`), (3) **Chrome extension** (`mcp__claude-in-chrome__*`, user-connected via `/connect-chrome`). All need the machine awake. Fall through the ladder; don't let one option's flakiness stop you. Full ladder + gstack recovery (single clean daemon, JS form-submit over `$B click`, kill stray daemons): [connector-build-execute's preflight](/.claude/skills/connector-build-execute/SKILL.md). If a saved session already exists, `$B state load <connector>` and `$B goto` the app — if you land authenticated, the account is already provisioned; skip to step 6 (build/verify the login script). If the coworker has **no** browser set up at all, point them at **`/connector-build-onboarding`**.
+**3. Browser preflight — try the 3-rung ladder, use the first that works:** (1) **Playwright headless** (`bash $H open-browser <svc>`), (2) **Playwright headed** (`playwright-cli -s=<svc> close`, then `bash $H open-browser <svc> --headed`), (3) **Chrome extension** (`mcp__claude-in-chrome__*`, user-connected via `/chrome`). All need the machine awake. Fall through the ladder; don't let one option's flakiness stop you. **Provisioning a new account? Generate its password first — `bash $H gen-password <svc> <SVC>_PASSWORD` — then open the browser**, so the session masks it. Full ladder + recovery: [connector-build-execute's preflight](/.claude/skills/connector-build-execute/SKILL.md). If a saved session already exists, `bash $H load-browser-session <svc>` and `playwright-cli -s=<svc> goto` the app — if you land authenticated, the account is already provisioned; skip to step 6 (build/verify the login script). If the coworker has **no** browser set up at all, point them at **`/connector-build-onboarding`**.
 
-**4. Register the account — autonomously.** `$B goto` the service **sign-up** page. Fill the form (`testing@whalesync.com`, a company name, etc.) with `$B fill`/`$B click`.
-   - **At the password step:** `bash $H gen-password <svc> <SVC>_PASSWORD`, then `bash $H enter-secret <svc> <SVC>_PASSWORD '<pw-selector>' ['<confirm-selector>']`. The agent never sees the password. Submit.
+**4. Register the account — autonomously.** `playwright-cli -s=<svc> goto` the service **sign-up** page. Fill the form (`testing@whalesync.com`, a company name, etc.) with `playwright-cli -s=<svc> fill`/`click`.
+   - **At the password step:** `bash $H enter-secret <svc> <SVC>_PASSWORD '<pw-selector>' ['<confirm-selector>']` — the password you generated in step 3. The agent never sees the password. Submit. (If `enter-secret` warns the session shows it in plain text, it was opened before the password existed: submit before taking any snapshot.)
    - **Pause only** if an emailed confirmation link/code is required (or, rarely, a captcha/card): post the ask, `/read`, wait. Otherwise keep going.
    - Capture account/org id, plan, and **trial-end date** (if any) → `printf … | bash $H set-secret <svc> <SVC>_ACCOUNT_ID` etc.
 
-**5. Get the API / OAuth credentials — PUSH ALL THE WAY THROUGH to the key.** **Onboarding is your job, not a blocker.** A fresh account usually drops you into an onboarding flow (welcome modal → name → use-case radios → intro video/tour) that *gates the Settings page* — if you try Settings before finishing it, you bounce to login. **Click through every step** until you land in the real app, then open the developer/API settings. Use JS clicks (`$B js "[...document.querySelectorAll('button,[role=radio]')].find(e=>/let.s go|next|continue|skip|finish/i.test(e.innerText||''))?.click()"`), advancing step by step. **Do not stop at any soft blocker** — onboarding, cookie/consent banners, intro tours, "create your first project" nudges are all things you push past. **Only an *absolutely unbeatable* blocker pauses the run:** an email link you can't read, a captcha, hard 2FA, or a forced credit card.
-   - Create/copy the API token (or register the OAuth client / mint a refresh token). **The token is often a readonly `password` input — read its `.value` via `$B js` and pipe straight to `set-secret`, never printing it:** return `'TKN:'+input.value`, then `grep -oE 'TKN:[^[:space:]]+' | sed 's/^TKN://'` into `set-secret <svc> <SVC>_API_TOKEN`.
+**5. Get the API / OAuth credentials — PUSH ALL THE WAY THROUGH to the key.** **Onboarding is your job, not a blocker.** A fresh account usually drops you into an onboarding flow (welcome modal → name → use-case radios → intro video/tour) that *gates the Settings page* — if you try Settings before finishing it, you bounce to login. **Click through every step** until you land in the real app, then open the developer/API settings. Use JS clicks (`playwright-cli -s=<svc> eval "[...document.querySelectorAll('button,[role=radio]')].find(e=>/let.s go|next|continue|skip|finish/i.test(e.innerText||''))?.click()"`), advancing step by step. **Do not stop at any soft blocker** — onboarding, cookie/consent banners, intro tours, "create your first project" nudges are all things you push past. **Only an *absolutely unbeatable* blocker pauses the run:** an email link you can't read, a captcha, hard 2FA, or a forced credit card.
+   - Create/copy the API token (or register the OAuth client / mint a refresh token). **The token is often a readonly `password` input — read its `.value` via `playwright-cli -s=<svc> --raw eval` and pipe straight to `set-secret`, never printing it:** return `'TKN:'+input.value`, then `grep -oE 'TKN:[^[:space:]"]+' | sed 's/^TKN://'` into `set-secret <svc> <SVC>_API_TOKEN` (`--raw` prints the result as a JSON string, so the pattern stops at the closing `"`).
    - **Validate before declaring victory:** `curl` the service API with the stored token and assert HTTP 200 (`bash $H run <svc> -- sh -c 'curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $<SVC>_API_TOKEN" <api-url>'`). A working token is the proof the whole run succeeded. (Watch for deprecated API versions — e.g. Todoist's REST v2 / sync v9 now return 410; the live base is `api.todoist.com/api/v1`.)
    - For OAuth-redirect connectors, the credential proven later is the connection through the web app — record client id/secret here.
 
-**6. Build the login script** at `server/src/remote-service/connectors/library/<connector>/test/login.sh` (template below): it sources the helper, goes to the login page, enters email + password via the no-echo helper, submits, confirms the authenticated UI, and `$B state save <connector>`. Add a `logout` path.
+**6. Build the login script** at `server/src/remote-service/connectors/library/<connector>/test/login.sh` (template below): it opens the `<svc>` browser session if needed, goes to the login page, enters email + password via the no-echo helper, submits, confirms the authenticated UI, and runs `save-browser-session <svc>`. Add a `logout` path.
 
 **7. Verify login/logout a couple of times.** Prove the automation round-trips: `bash login.sh logout` → confirm you hit a login wall → `bash login.sh` → confirm authenticated UI → repeat **at least twice**. If a cycle fails, fix the selectors/URL in the script and re-verify. This is the gate that earns "victory".
 
@@ -92,39 +97,41 @@ Then invoke `/read`. The connector is now ready for `/connector-build-execute <c
 #!/usr/bin/env bash
 # Automated login for the <connector> test account. Reads creds from the shared test-credentials
 # store (secret `<svc>`) via the credential helper — never echoes the password.
-#   bash login.sh                            # headless default daemon
-#   CB_BROWSE_FLAGS=--headed bash login.sh   # drive the visible (headed) daemon
+#   bash login.sh                                 # browser session `<svc>` (opened headless if it isn't open)
+#   PLAYWRIGHT_CLI_SESSION=<name> bash login.sh   # drive another playwright-cli session
 #   bash login.sh logout
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 H="$ROOT/.claude/skills/connector-build-prepare/lib/credential-helpers.sh"
-B="$(bash "$H" browse-bin)"
-BF="${CB_BROWSE_FLAGS:-}"                    # passed through to every $B call (e.g. --headed)
 ACCOUNT=<svc>                                # the store secret, e.g. clickup
 SVC=<SVC>                                    # its variable prefix, e.g. CLICKUP
+# Every playwright-cli call below, and the helper's, drives this session.
+export PLAYWRIGHT_CLI_SESSION="${PLAYWRIGHT_CLI_SESSION:-$ACCOUNT}"
 LOGIN_URL="https://app.<service>.com/login"
 APP_URL="https://app.<service>.com/app"
 
+bash "$H" open-browser "$ACCOUNT" >/dev/null
+
 if [ "${1:-}" = "logout" ]; then
-  "$B" goto "$APP_URL" $BF >/dev/null || true
-  "$B" js "[...document.querySelectorAll('button,[role=button],a')].find(e=>/log ?out|sign ?out/i.test(e.innerText||''))?.click(); 'bye'" $BF >/dev/null || true
+  playwright-cli goto "$APP_URL" >/dev/null || true
+  playwright-cli eval "[...document.querySelectorAll('button,[role=button],a')].find(e=>/log ?out|sign ?out/i.test(e.innerText||''))?.click()" >/dev/null || true
   echo "logged out"; exit 0
 fi
 
 bash "$H" require "$ACCOUNT" "${SVC}_LOGIN_EMAIL" "${SVC}_PASSWORD" >/dev/null
 
-"$B" goto "$LOGIN_URL" $BF >/dev/null; sleep 3
+playwright-cli goto "$LOGIN_URL" >/dev/null; sleep 3
 bash "$H" enter-secret "$ACCOUNT" "${SVC}_LOGIN_EMAIL" 'input[type=email]'
 # password supplied by the helper from the store — never printed here
 bash "$H" enter-secret "$ACCOUNT" "${SVC}_PASSWORD" 'input[type=password]'
-# submit via JS — $B click can hang and reset the page to about:blank
-"$B" js "document.querySelector('button[type=submit]')?.click()" $BF >/dev/null
+# submit via JS — a JS click also gets past any overlay covering the button
+playwright-cli eval "document.querySelector('button[type=submit]')?.click()" >/dev/null
 sleep 6
 
-url="$("$B" url $BF | tail -1)"
+url="$(playwright-cli --raw eval "location.href" | tr -d '"')"
 case "$url" in
   *"/login"*|*"/auth/"*) echo "LOGIN FAILED — still on the login wall ($url)"; exit 1;;
-  *) echo "LOGIN OK — $url"; "$B" state save "<connector>" $BF >/dev/null; echo "session saved as <connector>";;
+  *) echo "LOGIN OK — $url"; bash "$H" save-browser-session "$ACCOUNT" >/dev/null; echo "session saved for $ACCOUNT";;
 esac
 ```
 
@@ -132,8 +139,8 @@ Fill the `<...>` placeholders from the real signup/login pages while you have th
 
 ## Notes
 
-- `user_provided_params` (API-token) connectors often need **no browser login at all** to be tested — the login script is still worth building if seeding/verifying in the UI is useful, but the critical path is just the token in the store. OAuth and login-only services are where the session layer + login script matter most.
-- One account per service by default. For a second account, suffix the session and the secret (`<connector>-b` for both); its variables keep the plain `<SVC>_` prefix, since each secret holds one account.
+- `user_provided_params` (API-token) connectors often need **no browser login at all** to be tested — the login script is still worth building if seeding/verifying in the UI is useful, but the critical path is just the token in the store. OAuth and login-only services are where the saved browser session + login script matter most.
+- One account per service by default. For a second account, suffix the secret (`<connector>-b`); its browser session and saved login take the same name. Its variables keep the plain `<SVC>_` prefix, since each secret holds one account.
 - This skill **sets up**; [`/connector-build-execute`](/.claude/skills/connector-build-execute/SKILL.md) **tests**. `/connector-build-execute`'s first task is a fast env-var preflight against the candidates row; if vars are missing it points the developer back here.
 
 ## Cookie / consent banners — dismiss FIRST (they intercept clicks)
@@ -142,14 +149,14 @@ A consent wall (OneTrust, Cookiebot, Usercentrics, Osano, Ketch, …) renders an
 
 **Step 1 — JS dismiss (browser-agnostic, reject-first for privacy).** Run the shared snippet:
 - Chrome ext: `javascript_tool` with the contents of `lib/dismiss-cookie-banner.js`
-- gstack: `$B js "$(cat .claude/skills/connector-build-prepare/lib/dismiss-cookie-banner.js)"`
+- Playwright: `playwright-cli -s=<svc> --raw eval "$(cat .claude/skills/connector-build-prepare/lib/dismiss-cookie-banner.js)"`
 
 It walks the DOM + open shadow roots + same-origin iframes, prefers **"Reject all"/"Decline"** over Accept, and returns what it clicked. Idempotent — safe to run after every navigation.
 
 **Step 2 — screenshot → pixel-click fallback (when JS can't reach it).** Some walls (e.g. **Ketch**, which blocked Capsule) live in a **cross-origin iframe** the snippet can't touch, so it returns `no cookie banner button found` while the banner is plainly visible. Then:
-1. Take a **screenshot** (`computer` action `screenshot`, or `$B shot`).
+1. Take a **screenshot** (`computer` action `screenshot`, or `playwright-cli -s=<svc> screenshot` and Read the file it names).
 2. Locate the **Reject/Decline** button (fall back to Accept only if there's no reject option).
-3. **Click the exact pixel** — Chrome ext: `computer` `left_click` at `[x,y]`; gstack: `$B click <x> <y>`. Aim for the **center** of the button.
+3. **Click the exact pixel** — Chrome ext: `computer` `left_click` at `[x,y]`; Playwright: `playwright-cli -s=<svc> run-code "async page => { await page.mouse.click(<x>, <y>); }"`. Aim for the **center** of the button.
 4. Re-screenshot to confirm the banner is gone, then proceed.
 
 Never let a cookie wall be the reason a service is parked — between the JS snippet and the pixel-click fallback, it is always dismissable.
@@ -190,7 +197,7 @@ The email-confirmation gate (especially the emailed **short-lived code** — Atl
 Don't fall back to a personal inbox — wait for `gmail-whalesync`.
 
 **⚠️ Use the right Gmail MCP — there are two, and one redacts links:**
-- **`mcp__gmail-whalesync__*`** (`search_emails`, `read_email`) — the project-scoped **work-Gmail** server (your own `@whalesync.com` account, connected via `gmail-setup`). Returns the **raw email body, no redaction**. **Use this as the default**, and **always for magic-LINK verification** — the link's `?token=…`/`?qs=…` comes through intact so you can `navigate`/`$B goto` it.
+- **`mcp__gmail-whalesync__*`** (`search_emails`, `read_email`) — the project-scoped **work-Gmail** server (your own `@whalesync.com` account, connected via `gmail-setup`). Returns the **raw email body, no redaction**. **Use this as the default**, and **always for magic-LINK verification** — the link's `?token=…`/`?qs=…` comes through intact so you can `navigate`/`playwright-cli goto` it.
 - **`mcp__claude_ai_Gmail__*`** (`search_threads`, `get_thread`) — applies a **redaction layer** that **mangles secret-looking query-string tokens**. Codes in the body survive, but a **magic link comes back with its token replaced by a placeholder → unusable**. Treat as a **fallback for codes only**, never for links.
 - The two servers **don't share message-ID namespaces** — always *search within the same server* you'll read from; don't pass one server's id to the other.
 
@@ -198,8 +205,8 @@ Don't fall back to a personal inbox — wait for `gmail-whalesync`.
 
 **How to clear the gate (wire into step 4):**
 1. Submit the signup, then **immediately** (codes expire in ~10 min) search the mailbox, e.g. `gmail-whalesync__search_emails("verification newer_than:5m")` or `from:atlassian` / `seatable`. Take the **newest** match, then `gmail-whalesync__read_email(<id>)` for the body.
-2. **Code-based:** read the code from the body. **Codes are often ALPHANUMERIC, not just digits** — Atlassian's is a 6-char code like `5X4ZGR` (match `[A-Z0-9]{6}`), so don't assume `\d{6}`. **Link-based (magic link):** read the body via **`gmail-whalesync__read_email`** (NOT `claude_ai_Gmail`, which redacts the token), extract the confirm/verify URL, and `navigate`/`$B goto` it. The token is used by the browser but never needs to be parsed/echoed.
-3. Enter the code: **JS-focus the first OTP box, then `$B type "<CODE>"`** (auto-distributes across the boxes) — `$B fill`/`$B click` are unreliable here; `$B type` into a focused field works. Click Verify.
+2. **Code-based:** read the code from the body. **Codes are often ALPHANUMERIC, not just digits** — Atlassian's is a 6-char code like `5X4ZGR` (match `[A-Z0-9]{6}`), so don't assume `\d{6}`. **Link-based (magic link):** read the body via **`gmail-whalesync__read_email`** (NOT `claude_ai_Gmail`, which redacts the token), extract the confirm/verify URL, and `navigate`/`playwright-cli goto` it. The token is used by the browser but never needs to be parsed/echoed.
+3. Enter the code: **JS-focus the first OTP box, then `playwright-cli -s=<svc> type "<CODE>"`** (auto-distributes across the boxes) — `fill`/`click` on the individual boxes are unreliable here; `type` into a focused field works. Click Verify.
 4. Continue the run. Only fall back to a human if no email arrives within a timeout, or a captcha/2FA also blocks.
 
-This is what makes **fully hands-off batch runs** possible. Note some flows (Atlassian) verify the **code first and set the password AFTER** — so gen+enter `<SVC>_PASSWORD` on the post-code step, not before.
+This is what makes **fully hands-off batch runs** possible. Note some flows (Atlassian) verify the **code first and set the password AFTER** — so enter `<SVC>_PASSWORD` on the post-code step, not before (still generate it before opening the browser).

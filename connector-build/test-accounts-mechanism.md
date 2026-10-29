@@ -12,7 +12,7 @@ Two lists, do not conflate them:
 | Doc | Question it answers | Contents |
 |---|---|---|
 | [`queued-connectors.md`](/connector-build/queued-connectors.md) | _What should we build next?_ | ~50 scored services, free-plan / auth / difficulty research. No accounts, no secrets. |
-| **this doc** | _What can I start testing right now?_ | Services with a **provisioned** test account: login, plan/trial, gstack session name, and an **env-var name** pointing at the secret. |
+| **this doc** | _What can I start testing right now?_ | Services with a **provisioned** test account: login, plan/trial, browser session name, and an **env-var name** pointing at the secret. |
 
 ---
 
@@ -125,29 +125,34 @@ start of the connector's Test env vars cell in `provisioned-connectors.md` (or `
 so `/connector-build-execute` reads the right secret. Put the details for each header from the account's provisioning note or
 `STATE.md`.
 
-> **Never echo a secret.** The helper passes values straight to `$B fill` or into a child command's
-> environment; it does not `echo` them, write them to logs, or paste them into a message.
+> **Never echo a secret.** The helper passes values straight to `playwright-cli fill` or into a child
+> command's environment; it does not `echo` them, write them to logs, or paste them into a message.
+> And the browser masks them: `open-browser` registers the account's passwords and tokens as
+> Playwright secrets, so a snapshot of a filled form shows `<secret><SVC>_PASSWORD</secret>`.
 
 ---
 
 ## The session layer — log in once, reuse forever (Layer 1)
 
-gstack's browser is a **persistent daemon**: _"State persists between calls (cookies, tabs, login
-sessions)"_, and it exposes named snapshots via `$B state save|load <name>`. That is the whole
-mechanism:
+The browser is Playwright, driven through `playwright-cli`: each account gets a **named session**
+(`playwright-cli -s=<svc> …`) whose cookies and tabs persist between calls, and the credential
+helper saves/restores its login as a file in `~/.scratch-connector-build/browser-sessions/` (outside
+the repo, shared by every worktree). That is the whole mechanism:
 
-- **First time** (human, or the provisioning step): log into the test account once in the gstack
-  browser, then snapshot it:
+- **First time** (human, or the provisioning step): log into the test account once, then save it:
   ```bash
-  $B state save <service>          # e.g. $B state save airtable  (per account: airtable-acct-b)
+  H=.claude/skills/connector-build-prepare/lib/credential-helpers.sh
+  bash $H open-browser <svc>             # the <svc> session, its passwords + tokens masked
+  # … log in (the login script does this) …
+  bash $H save-browser-session <svc>     # e.g. airtable  (per account: airtable-acct-b)
   ```
 - **Every run** restores it at preflight — already authenticated, **zero passwords typed**:
   ```bash
-  $B state load <service>
-  $B goto <service-url> && $B snapshot   # confirm authenticated UI, not a login wall
+  bash $H open-browser <svc> && bash $H load-browser-session <svc>
+  playwright-cli -s=<svc> goto <service-url> && playwright-cli -s=<svc> snapshot   # authenticated UI, not a login wall
   ```
-- **"Log out and log in as another account"** → never actually log out. Keep a **named state per
-  account** and switch with `state load <service>-<accountslug>`.
+- **"Log out and log in as another account"** → never actually log out. Keep a **secret per
+  account** (`<svc>-<accountslug>`); its browser session and saved login take the same name.
 - **OAuth services** (GoHighLevel, Zoho, Salesforce…): a loaded session means the OAuth consent
   screen is a single "Authorize" click — still no password.
 
@@ -173,7 +178,7 @@ and the registration before it — handle the secret through the **credential he
   (`enter-secret <svc> <SVC>_PASSWORD '<selector>'`) — **the agent never sees it**, so signup is
   fully automatable.
 - The login script later enters the same `<SVC>_LOGIN_EMAIL` / `<SVC>_PASSWORD` through the
-  helper, submits, and `$B state save <connector>` on success.
+  helper, submits, and saves the session (`save-browser-session <svc>`) on success.
 
 The agent's instruction is simply _"run the login script for `<connector>`"_ — an authorized,
 pre-written automation, not a free-form decision to type a secret. The **only** thing that makes it
@@ -190,7 +195,7 @@ there's no UI login on the critical path — the connector connects with the API
 Preflight needs the service in the browser?
 ├─ No  (user_provided_params — connect with the API token only)         → Layer 0: skip login
 └─ Yes (seed/verify in the UI, or OAuth consent)
-   ├─ $B state load <connector>; session still valid?                    → Layer 1: reuse, done
+   ├─ load-browser-session <svc>; session still valid?                   → Layer 1: reuse, done
    └─ Session expired?
       ├─ login script exists → run it (reads the store, no echo)          → Layer 2: scripted re-auth
       └─ emailed confirmation needed (or no script) → post ask + /read    → human gate
@@ -213,7 +218,7 @@ Adding a service to the inventory is the job of the
 3. **Capture the credentials** into the account's secret (API token / OAuth creds, account id,
    trial-end) via the no-echo helper, and describe the account in the secret's header (`set-header`).
 4. **Build + verify the login script** (logs in and out a couple of times to prove it round-trips),
-   `$B state save <connector>`.
+   which saves the session (`save-browser-session <svc>`).
 5. **Register it**: fill the **Test env vars** column for the connector's row in
    [`provisioned-connectors.md`](/connector-build/provisioned-connectors.md), note the account in the connector's
    `STATE.md`. Nothing to hand off: the store is already shared with the team.
@@ -268,8 +273,8 @@ now; a scheduled sweep later):
 
 - **Trials nearing `TRIAL_END`** → cancel deliberately, re-card, or convert; note the lapse in the
   connector's `STATE.md`.
-- **Sessions that no longer load** (`state load` lands on a login wall) → run the login script
-  (`login.sh`), or re-snapshot by hand.
+- **Sessions that no longer load** (`load-browser-session` lands on a login wall) → run the login
+  script (`login.sh`), or log in by hand and `save-browser-session`.
 - **Rotated tokens** → regenerate and save it with `set-secret <svc> <VAR>` (a new version; the old
   one stays readable); the var name is stable so nothing else changes. If the expiry changed, keep
   the rest of the header: `set-header` replaces the whole leading comment block, so pipe the

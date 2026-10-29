@@ -4,7 +4,7 @@ How we add new connectors to Scratch, mostly autonomously: an agent provisions a
 account on the service, then builds + exercises the connector end-to-end.
 
 ## Quick start (new teammate)
-1. **Run `/connector-build-onboarding` once.** It verifies **both** browsers (gstack + the
+1. **Run `/connector-build-onboarding` once.** It verifies **both** browsers (Playwright via `playwright-cli` + the
    Claude-for-Chrome extension — each other's fallback) and the `gmail-whalesync` MCP, and tells you when you're ready.
    *(Assumes the Scratch dev env is already set up — repo, `yarn install`, Docker, DB+migrations,
    `scratchmd` built, server runnable, node 22.)*

@@ -97,6 +97,8 @@ client/next-env.d.ts
 /scratch-desktop/dist-release-test
 
 .gstack/
+# playwright-cli's snapshots, screenshots and console logs (connector-build browser runs)
+.playwright-cli/
 .conductor/*
 # ...but track the team-shared Conductor config (settings.local.toml stays ignored)
 !.conductor/settings.toml

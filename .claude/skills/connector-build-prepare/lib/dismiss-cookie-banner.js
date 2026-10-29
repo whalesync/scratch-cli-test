@@ -8,7 +8,10 @@
 //
 // Usage:
 //   Chrome ext:  javascript_tool({action:'javascript_exec', text:'<contents of this file>'})
-//   gstack:      $B js "$(cat .claude/skills/connector-build-prepare/lib/dismiss-cookie-banner.js)"
+//   playwright:  playwright-cli -s=<session> --raw eval "$(cat .claude/skills/connector-build-prepare/lib/dismiss-cookie-banner.js)"
+//
+// Keep the file a single expression ending in `})()` — no trailing `;` or comment: playwright-cli
+// eval wraps it as `() => (<file>)`.
 //
 // Returns a short string describing what it clicked (or that it found nothing).
 // It prefers "Reject all" / "Decline" over "Accept". If it returns
@@ -81,4 +84,4 @@
   if (hit) { hit.click(); return 'clicked text: "' + label(hit).slice(0, 40) + '"'; }
 
   return 'no cookie banner button found';
-})();
+})()

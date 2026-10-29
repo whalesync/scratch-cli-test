@@ -1,6 +1,6 @@
 ---
 name: start-parallel-session
-description: Bring up an isolated Scratch server + Redis for one parallel connector-build session, indexed by N. `/start-parallel-session <N>` (N≥1) starts a monolith server on port 3010+N backed by its own Redis container on 6379+N — its own BullMQ queue + worker running THIS worktree's branch code — while sharing Postgres, scratch-git, and the gstack browser with every other session. Implements Option A of .claude/skills/start-parallel-session/parallel-sessions.md. Idempotent: re-running cleans up a stale container and restarts. Then run /connector-build-execute against this session, always passing --scratch-url http://localhost:<3010+N>.
+description: Bring up an isolated Scratch server + Redis for one parallel connector-build session, indexed by N. `/start-parallel-session <N>` (N≥1) starts a monolith server on port 3010+N backed by its own Redis container on 6379+N — its own BullMQ queue + worker running THIS worktree's branch code — while sharing Postgres and scratch-git with every other session. Implements Option A of .claude/skills/start-parallel-session/parallel-sessions.md. Idempotent: re-running cleans up a stale container and restarts. Then run /connector-build-execute against this session, always passing --scratch-url http://localhost:<3010+N>.
 user-invocable: true
 argument-hint: "<N>  (session index, N≥1)"
 ---
@@ -12,8 +12,9 @@ Stand up **one isolated session** for running `/connector-build-execute` in para
 **The whole point:** the server compiles connector code at build time and runs pulls/publishes in a **worker** off a BullMQ queue. Two monolith servers on one Redis share `'worker-queue'`, so a job you enqueue can be run by a neighbor's worker against the wrong branch's code — silently. So each session gets its **own Redis** (own queue) and runs as a **monolith** (own worker, this branch's code). Everything else is shared.
 
 ```
-SHARED (run once, from the main checkout):  Postgres · scratch-git-2 (:3100/:3101) · gstack browser · scratchmd binary
+SHARED (run once, from the main checkout):  Postgres · scratch-git-2 (:3100/:3101) · scratchmd binary
 THIS session N:                             server :3010+N (monolith, THIS worktree) + Redis :6379+N (own queue)
+                                            + its connector's own playwright-cli browser session
 ```
 
 ## Fast path — the helper script (use this)
@@ -135,7 +136,7 @@ docker rm -f spinner-redis-<N>          # stop + remove this session's Redis
 - **Shared Postgres ⇒ shared schema.** If this branch has DB **migrations** not present in other running sessions, a shared DB is unsafe (schema drift / running another branch's migration). Connector work rarely adds migrations; if yours does, use a fully separate stack (doc's Option C) instead. Check with `git diff --stat <main>...HEAD -- server/prisma` before starting.
 - **`workspaces list` shows every session's workbooks** (shared DB) — cosmetic; prefix your workbook name with the connector so it's scannable.
 - **Never share one workbook across two sessions** — per-workbook write locks in scratch-git protect concurrent access, but two agents editing the same workbook is asking for confusion.
-- **Browser:** the gstack daemon has a single active tab; open your own tab and switch to it right before short bursts. See the doc's "Sharing the gstack browser".
+- **Browser:** each connector drives its own `playwright-cli` session (`-s=<svc>`), so sessions don't share a browser. Two sessions on the **same** connector would — don't run those in parallel. See the doc's "Browser" section.
 
 ## Reference
 - [.claude/skills/start-parallel-session/parallel-sessions.md](/.claude/skills/start-parallel-session/parallel-sessions.md) — full topology, the worker-code-identity constraint, isolation Options A/B/C, risks table.

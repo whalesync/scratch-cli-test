@@ -1,6 +1,6 @@
 # Running connector-build sessions in parallel
 
-A plan for running **N agents in parallel**, each building/testing a different connector on its own branch, while **sharing the expensive, branch-independent pieces** (one `scratch-git-2`, one CLI binary, one Postgres, one gstack browser). Companion to the [`/connector-build-execute`](/.claude/skills/connector-build-execute/SKILL.md) skill and its [playbook](connector-build.md).
+A plan for running **N agents in parallel**, each building/testing a different connector on its own branch, while **sharing the expensive, branch-independent pieces** (one `scratch-git-2`, one CLI binary, one Postgres). Companion to the [`/connector-build-execute`](/.claude/skills/connector-build-execute/SKILL.md) skill and its [playbook](connector-build.md).
 
 > **Status:** plan / proposal. The "shared infra, per-port servers" topology works **today** with one ops gotcha (worker/queue isolation) and one optional small code change. See [Open items](#open-items).
 
@@ -11,7 +11,7 @@ A plan for running **N agents in parallel**, each building/testing a different c
 ```
                 ┌──────────────────────────────────────────────┐
   SHARED  ──►   │  Postgres (one DB)   ·   scratch-git-2 (:3100/:3101, one repos dir)  │
-  (run once)    │  gstack browse daemon (one, shared tabs)   ·   scratchmd CLI binary  │
+  (run once)    │  scratchmd CLI binary                                            │
                 └──────────────────────────────────────────────┘
                         ▲                 ▲                 ▲
    PER SESSION ─────────┼─────────────────┼─────────────────┼─────────
@@ -35,7 +35,7 @@ The only thing that **must** be per-session is: **the server build (branch code)
 | **scratch-git-2** (`:3100` API, `:3101` git backend) | **Shared, run once** | Branch-independent Rust service; repos keyed by **workbook id** on disk under `GIT_REPOS_DIR`, protected by per-repo write locks. Different workbooks never collide. Confirmed: `scratch-git-2/src/service/config.rs` (ports + `GIT_REPOS_DIR`), `service/mod.rs` (write-lock manager). |
 | **scratchmd CLI** binary | **Shared, build once from `main`** | Thin REST client; embeds no connector code. Targets a server per call via `--scratch-url`/`SCRATCH_URL`. |
 | **Postgres** | **Shared** (recommended) | Holds workbooks, connector accounts, jobs, API tokens. Connector code is **not** in the DB. One login works across all servers (see [Auth](#auth-one-login-for-all-local-servers)). |
-| **gstack browser** | **Shared, one daemon** | Rarely needed (CLI-first). One tab per session; see [Browser](#sharing-the-gstack-browser). |
+| **Browser** (`playwright-cli`) | **Per connector** (a named session) | Rarely needed (CLI-first). Each connector's session is its own browser, so parallel sessions never collide; see [Browser](#browser--one-playwright-session-per-connector). |
 | **Server process** | **Per session** (branch worktree, distinct `PORT`) | The server **imports connector code at compile time** (`server/src/remote-service/connectors/library/<connector>/`), so each branch needs its own build. |
 | **Worker + job queue** | **Per session** (run the server as a **monolith**, isolated Redis) | Pulls/publishes run in the worker, which executes **this build's** connector code. See the constraint below. |
 
@@ -99,13 +99,13 @@ scratchmd linked pull <dfd> --mode full    # hits :3011
 
 ---
 
-## Sharing the gstack browser
+## Browser — one Playwright session per connector
 
-The browse daemon is a **single persistent process** with multiple tabs (`$B tabs`, `$B newtab`, `$B tab <id>`, `$B tab-each`). Since connector-build is **CLI-first and the browser is used rarely** (seed a record in the service UI; confirm a write landed), light sharing is enough:
+`playwright-cli` runs **named sessions**, each its own browser with its own cookies and tabs. Connector-build names the session after the connector's secret (`<svc>`) and passes `-s=<svc>` on every command, so parallel sessions on different connectors never touch each other's browser — no shared active tab, no switching. The credential helper opens it (`bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh open-browser <svc>`) and saves/restores its login (`save-browser-session` / `load-browser-session`, stored outside the repo so every worktree shares them).
 
-- **Lightweight (recommended):** all sessions use the same `$B` binary against the one daemon. Each session opens **its own tab** (`$B newtab <url>` → note the tab id) and switches to it (`$B tab <id>`) right before a short burst of browser work. Caveat: the daemon has a single **active tab** and most commands (`goto`, `snapshot`, `click`) act on it — so two agents driving *simultaneously* race. Keep browser bursts short and switch-then-act.
-- **Stronger isolation (if simultaneous browser use grows):** `/pair-agent` — built for multiple agents sharing one browser with **per-agent tabs, scoped tokens, tab isolation, and rate limiting**. Heavier; overkill for rare use.
-- Run headed (`$B connect`) so a human can watch; import cookies once (`/setup-browser-cookies`).
+- **Don't run two sessions on the same connector** — they'd share the `<svc>` browser.
+- Close only your own session (`playwright-cli -s=<svc> close`); `close-all` / `kill-all` take down everyone's.
+- To watch, open a session headed (`open-browser <svc> --headed`), or run `playwright-cli show` for a live view of every running session.
 
 ---
 
@@ -125,9 +125,6 @@ cd scratch-git-2 && cargo build --release --bin scratchmd && cargo build --bin s
 
 # 4. one login (token valid on every local server via shared Postgres)
 scratchmd auth login        # or: scratchmd auth status
-
-# 5. gstack browser (shared)
-$B connect                  # headed; $B status → Mode: headed
 ```
 
 ### Per session *i* (branch worktree; port `3010+i`; Option A Redis)
@@ -142,7 +139,7 @@ PORT=$((3010+i)) REDIS_PORT=$((6379+i)) yarn dev     # SERVICE_TYPE defaults to 
 
 # in the agent shell that drives this session:
 export SCRATCH_URL=http://localhost:$((3010+i))
-$B newtab about:blank        # this session's browser tab (note its id)
+# the browser: the connector's own playwright-cli session, opened by /connector-build-execute
 ```
 Then run `/connector-build-execute <connector>` as normal. Its pulls/publishes are enqueued to **this** session's Redis and processed by **this** session's worker (branch code). ✅
 
@@ -154,7 +151,7 @@ Then run `/connector-build-execute <connector>` as normal. Its pulls/publishes a
 - [ ] `PORT` unique; `REDIS_PORT` (or `REDIS_DB`) unique; `SERVICE_TYPE=monolith`.
 - [ ] `export SCRATCH_URL=http://localhost:<port>` in the shell (verify: `scratchmd auth status` hits the right server).
 - [ ] Workbook name prefixed with the connector (shared Postgres → `workspaces list` shows everyone's; prefix keeps it scannable).
-- [ ] Own browser tab; switch to it before any browser burst.
+- [ ] No other session on the same connector (it would share the `<svc>` browser session).
 - [ ] Confirm a pull actually processed (job completes) — proves this session's worker/queue is wired, not a neighbor's.
 
 ---
@@ -167,7 +164,7 @@ Then run `/connector-build-execute <connector>` as normal. Its pulls/publishes a
 | **Every job runs twice** | Two monoliths on one Redis | Same as above (isolate the queue). |
 | **CLI hits the wrong server** | Forgot `SCRATCH_URL` | Export it once per shell; verify with `scratchmd auth status`. |
 | **Auth confusion** | `credentials.yaml` strips the port | Non-issue with shared Postgres (one token works everywhere). Only matters for Option C. |
-| **Browser commands clobber each other** | Single active tab in one daemon | Switch to your tab right before short bursts; or `/pair-agent` for real isolation. |
+| **Browser commands clobber each other** | Two sessions on the same connector share its `<svc>` browser session | One session per connector; close only your own (`-s=<svc> close`). |
 | **`workspaces list` shows all sessions' workbooks** | Shared Postgres | Cosmetic; prefix workbook names per connector. |
 | **scratch-git repo contention** | Two sessions, same workbook | Don't share a workbook across sessions; per-workbook write locks handle the rest. |
 

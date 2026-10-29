@@ -1,7 +1,7 @@
 ---
 name: connector-build-onboarding
 user-invocable: true
-description: One-time, guided setup that gets a teammate ready to run /connector-build-prepare and /connector-build-execute. Walks them through installing + verifying the two browser options (gstack headless/headed, and the Claude-for-Chrome extension) and the gmail-whalesync MCP (the email-verification reader), then declares them ready. Assumes the Scratch dev environment is already set up. Passes when BOTH browsers (gstack + the Claude-for-Chrome extension) work AND gmail-whalesync is connected; the local voice model is optional. Use when a teammate says they want to start building connectors, asks how to set up connector-build, or runs /connector-build-onboarding.
+description: One-time, guided setup that gets a teammate ready to run /connector-build-prepare and /connector-build-execute. Walks them through installing + verifying the two browser options (Playwright via playwright-cli, headless/headed, and the Claude-for-Chrome extension) and the gmail-whalesync MCP (the email-verification reader), then declares them ready. Assumes the Scratch dev environment is already set up. Passes when BOTH browsers (playwright-cli + the Claude-for-Chrome extension) work AND gmail-whalesync is connected; the local voice model is optional. Use when a teammate says they want to start building connectors, asks how to set up connector-build, or runs /connector-build-onboarding.
 ---
 
 # connector-build-onboarding
@@ -14,26 +14,26 @@ Run this **once** before your first `/connector-build-prepare` / `/connector-bui
 
 ## What you're verifying (and the readiness rule)
 
-Install **BOTH** browser drivers — they're each other's fallback, and an unattended overnight run must be able to switch when one flakes (gstack daemons die; the Chrome MCP can drop). This is a **requirement**, not a nicety:
-1. **gstack** (headless + headed) — isolated, no window. The primary for unattended/overnight.
-2. **Chrome + Claude-for-Chrome extension (headed)** — drives their real Chrome; the fallback when gstack wedges.
+Install **BOTH** browser drivers — they're each other's fallback, and an unattended overnight run must be able to switch when one flakes (a Playwright session can hang; the Chrome MCP can drop). This is a **requirement**, not a nicety:
+1. **Playwright** via `playwright-cli` (headless + headed) — isolated, one browser per connector, no window. The primary for unattended/overnight.
+2. **Chrome + Claude-for-Chrome extension (headed)** — drives their real Chrome; the fallback when Playwright wedges.
 
-**READY when: gstack works AND Chrome+extension works AND `gmail-whalesync` is connected.** Both browsers required (the fallback is the whole point of robustness); `gmail-whalesync` required (it reads the email verification codes/links). The local voice model (step 4) is **optional**.
+**READY when: playwright-cli works AND Chrome+extension works AND `gmail-whalesync` is connected.** Both browsers required (the fallback is the whole point of robustness); `gmail-whalesync` required (it reads the email verification codes/links). The local voice model (step 4) is **optional**.
 
 ## Steps
 
-**0. Run the bash check** to cover secrets-store access + the gstack binary:
+**0. Run the bash check** to cover secrets-store access + the `playwright-cli` install:
 ```
 bash .claude/skills/connector-build-onboarding/check-setup.sh
 ```
-Read its output with them; it tells you the secrets-store + gstack-binary state and what to fix.
+Read its output with them; it tells you the secrets-store + `playwright-cli` state and what to fix.
 
 **1. Secrets store — Secret Manager in the `whalesync-test-credentials` GCP project.** Test-account secrets are shared through it (with the Whalesync repo too), so there's no file to copy. They need `gcloud` signed in as their own whalesync.com login or as their read-only laptop service account; both can read and write the store. If the check can't list the store, have them fix their `gcloud` login (`gcloud auth list`), then re-run the check.
 
 **2. Browser — get BOTH working (they're each other's fallback).**
-- **gstack**: if the binary check passed, smoke-test it live — `$B connect` then `$B status` (headless), and `$B connect --headed` then `$B status --headed` (must show `Mode: headed`). If the binary is missing, walk them through installing the gstack browser, then re-check. If gstack misbehaves, use the recovery in the execute skill's preflight (single clean daemon, kill stray daemons + remove the SingletonLock).
-- **Chrome extension**: have them install the **Claude-for-Chrome extension** and connect it with **`/connect-chrome`** (the agent can't trigger it). Then verify: load the tools via ToolSearch (`mcp__claude-in-chrome__tabs_context_mcp` + `tabs_create_mcp` + `navigate`), create your **own** tab, navigate it somewhere simple, confirm it loads.
-- **Both must work to pass.** (Note: the Chrome extension must be re-connected with `/connect-chrome` at the start of each run; gstack persists across runs.)
+- **Playwright**: if the check found `playwright-cli`, smoke-test it live — `playwright-cli -s=onboarding-check open https://example.com`, then `playwright-cli list` (shows it `open`, `headed: false`), then `playwright-cli -s=onboarding-check close`; repeat with `open --headed` (a Chrome window appears; `list` shows `headed: true`) and close it. If it's missing, have them run `yarn global add @playwright/cli` and re-check. It drives their installed Google Chrome, so they need Chrome installed.
+- **Chrome extension**: have them install the **Claude-for-Chrome extension** and connect it with **`/chrome`** (the agent can't trigger it). Then verify: load the tools via ToolSearch (`mcp__claude-in-chrome__tabs_context_mcp` + `tabs_create_mcp` + `navigate`), create your **own** tab, navigate it somewhere simple, confirm it loads.
+- **Both must work to pass.** (Note: the Chrome extension must be re-connected with `/chrome` at the start of each run; `playwright-cli` needs no per-run setup, and saved logins persist across runs.)
 
 **3. gmail-whalesync MCP (required).** This reads the email-verification codes/links during signup. It must be the **custom server** that returns the **raw** email body.
 - **⚠️ Do NOT use the built-in `claude_ai_Gmail` — it does not work for us.** It redacts magic-link verification tokens, so link-based signups silently break. Tell them this explicitly; the custom `gmail-whalesync` server is strictly better.
@@ -47,7 +47,7 @@ Read its output with them; it tells you the secrets-store + gstack-binary state 
 **5. Declare readiness.** Apply the rule (both browsers + gmail-whalesync). Tell them clearly that both browsers work and gmail-whalesync is live, then: **"You're ready — run `/connector-build-prepare <connector>` to provision a test account, then `/connector-build-execute <connector>` to build it. Pick the next connector from [`connector-build/queued-connectors.md`](/connector-build/queued-connectors.md) — **Human Picks first, but skip `research pending` rows for an unattended run; start with a researched free-tier REST service like ClickUp / Jira / Asana** (see the first-pick rule atop that doc)."** If not ready, state exactly what's missing and the one action to fix it.
 
 **6. Before EVERY run (not just setup) — say this to them.** A few things are per-run, not per-onboarding:
-- **Re-run `/connect-chrome`** at the start of each session — the Chrome-extension fallback isn't connected until you do, so a wedged gstack at 2am has nothing to fall back to.
+- **Re-run `/chrome`** at the start of each session — the Chrome-extension fallback isn't connected until you do, so a wedged Playwright session at 2am has nothing to fall back to.
 - **If you just ran `gmail-setup` this session, restart Claude first** — the `gmail-whalesync` MCP only loads in a fresh session, so the first email gate will stall otherwise.
 - **Keep the machine awake** (a browser is always driven) — `caffeinate` or disable sleep for an overnight run.
 

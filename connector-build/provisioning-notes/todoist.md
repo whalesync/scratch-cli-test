@@ -17,7 +17,7 @@
 `GET https://api.todoist.com/api/v1/projects` with `Authorization: Bearer <token>` → **HTTP 200**.
 
 ## Login automation
-✅ **Login script exists:** `server/src/remote-service/connectors/library/todoist/test/login.sh` (gstack, reads password via the credential helper, saves session as `todoist`).
+✅ **Login script exists:** `server/src/remote-service/connectors/library/todoist/test/login.sh` (playwright-cli, reads password via the credential helper, saves session as `todoist`).
 
 ## Quirks / notes for the build step
 - **REST v2 and sync v9 are now `410 Gone`** — the live base is `api.todoist.com/api/v1`. Don't use the old hosts.

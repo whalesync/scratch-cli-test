@@ -3,10 +3,14 @@
 # credential-helpers.sh — secret-handling for /connector-build-prepare and /connector-build-execute.
 #
 # THE WHOLE POINT: these helpers read/generate secrets and hand them straight to the
-# browser (gstack `$B`) or to a child command. They NEVER print a secret value to stdout/stderr.
+# browser (playwright-cli) or to a child command. They NEVER print a secret value to stdout/stderr.
 # So an agent that *runs* these helpers never has the password/token in its context — it only sees
 # confirmations like "set TODOIST_PASSWORD in todoist (value hidden)". That is what makes fully
 # automated registration + login safe and removes the agent's password-typing refusal.
+#
+# The browser: one playwright-cli session per account (`playwright-cli -s=<account> …`; install with
+# `yarn global add @playwright/cli`). open-browser registers the account's passwords and tokens as
+# Playwright secrets, so snapshots and eval results show <secret>NAME</secret>, not the value.
 #
 # Secrets live in the shared test-credentials store: Secret Manager in the GCP project
 # whalesync-test-credentials (override with TEST_CREDENTIALS_PROJECT), shared with the Whalesync
@@ -25,8 +29,11 @@
 #   bash credential-helpers.sh require      <account> VAR [VAR...]          # fail fast if missing
 #   bash credential-helpers.sh gen-password <account> VAR                   # generate+store, no echo
 #   bash credential-helpers.sh set-secret   <account> VAR                   # reads value from stdin
+#   bash credential-helpers.sh open-browser <account> [--headed] [url]      # start the account's browser
 #   bash credential-helpers.sh enter-secret <account> VAR '#sel' ['#sel2']  # fill field(s)
 #   bash credential-helpers.sh type-secret  <account> VAR                   # type into focused element
+#   bash credential-helpers.sh save-browser-session <account>               # keep its login for later runs
+#   bash credential-helpers.sh load-browser-session <account>               # restore that login
 #   bash credential-helpers.sh run          <account> -- CMD [ARGS...]      # CMD sees the account's vars
 #   bash credential-helpers.sh set-header   <account>                       # comment lines from stdin
 #   bash credential-helpers.sh names        <account>                       # stored var names, no values
@@ -36,17 +43,34 @@ set -euo pipefail
 
 CB_PROJECT="${TEST_CREDENTIALS_PROJECT:-whalesync-test-credentials}"
 
-cb_repo_root() { git rev-parse --show-toplevel; }
+# Saved browser logins (cookies + local storage, one JSON file per account). Outside the repo, so
+# every worktree shares them and none can be committed.
+CB_BROWSER_SESSIONS_DIR="${CB_BROWSER_SESSIONS_DIR:-$HOME/.scratch-connector-build/browser-sessions}"
 
-# Locate the gstack browse binary ($B), repo-local first, then $HOME.
-cb_browse() {
-  local root; root="$(cb_repo_root)"
-  if [ -x "$root/.claude/skills/gstack/browse/dist/browse" ]; then
-    echo "$root/.claude/skills/gstack/browse/dist/browse"
-  else
-    echo "$HOME/.claude/skills/gstack/browse/dist/browse"
-  fi
+cb_require_playwright_cli() {
+  command -v playwright-cli >/dev/null 2>&1 && return 0
+  echo "ERROR: playwright-cli isn't installed. Install it with 'yarn global add @playwright/cli'." >&2
+  return 1
 }
+
+# The playwright-cli session (one browser) an account is driven in. It's named after the account,
+# so parallel runs on different connectors never share a browser. PLAYWRIGHT_CLI_SESSION overrides it.
+cb_browser_session_name_for_account() { printf '%s' "${PLAYWRIGHT_CLI_SESSION:-$1}"; }
+
+cb_browser_session_is_open() {
+  playwright-cli list --json 2>/dev/null | node -e '
+    let listOutput = "";
+    process.stdin.on("data", (chunk) => (listOutput += chunk)).on("end", () => {
+      const browsers = JSON.parse(listOutput).browsers || [];
+      process.exit(browsers.some((browser) => browser.name === process.argv[1] && browser.status === "open") ? 0 : 1);
+    });' "$1" 2>/dev/null
+}
+
+# Passwords, tokens and keys are masked in the browser's output. Short values aren't: every
+# occurrence of the value on a page would be masked too (a region code like `eu`).
+cb_var_is_masked_in_browser_output() { [[ "$1" =~ (PASSWORD|TOKEN|SECRET|KEY) ]] && [ "${#2}" -ge 8 ]; }
+
+cb_saved_browser_session_file() { printf '%s/%s.json' "$CB_BROWSER_SESSIONS_DIR" "$1"; }
 
 cb_gcloud() { gcloud --project="$CB_PROJECT" --billing-project="$CB_PROJECT" --quiet "$@"; }
 
@@ -154,6 +178,7 @@ cb_names_in_payload() {
 cb_check_value() {
   case "$2" in
     *\'*|*$'\n'*) echo "ERROR: value for $1 contains a single quote or a newline; not supported" >&2; return 1;;
+    *'<secret>'*) echo "ERROR: value for $1 is the browser's masked placeholder (<secret>…</secret>), not the real value" >&2; return 1;;
   esac
 }
 
@@ -219,23 +244,138 @@ cb_read_var() {
   printf '%s' "$value"
 }
 
-# enter-secret ACCOUNT VAR SELECTOR [SELECTOR...] — fill the value into each field. No echo.
+# open-browser ACCOUNT [OPEN_ARGS...] — start the account's browser session (headless; --headed for
+# a visible window) with its passwords and tokens registered as Playwright secrets, so snapshots,
+# eval results and saved output show <secret>NAME</secret> in place of the value. Only the values
+# stored when the session opens are masked, so store a new password BEFORE opening. Does nothing if
+# the session is already open: `playwright-cli open` on a live session restarts it, dropping the login.
+cb_open_browser_with_account_secrets_masked() {
+  local account="$1"; shift
+  cb_check_account_name "$account" || return 1
+  cb_require_playwright_cli || return 1
+  local session payload prefix name value secrets_config_dir masked_secret_count open_output
+  session="$(cb_browser_session_name_for_account "$account")"
+  if cb_browser_session_is_open "$session"; then
+    echo "browser session '$session' is already open"
+    return 0
+  fi
+  payload="$(cb_read_payload "$account")" || return 1
+  prefix="$(cb_var_prefix "$account")"
+  # The config holds secret values: private to you, and deleted once the browser has read it.
+  secrets_config_dir="$(mktemp -d)" || return 1
+  masked_secret_count="$(
+    for name in $(cb_names_in_payload "$payload"); do
+      [[ "$name" == "$prefix"* || "$name" == "IAPP_$prefix"* ]] || continue
+      value="$(cb_value_in_payload "$payload" "$name")" || continue
+      if cb_var_is_masked_in_browser_output "$name" "$value"; then export "CB_MASKED_SECRET_$name=$value"; fi
+    done
+    node -e '
+      const secrets = {};
+      for (const [name, value] of Object.entries(process.env))
+        if (name.startsWith("CB_MASKED_SECRET_")) secrets[name.slice("CB_MASKED_SECRET_".length)] = value;
+      require("fs").writeFileSync(process.argv[1], JSON.stringify({ secrets }), { mode: 0o600 });
+      console.log(Object.keys(secrets).length);' "$secrets_config_dir/cli.config.json"
+  )" || { rm -rf "$secrets_config_dir"; return 1; }
+  if ! open_output="$(playwright-cli -s="$session" open --config="$secrets_config_dir/cli.config.json" "$@" 2>&1)"; then
+    rm -rf "$secrets_config_dir"
+    echo "ERROR: couldn't open browser session '$session':" >&2
+    printf '%s\n' "$open_output" >&2
+    return 1
+  fi
+  rm -rf "$secrets_config_dir"
+  echo "opened browser session '$session' ($masked_secret_count secret(s) masked in its output)"
+}
+
+# Warns when the browser shows VAR's value in plain text, so a snapshot taken now would put it in
+# front of the agent. That happens when the session was opened before VAR was stored.
+cb_warn_if_browser_shows_secret_in_plain_text() {
+  local session="$1" var="$2" value="$3" probe_function="$4" probe_target="${5:-}" probe_output
+  cb_var_is_masked_in_browser_output "$var" "$value" || return 0
+  probe_output="$(playwright-cli -s="$session" --raw eval "$probe_function" ${probe_target:+"$probe_target"} 2>/dev/null)" || return 0
+  [[ "$probe_output" == *"$value"* ]] || return 0
+  echo "WARNING: browser session '$session' shows $var in plain text (it was opened before $var was stored)," >&2
+  echo "so don't take a snapshot until the form is submitted. Later runs mask it: save-browser-session," >&2
+  echo "'playwright-cli -s=$session close', then open-browser + load-browser-session." >&2
+}
+
+# enter-secret ACCOUNT VAR SELECTOR [SELECTOR...] — fill the value into each field (a CSS selector or
+# a snapshot ref like e12) in the account's browser session. No echo.
 cb_enter_secret_into_field() {
   local account="$1" var="$2"; shift 2
-  local value B sel
+  local value session selector fill_output
+  cb_require_playwright_cli || return 1
   value="$(cb_read_var "$account" "$var")" || return 1
-  B="$(cb_browse)"
-  # CB_BROWSE_FLAGS lets the caller target a non-default daemon, e.g. CB_BROWSE_FLAGS=--headed
-  for sel in "$@"; do "$B" fill "$sel" "$value" ${CB_BROWSE_FLAGS:-} >/dev/null; done
+  session="$(cb_browser_session_name_for_account "$account")"
+  for selector in "$@"; do
+    if ! fill_output="$(playwright-cli -s="$session" fill "$selector" "$value" 2>&1)"; then
+      echo "ERROR: couldn't enter $var into '$selector' in browser session '$session':" >&2
+      printf '%s\n' "${fill_output//"$value"/<hidden>}" >&2
+      return 1
+    fi
+  done
   echo "entered $var into $# field(s) (value hidden)"
+  cb_warn_if_browser_shows_secret_in_plain_text "$session" "$var" "$value" "element => element.value" "$selector"
 }
 
 # type-secret ACCOUNT VAR — type the value into the currently-focused element. No echo.
 cb_type_secret() {
-  local account="$1" var="$2" value B
+  local account="$1" var="$2" value session type_output
+  cb_require_playwright_cli || return 1
   value="$(cb_read_var "$account" "$var")" || return 1
-  B="$(cb_browse)"; "$B" type "$value" ${CB_BROWSE_FLAGS:-} >/dev/null
+  session="$(cb_browser_session_name_for_account "$account")"
+  if ! type_output="$(playwright-cli -s="$session" type "$value" 2>&1)"; then
+    echo "ERROR: couldn't type $var in browser session '$session':" >&2
+    printf '%s\n' "${type_output//"$value"/<hidden>}" >&2
+    return 1
+  fi
   echo "typed $var into focused element (value hidden)"
+  cb_warn_if_browser_shows_secret_in_plain_text "$session" "$var" "$value" "document.activeElement ? document.activeElement.value : ''"
+}
+
+# save-browser-session ACCOUNT — save the session's cookies + local storage, so a later run (from
+# any worktree) restores the login with load-browser-session instead of logging in again.
+cb_save_browser_session() {
+  local account="$1" session saved_session_file saved_session_file_as_js_string save_output
+  cb_check_account_name "$account" || return 1
+  cb_require_playwright_cli || return 1
+  session="$(cb_browser_session_name_for_account "$account")"
+  saved_session_file="$(cb_saved_browser_session_file "$account")"
+  mkdir -p "$CB_BROWSER_SESSIONS_DIR" && chmod 700 "$CB_BROWSER_SESSIONS_DIR" || return 1
+  # Not `playwright-cli state-save`: it writes the file through the session's secret masking, so a
+  # token kept in a cookie or local storage would be saved as <secret>NAME</secret>.
+  saved_session_file_as_js_string="$(node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$saved_session_file")" || return 1
+  if ! save_output="$(playwright-cli -s="$session" --raw run-code "async page => { await page.context().storageState({ path: $saved_session_file_as_js_string }); return 'saved'; }" 2>&1)"; then
+    echo "ERROR: couldn't save browser session '$session':" >&2
+    printf '%s\n' "$save_output" >&2
+    return 1
+  fi
+  chmod 600 "$saved_session_file"
+  if grep -q '<secret>' "$saved_session_file"; then
+    rm -f "$saved_session_file"
+    echo "ERROR: the saved login for '$session' contained masked <secret> placeholders, not real values; not kept." >&2
+    return 1
+  fi
+  echo "saved browser session '$session' to $saved_session_file"
+}
+
+# load-browser-session ACCOUNT — restore the saved login into the open session. Then goto the app:
+# an expired login lands on the login page, and the connector's test/login.sh logs in again.
+cb_load_browser_session() {
+  local account="$1" session saved_session_file load_output
+  cb_check_account_name "$account" || return 1
+  cb_require_playwright_cli || return 1
+  session="$(cb_browser_session_name_for_account "$account")"
+  saved_session_file="$(cb_saved_browser_session_file "$account")"
+  if [ ! -f "$saved_session_file" ]; then
+    echo "ERROR: no saved browser session for $account ($saved_session_file). The connector's test/login.sh saves one." >&2
+    return 1
+  fi
+  if ! load_output="$(playwright-cli -s="$session" state-load "$saved_session_file" 2>&1)"; then
+    echo "ERROR: couldn't load the saved session into browser session '$session':" >&2
+    printf '%s\n' "$load_output" >&2
+    return 1
+  fi
+  echo "loaded the saved $account login into browser session '$session'"
 }
 
 # run ACCOUNT -- CMD [ARGS...] — run CMD with the account's <SVC>_* vars exported. Only those
@@ -331,14 +471,16 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     require)       cb_require "$@";;
     gen-password)  cb_gen_and_store_password "$@";;
     set-secret)    cb_set_secret "$@";;
+    open-browser)  cb_open_browser_with_account_secrets_masked "$@";;
     enter-secret)  cb_enter_secret_into_field "$@";;
     type-secret)   cb_type_secret "$@";;
+    save-browser-session) cb_save_browser_session "$@";;
+    load-browser-session) cb_load_browser_session "$@";;
     run)           cb_run "$@";;
     set-header)    cb_set_header "$@";;
     names)         cb_names "$@";;
     list)          cb_list;;
     import)        cb_import "$@";;
-    browse-bin)    cb_browse;;
-    *) echo "usage: credential-helpers.sh {require|gen-password|set-secret|enter-secret|type-secret|run|set-header|names|list|import|browse-bin} ..." >&2; exit 2;;
+    *) echo "usage: credential-helpers.sh {require|gen-password|set-secret|open-browser|enter-secret|type-secret|save-browser-session|load-browser-session|run|set-header|names|list|import} ..." >&2; exit 2;;
   esac
 fi

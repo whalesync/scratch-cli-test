@@ -27,22 +27,22 @@ else
   echo "      (check with 'gcloud auth list'), then re-run this check."
 fi
 
-bold "2. gstack browser (option A — headless + headed)"
-B="$(bash "$H" browse-bin 2>/dev/null || true)"
-if [ -n "${B:-}" ] && [ -x "$B" ]; then
-  ok "gstack binary found: $B"
-  echo "      The skill will smoke-test 'connect' (headless) and 'connect --headed' live."
+bold "2. Playwright browser (option A — playwright-cli, headless + headed)"
+if command -v playwright-cli >/dev/null 2>&1; then
+  ok "playwright-cli $(playwright-cli --version 2>/dev/null) found: $(command -v playwright-cli)"
+  echo "      The skill will smoke-test a headless and a headed session live."
 else
-  bad "gstack binary not found."
-  echo "      Install the gstack browser (the /browse skill's daemon). Then re-run this check."
+  bad "playwright-cli not found."
+  echo "      Install it: yarn global add @playwright/cli   (it drives your installed Google Chrome)."
+  echo "      Then re-run this check."
 fi
 
 bold "3. Chrome extension (option B) + gmail-whalesync MCP — checked by the skill"
 echo "      These are MCP-based; the onboarding skill verifies them with its tools:"
-echo "      • Claude-for-Chrome extension: installed + connected via /connect-chrome"
+echo "      • Claude-for-Chrome extension: installed + connected via /chrome"
 echo "      • gmail-whalesync MCP: connected (run gmail-setup if absent — see SKILL.md)"
 
 bold "Readiness rule"
-echo "  READY when: gstack works  AND  Chrome+extension works  AND  gmail-whalesync is connected."
+echo "  READY when: playwright-cli works  AND  Chrome+extension works  AND  gmail-whalesync is connected."
 echo "  BOTH browsers are required — they are each other's fallback for unattended runs."
 echo "  (Local voice model is optional.)"

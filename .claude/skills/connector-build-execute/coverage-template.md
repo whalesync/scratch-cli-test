@@ -29,7 +29,7 @@ and BOTH for MIXED (delete the unused one).
 ## Metadata
 - **Type:** STATIC | DYNAMIC | STATIC · custom fields supported (mixed)
 - **Template version:** 2026-06-18 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
-- **Last run:** <YYYY-MM-DD> · scratchmd + gstack · Tester: <name>
+- **Last run:** <YYYY-MM-DD> · scratchmd + playwright-cli · Tester: <name>
 
 Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 
@@ -183,7 +183,7 @@ API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-r
 - **Status:** <not started | documented (requirements only) | client created | provider wired (CONNECTOR_GUIDE → Server — OAuth)>
 - **Blockers:** <approval pending / paid dev account / none>
 
-## UI quick-links (time-savers for the gstack browser)
+## UI quick-links (time-savers for the browser)
 Direct URLs to common screens so the agent jumps straight there instead of clicking through the UI. Fill these in as you discover them during a browser pass (e.g. you find the clients table is at `x.com/ui/clients` → record it here).
 
 | Where | URL |
