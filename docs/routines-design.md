@@ -18,7 +18,7 @@ The term "routine" is approachable for non-technical users. It conveys something
 
 ## Routine File Format
 
-A routine file is identified by its path under `routines/` (e.g. `routines/daily-content-sync.yaml`); that path is what the API, the schedules, the run history and the CLI all key on. The text itself lives in Postgres (see [Storage and migration](#storage-and-migration)); while the transitional git mirror is on it is also written to `routines/` at the root of the workbook config repo — the same repo that already holds `syncs/` and `transformers/` — which is what the pre-DEV-11399 CLI materializes. See [CLI Support](#cli-support).
+A routine file is identified by its path under `routines/` (e.g. `routines/daily-content-sync.yaml`); that path is what the API, the schedules, the run history and the CLI all key on. The text itself lives in Postgres (see [Storage and migration](#storage-and-migration)); while the transitional git mirror is on it is also written to `routines/` at the root of the workbook config repo — the same repo that already holds `syncs/` and `transformers/` — which is what `scratchmd` binaries older than DEV-12617 read. The current CLI never reads the config repo for routines: it pulls and pushes them over REST into `<workspace>/.scratch/routines/`. See [CLI Support](#cli-support).
 
 ```yaml
 # routines/daily-content-sync.yaml
@@ -357,19 +357,21 @@ The executor needs to know when each step's job finishes.
 ## REST API
 
 ```
-POST   /workbooks/:workbookId/routines/reload                  Reload routines from git repo
-GET    /workbooks/:workbookId/routines                          List routines (reads YAML files)
+POST   /workbooks/:workbookId/routines/reload                  Reload routines (reconcile schedules)
+GET    /workbooks/:workbookId/routines                          List routines (parsed from the stored YAML)
 POST   /workbooks/:workbookId/routines/trigger                  Trigger a manual run
 GET    /workbooks/:workbookId/routine-runs                      List runs for a workbook
 GET    /workbooks/:workbookId/routine-runs/:runId               Get run details (with steps)
 POST   /workbooks/:workbookId/routine-runs/:runId/cancel        Cancel a running routine
+GET    /cli/v1/workbooks/:workbookId/routines/files             Every routine file + version (+ content unless ?metadataOnly=true)
+POST   /cli/v1/workbooks/:workbookId/routines/push              Batch create/edit/delete, guarded per file by baseVersion
 ```
 
 ### Notes
 
-- `reload` reads the git repo and returns the list of discovered routines (joined with schedule + latest-run state). It does not write schedules from the YAML; it only orphan-cleans `Schedule` rows whose routine file is gone.
+- `reload` reads the stored definitions and returns the list of routines (joined with schedule + latest-run state). It does not write schedules from the YAML; it only orphan-cleans `Schedule` rows whose routine file is gone.
 - A routine's **schedule** is created/edited/removed through the generic schedule endpoints (`POST/PATCH/DELETE /workbooks/:id/schedules`) with `action: ROUTINE` and `entityId` = the routine file path — not through any routine endpoint.
-- `GET /routines` reads YAML files from git on every request (they're small). Returns parsed routine definitions with schedule status and latest run info joined from the DB.
+- `GET /routines` parses the stored YAML on every request (it's small). Returns parsed routine definitions with schedule status and latest run info joined from the DB.
 - `trigger` accepts `{ filePath: string, forceFullPull?: boolean }` in the body. Reads and parses the YAML, creates a `RoutineRun`, and begins execution. Returns 409 if the routine is already running. `forceFullPull: true` writes `options.fullPull: true` onto every pull step of that run's snapshot (the YAML is untouched) — how a Live Export with an incremental destination pull runs a one-off full sync (DEV-11407).
 - `cancel` sets the run status to `cancelled` and stops execution after the current step finishes.
 
@@ -407,36 +409,36 @@ Accessible from the routine's sidebar entry or a detail panel:
 
 **Draining the long tail.** The admin code migration `routine-git-import` (`POST /code-migrations/run`) runs the same import over still-flagged workbooks in batches and reports `remainingCount`; when it holds at 0 the fallback code can be deleted.
 
-**The transitional git mirror.** While `ROUTINES_GIT_MIRROR_ENABLED` (default on) every definition change is followed by a full-state one-way mirror of `routines/` into the config repo (`RoutineGitMirrorService`), so pre-DEV-11399 `scratchmd routines pull|status|push` binaries keep working. Nothing reads it back. Once the REST-backed CLI has shipped, flip the flag off and run the `routine-git-cleanup` code migration (refused while the mirror is on) to delete `routines/*.yaml` from git; history keeps the old copies.
+**The transitional git mirror.** While `ROUTINES_GIT_MIRROR_ENABLED` (default on) every definition change is followed by a full-state one-way mirror of `routines/` into the config repo (`RoutineGitMirrorService`), so `scratchmd routines pull|status|push` binaries older than DEV-12617 keep working. Nothing reads it back — the REST-backed CLI (DEV-12617) doesn't either. Once the old binaries have aged out — the server's `Ignoring deprecated baseHead on routines push` warning stops appearing, since the new CLI never sends `baseHead` — flip the flag off and run the `routine-git-cleanup` code migration (refused while the mirror is on) to delete `routines/*.yaml` from git; history keeps the old copies.
 
 **Workbook export/import.** The dev-tools workbook export (`DevToolsService.exportWorkbook`) carries every definition (`filePath`, `content`, `version`, `source`; DEV-12621), and import recreates them on the new workbook. The one edit import makes to the text is rewriting `coa_`/`dfd_`/`syn_` ids to the imported workbook's new ids, since steps can reference a connection, folder or sync by id; comments and formatting are otherwise untouched. `ROUTINE` schedules already travel and need no remap because they key on the file path. `RoutineRun` history does not travel, and imported definitions are not written to the transitional git mirror.
 
-**Concurrency.** The CLI push carries a per-file `baseVersion` (the `version` it last pulled, or `null` for "expect new"); the whole push is applied in one transaction under a per-workbook advisory lock and refused with `409 blocked_stale` naming the stale files if any version disagrees. The pre-DEV-11399 `baseHead` git SHA is accepted and ignored (logged) — honouring it against the lagging mirror would produce false conflicts.
+**Concurrency.** The CLI push carries a per-file `baseVersion` (the `version` it last pulled, or `null` for "expect new"); the whole push is applied in one transaction under a per-workbook advisory lock and refused with `409 blocked_stale` naming the stale files if any version disagrees. The pre-DEV-11399 `baseHead` git SHA is accepted and ignored (logged) — honouring it against the lagging mirror would produce false conflicts. The REST-backed CLI takes each `baseVersion` from its local manifest (see [CLI Support](#cli-support)).
 
 ## CLI Support
 
-> **DEV-11399 transition.** Everything below describes the git-based CLI flow, which keeps working only because of the [transitional git mirror](#storage-and-migration). The follow-up rewrites `scratchmd routines pull|status|push` on `GET /cli/v1/workbooks/:id/routines/files` (every file with its `version`) and the per-file `baseVersion` push guard, moves the local copy to `<workspace>/.scratch/routines/` with a `routines-state.json` manifest, and then the mirror is switched off.
+`scratchmd routines pull|status|push` (DEV-12617) work against the REST API, not the workbook config repo. The CLI edits routine files; it never runs them.
 
-The `scratchmd` CLI needs **no new code** to make routine files available locally — storing them at `routines/` (config-repo root) is precisely what makes that work. This section explains the materialization path and what is intentionally deferred.
+### Local layout
 
-### How routine files reach the local workspace
+```
+<workspace>/.scratch/
+  routines/*.yaml        # local copy of every routine file; users edit these
+  routines-state.json    # manifest, written only by the CLI
+```
 
-Routine files ride along with the workbook config repo, exactly like `syncs/` and `transformers/`:
+The manifest is `{ "formatVersion": 1, "workbookId": "wkb_…", "files": { "routines/<name>.yaml": { "version": n, "sha256": "<hex>" } } }`: per file, the server `version` last pulled or pushed and the SHA-256 of the exact bytes written or sent. Paths are server-relative everywhere (manifest keys, `--json`, API bodies) — `routines/<name>.yaml` lives at `.scratch/routines/<name>.yaml`. The manifest is the merge base for all three commands; a missing (or foreign-workbook) manifest is an empty base, so the first pull in a workspace made by an older CLI simply downloads everything.
 
-1. At `scratchmd workspaces init`, the CLI clones the workbook config repo (bare) and checks it out into `<workspace>/.scratch/workspace/`.
-2. That checkout is a **sparse worktree** whose pattern is `/*` minus `.scratch` — i.e. *everything at the repo root except a `.scratch/` directory* (`setup_sparse_worktree` in [scratch-git-2/src/cli/git_ops/local.rs](/scratch-git-2/src/cli/git_ops/local.rs)).
-3. Because `routines/` lives at the repo root (not under `.scratch/`), it is included by `/*` and materializes to `<workspace>/.scratch/workspace/routines/*.yaml`, right next to `syncs/` and `transformers/`. The user reads and edits routine YAML through the same flow they already use for those files.
+### Commands
 
-> **This is the entire reason routines are stored at `routines/` and not `.scratch/routines/`.** Under `.scratch/`, the bare clone would still fetch the objects, but the sparse checkout would exclude them and they would never appear in the user's workspace. The server is unaffected either way — it reads YAML directly from the bare repo's git tree (via the git service), never from a materialized worktree.
+- **`workspaces init`** runs an initial pull, so `.scratch/routines/` and the manifest exist even with no connections and no routines; a failed initial pull only warns. The config-repo checkout (`.scratch/workspace/`) leaves `routines/` out, so the mirror's copy never lands on disk.
+- **`routines pull [--discard-local]`** (`GET /cli/v1/workbooks/:id/routines/files`, with content) merges per file by **content hash** against the manifest: server-only changes are applied, local edits the server didn't touch are kept, identical changes on both sides are just recorded. It refuses — exit 1, nothing written — only when a file changed on both sides to different content; `--discard-local` resets every server-tracked file to the server's copy instead (local-only new files are never touched). Files are written atomically and the manifest last, so a crash leaves files ahead of the manifest and a re-run converges. Hashes rather than versions drive the merge because a delete→recreate restarts `version` at 1.
+- **`routines push`** (`POST …/routines/push`) sends each local change with `baseVersion` = its manifest version (`null` for a new file — sent explicitly, since an omitted `baseVersion` disables the guard). The batch applies atomically or fails `409 blocked_stale` naming the stale files; the CLI exits 1 and asks for `routines pull`. On success only the pushed files' manifest entries are updated (the response lists every file, including others' changes this workspace hasn't pulled). If `.scratch/routines/` is missing while the manifest tracks files, push refuses rather than deleting every routine.
+- **`routines status`** compares disk vs manifest hashes (local changes) and the metadata-only listing (`?metadataOnly=true`) vs manifest versions (remote changes). Read-only.
 
-### ⚠️ No incremental pull of the config repo
+Unpushed edits an older CLI left in `.scratch/workspace/routines/` are detected (`git status` in that worktree, only when it is this workspace's linked config worktree) and surfaced: before the first REST-backed pull they block `pull` (unless `--discard-local`) and `push`; afterwards they only warn. This shim goes away with the mirror.
 
-The CLI materializes the workbook config repo **only at `workspaces init`** (and on `workspaces init --force`, which re-clones). There is currently **no incremental pull that refreshes the config repo** — `scratchmd files download` operates on per-connection record repos, not the config repo. Consequences:
-
-- A routine added or edited on the server (or by another user) will **not** appear in an already-initialized local workspace until it is re-initialized.
-- Locally edited routine YAML has no dedicated push-back command; it round-trips only through git plumbing the user runs by hand.
-
-Keeping local routines in sync on an ongoing basis would be **new CLI work** (an incremental config-repo fetch + re-materialize) and is independent of the storage-path decision above.
+`.scratch/workspace/` (syncs, transformers, validators) is materialized from the config repo at `workspaces init` only; `routines pull|push` no longer touch it.
 
 ### Advanced routine support is out of scope for v1
 

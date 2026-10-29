@@ -1076,3 +1076,67 @@ fn find_existing_workspace_skips_lone_salvage_backup() {
         "a salvage backup alone must not count as an existing workspace"
     );
 }
+
+// ── Routines (DEV-12617) ─────────────────────────────────────────────────────
+
+#[test]
+fn clear_preserves_workspace_with_unpushed_routine_edits_instead_of_deleting() {
+    let tmp = TempDir::new().unwrap();
+    let ws = make_fake_workspace(tmp.path(), "Webflow Site", false);
+    // A routine file that was never pushed (no manifest records it) — its only copy.
+    write_file(
+        &WorkspaceLayout::for_cli(&ws)
+            .local_routine_files_directory_path()
+            .join("draft.yaml"),
+        "name: Draft\nsteps:\n  - action: pull\n",
+    );
+
+    let salvaged_to = clear_existing_workspace_preserving_pending_edits(&ws).unwrap();
+
+    let salvage_path = salvaged_to
+        .expect("a workspace with unpushed routine edits must be preserved, not deleted");
+    assert!(!ws.exists());
+    assert_eq!(
+        std::fs::read_to_string(salvage_path.join(".scratch/routines/draft.yaml")).unwrap(),
+        "name: Draft\nsteps:\n  - action: pull\n"
+    );
+}
+
+#[test]
+fn materialize_workbook_checkout_leaves_routines_out_of_the_config_checkout() {
+    // Routine files live in `.scratch/routines/` (pulled over REST); the copy the server's
+    // transitional git mirror still writes into the config repo must not be checked out.
+    let tmp = TempDir::new().unwrap();
+    let repo_dir = tmp.path().join("repo");
+    let bare_dir = tmp.path().join("repo.git");
+    let work_tree = tmp.path().join("workspace");
+
+    run_git(tmp.path(), &["init", "-b", "main", "repo"]);
+    write_file(&repo_dir.join("syncs/a.json"), "{}");
+    write_file(
+        &repo_dir.join("routines/daily.yaml"),
+        "name: Daily\nsteps:\n  - action: pull\n",
+    );
+    commit_all(&repo_dir, "config with mirrored routines");
+    run_git(
+        tmp.path(),
+        &[
+            "clone",
+            "--bare",
+            repo_dir.to_str().unwrap(),
+            bare_dir.to_str().unwrap(),
+        ],
+    );
+
+    let branch = materialize_workbook_checkout(&bare_dir, &work_tree).unwrap();
+
+    assert_eq!(branch, "main");
+    assert!(work_tree.join("syncs/a.json").exists());
+    assert!(
+        !work_tree.join("routines").exists(),
+        "routines/ must be left out of the config checkout"
+    );
+    // A sparse-excluded path is not an uncommitted edit, so the legacy-edit check stays quiet.
+    let porcelain = crate::git_ops::worktree_status_porcelain(&work_tree, "routines/").unwrap();
+    assert!(porcelain.is_empty(), "got {porcelain:?}");
+}

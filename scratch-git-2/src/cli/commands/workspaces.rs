@@ -9,6 +9,18 @@ use crate::shared::layout::WorkspaceLayout;
 
 const MAIN_BRANCH: &str = "main";
 
+/// Upper bound on the initial routines pull `workspaces init` runs. The pull is optional (init
+/// succeeds without it and `scratchmd routines pull` retries), so a slow or hung server must not
+/// stall init for the client's full multi-minute response timeout.
+const INITIAL_ROUTINES_PULL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Extra sparse-checkout patterns for the workbook config checkout (`.scratch/workspace/`).
+/// `routines/` is left out because routine files now live in `.scratch/routines/`, pulled and
+/// pushed over REST (DEV-12617); while the server's transitional git mirror still writes
+/// `routines/*.yaml` into the config repo, checking them out would only leave a stale second
+/// copy that nothing reads or updates.
+const WORKBOOK_CONFIG_CHECKOUT_EXCLUDED_SPARSE_PATTERNS: &[&str] = &["!/routines/"];
+
 /// RAII timer that prints elapsed time on drop when `SCRATCHMD_PROFILE=1`.
 /// Used to profile `scratchmd workspaces init` phases.
 struct PhaseTimer {
@@ -368,7 +380,8 @@ async fn init(
             // To stderr so it surfaces in both human and `--json` modes without
             // corrupting the JSON document on stdout.
             eprintln!(
-                "Preserved your previous local workspace (it had un-uploaded edits) at:\n  {}\nYour accepted-but-unpublished edits are in {}/.scratch/connections/<connection>/accepted-patches.json",
+                "Preserved your previous local workspace (it had un-uploaded edits) at:\n  {}\nAccepted-but-unpublished record edits are in {}/.scratch/connections/<connection>/accepted-patches.json; unpushed routine edits are in {}/.scratch/routines/",
+                salvage_path.display(),
                 salvage_path.display(),
                 salvage_path.display()
             );
@@ -378,6 +391,38 @@ async fn init(
     let started = std::time::Instant::now();
     let total_files = init_v2(&wb, &target_dir, server_url, &token)?;
     crate::config::workspaces::upsert(&wb.id, &target_dir)?;
+
+    // Pull the workbook's routine files into `.scratch/routines/` (DEV-12617) so the workspace
+    // starts with them and their manifest. Non-fatal — the workspace works without routines, a
+    // server without the routines endpoint must not break init, and `routines pull` retries —
+    // and it never prints to stdout, so init's `--json` document stays intact.
+    let initially_pulled_routine_count = {
+        let _t = PhaseTimer::new("initial routines pull");
+        match tokio::time::timeout(
+            INITIAL_ROUTINES_PULL_TIMEOUT,
+            super::routines::pull_routines_into_newly_initialized_workspace(
+                &target_dir,
+                server_url,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(routines_pull_result)) => Some(routines_pull_result.routine_count()),
+            Ok(Err(routines_pull_error)) => {
+                eprintln!(
+                    "  Warning: could not pull routines into .scratch/routines/ ({routines_pull_error}). Run `scratchmd routines pull` inside the workspace to retry."
+                );
+                None
+            }
+            Err(_timed_out) => {
+                eprintln!(
+                    "  Warning: pulling routines into .scratch/routines/ timed out after {}s. Run `scratchmd routines pull` inside the workspace to retry.",
+                    INITIAL_ROUTINES_PULL_TIMEOUT.as_secs()
+                );
+                None
+            }
+        }
+    };
     let elapsed_ms = started.elapsed().as_millis();
     let elapsed = if elapsed_ms < 1000 {
         format!("{}ms", elapsed_ms)
@@ -409,10 +454,14 @@ async fn init(
         println!("    .repos/");
         println!("    .scratch/");
         println!("      connections/");
+        println!("      routines/");
         println!("      workspace/");
         for ca in &wb.connector_accounts {
             let dir_name = connector_dir_name(&ca.display_name);
             println!("    {}/", dir_name);
+        }
+        if let Some(routine_count) = initially_pulled_routine_count.filter(|count| *count > 0) {
+            println!("  Pulled {routine_count} routine file(s) into .scratch/routines/");
         }
         if let Some(salvage_path) = &salvaged_to {
             println!();
@@ -582,7 +631,12 @@ fn git_checkout_branch_from_bare(
     branch: &str,
     work_tree: &Path,
 ) -> anyhow::Result<()> {
-    crate::git_ops::setup_sparse_worktree(bare_repo, work_tree, branch)
+    crate::git_ops::setup_sparse_worktree_with_extra_excluded_patterns(
+        bare_repo,
+        work_tree,
+        branch,
+        WORKBOOK_CONFIG_CHECKOUT_EXCLUDED_SPARSE_PATTERNS,
+    )
 }
 
 /// Idempotently materialize the user-facing non-sparse worktree on `main`.
@@ -667,11 +721,12 @@ fn connector_dir_name(display_name: &str) -> String {
 
 /// Clear an existing workspace to make room for a fresh `init --force` clone —
 /// but NEVER silently destroy un-uploaded work. If any connection has accepted-
-/// but-not-yet-published edits (a non-empty `accepted-patches.json`), the whole
-/// workspace is *moved* aside to `<name>.salvaged-<timestamp>` instead of being
-/// deleted. A single atomic rename preserves everything (worktree edits **and**
-/// the accepted patches, which ARE the upload wire format), so the user can
-/// recover. Returns the salvage path when it preserved, `None` when it
+/// but-not-yet-published edits (a non-empty `accepted-patches.json`), or
+/// `.scratch/routines/` holds routine edits not yet pushed, the whole workspace
+/// is *moved* aside to `<name>.salvaged-<timestamp>` instead of being deleted.
+/// A single atomic rename preserves everything (worktree edits, the accepted
+/// patches — which ARE the upload wire format — and the routine files), so the
+/// user can recover. Returns the salvage path when it preserved, `None` when it
 /// plain-removed (nothing pending to lose).
 ///
 /// This is what makes the DEV-9698 forced re-clone non-destructive: a stale
@@ -680,7 +735,9 @@ fn connector_dir_name(display_name: &str) -> String {
 fn clear_existing_workspace_preserving_pending_edits(
     existing: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {
-    if !workspace_has_pending_accepted_edits(existing) {
+    if !workspace_has_pending_accepted_edits(existing)
+        && !super::routines::workspace_has_unpushed_routine_file_edits(existing)
+    {
         std::fs::remove_dir_all(existing)?;
         return Ok(None);
     }

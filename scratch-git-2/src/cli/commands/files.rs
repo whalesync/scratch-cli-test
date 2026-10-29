@@ -4462,32 +4462,6 @@ fn assert_shopify_connections_are_clean(contexts: &[ConnectionContext]) -> anyho
     );
 }
 
-/// Atomically write `bytes` to `file_path` (temp file → fsync → rename), so a
-/// crash mid-write can't leave a record half-written. Mirrors the atomic write
-/// discipline used by `accepted-patches.json`.
-fn write_record_file_atomically(file_path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let parent = file_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("record path has no parent dir: {}", file_path.display()))?;
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create dir {}", parent.display()))?;
-    let file_name = file_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "record.json".to_string());
-    let tmp_path = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
-    {
-        let mut file = std::fs::File::create(&tmp_path)
-            .with_context(|| format!("failed to open {}", tmp_path.display()))?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-    }
-    std::fs::rename(&tmp_path, file_path)
-        .with_context(|| format!("failed to rename to {}", file_path.display()))?;
-    crate::shared::atomic_json_state::fsync_parent_directory_best_effort(file_path);
-    Ok(())
-}
-
 /// The Shopify entity type for a record, used to dispatch the transform. When
 /// `--entity-type` is given (only valid with `--folder`) it wins; otherwise the
 /// entity type is the folder name — the first path segment — lowercased. Shopify
@@ -4578,7 +4552,12 @@ fn migrate_one_shopify_connection(
         if apply {
             let disk_path = ctx.worktree_dir.join(rel_path);
             let serialized = crate::shared::review_ops::json_object_to_bytes(&outcome.record)?;
-            write_record_file_atomically(&disk_path, &serialized)?;
+            // Atomic (temp → fsync → rename) so a crash mid-write can't leave a
+            // record half-written.
+            crate::shared::atomic_json_state::write_bytes_to_file_atomically(
+                &disk_path,
+                &serialized,
+            )?;
         }
     }
 

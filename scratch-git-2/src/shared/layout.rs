@@ -88,6 +88,21 @@ impl WorkspaceLayout {
         self.scratch_root().join("workspace")
     }
 
+    /// `.scratch/routines/` — the local copy of the workbook's routine YAML
+    /// files, pulled and pushed over REST by `scratchmd routines`. Server path
+    /// `routines/<name>.yaml` lives at `<this dir>/<name>.yaml`. Deliberately
+    /// outside `workbook_materialization_path`, which every re-materialize of the
+    /// config checkout wipes.
+    pub fn local_routine_files_directory_path(&self) -> PathBuf {
+        self.scratch_root().join("routines")
+    }
+
+    /// `.scratch/routines-state.json` — the CLI-managed manifest recording, per
+    /// routine file, the server version and content hash at the last pull/push.
+    pub fn routines_state_manifest_file_path(&self) -> PathBuf {
+        self.scratch_root().join("routines-state.json")
+    }
+
     /// Detects whether the workspace at this layout was initialized under the
     /// pre-slice-F multi-worktree model.
     ///

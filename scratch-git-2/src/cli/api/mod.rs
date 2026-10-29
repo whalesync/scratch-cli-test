@@ -300,25 +300,40 @@ impl ApiClient {
 
     // ── Routines ────────────────────────────────────────────────────────────
 
-    /// Push routine files (`scratchmd routines push`). Posts upserts + deletes to the server,
-    /// which commits them to the workbook config repo `main` and reloads routines. Discriminates
-    /// the `409 blocked_stale` optimistic-concurrency response so the caller can prompt a
-    /// `routines pull` + retry rather than surface a raw server error.
-    pub async fn routines_push(
+    /// List every routine file of a workbook (`GET /cli/v1/workbooks/:id/routines/files`), each
+    /// with the optimistic-concurrency `version` a push echoes back as `baseVersion`. With
+    /// `metadata_only` the server omits each file's YAML `content` (all `routines status` needs).
+    /// Routine definitions live in Postgres on the server (DEV-11399); nothing here touches git.
+    pub async fn list_routine_files(
         &self,
         workbook_id: &str,
-        request: &RoutinesPushRequest,
-    ) -> ApiResult<RoutinesPushOutcome> {
+        metadata_only: bool,
+    ) -> ApiResult<ListRoutineFilesResponse> {
+        self.get(&routine_files_list_path(workbook_id, metadata_only))
+            .await
+    }
+
+    /// Push routine file creates / edits / deletes (`scratchmd routines push`). The server applies
+    /// the whole batch atomically — guarded per file by `baseVersion` — and reloads routines.
+    /// Discriminates the `409 blocked_stale` response (a pushed file changed on the server since
+    /// the client's last pull; nothing was written) so the caller can list the stale files and
+    /// prompt a pull instead of surfacing a raw server error.
+    pub async fn push_routine_files(
+        &self,
+        workbook_id: &str,
+        request: &PushRoutineFilesRequest,
+    ) -> ApiResult<PushRoutineFilesOutcome> {
         let path = format!("workbooks/{}/routines/push", workbook_id);
-        match self.post::<_, RoutinesPushResponse>(&path, request).await {
-            Ok(response) => Ok(RoutinesPushOutcome::Pushed(response)),
+        match self
+            .post::<_, PushRoutineFilesResponse>(&path, request)
+            .await
+        {
+            Ok(response) => Ok(PushRoutineFilesOutcome::Pushed(response)),
             Err(ApiError::ServerError { status: 409, body }) => {
-                match serde_json::from_str::<RoutinesPushBlockedStale>(&body) {
-                    Ok(stale) if stale.status == "blocked_stale" => {
-                        Ok(RoutinesPushOutcome::BlockedStale(stale))
-                    }
+                match parse_blocked_stale_routine_push_body(&body) {
+                    Some(blocked_stale) => Ok(PushRoutineFilesOutcome::BlockedStale(blocked_stale)),
                     // A 409 that isn't the structured stale envelope is a genuine error.
-                    _ => Err(ApiError::ServerError { status: 409, body }),
+                    None => Err(ApiError::ServerError { status: 409, body }),
                 }
             }
             Err(other) => Err(other),
@@ -369,51 +384,122 @@ impl ApiClient {
     }
 }
 
-// ── Routines push types ──────────────────────────────────────────────────────
+// ── Routines types (mirror packages/shared-types/src/dto/routine/*.ts) ───────
 
-/// A single routine file to create or overwrite.
-#[derive(Debug, Serialize)]
-pub struct RoutineUpsert {
+/// One routine file as listed by `GET …/routines/files` (`RoutineFileWithVersion`).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineFileWithVersion {
+    /// Server-relative path, e.g. `routines/daily-sync.yaml`.
+    pub path: String,
+    /// Optimistic-concurrency version; echoed back as `baseVersion` on push.
+    pub version: i64,
+    /// The verbatim YAML text. Absent when listed with `metadataOnly=true`. (The listing's
+    /// `updatedAt` is ignored — sync decisions use versions and content hashes.)
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+/// Response of `GET /cli/v1/workbooks/:id/routines/files` (`ListRoutineFilesResponse`).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ListRoutineFilesResponse {
+    pub files: Vec<RoutineFileWithVersion>,
+}
+
+/// A routine file to create or overwrite.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushRoutineFileUpsert {
     pub path: String,
     pub content: String,
+    /// The version this edit is based on (from the routines manifest), or `None` — serialized
+    /// as `null` — for "expect a new file". Deliberately NOT `skip_serializing_if`: an omitted
+    /// `baseVersion` tells the server to skip the staleness guard for the file entirely.
+    pub base_version: Option<i64>,
 }
 
-/// Request body for `POST /cli/v1/workbooks/:id/routines/push`. `base_head` is the client's local
-/// config-repo `main` SHA; omitted (`None`) skips the server's optimistic-concurrency guard.
-#[derive(Debug, Serialize)]
-pub struct RoutinesPushRequest {
-    pub upserts: Vec<RoutineUpsert>,
-    pub deletes: Vec<String>,
-    #[serde(rename = "baseHead", skip_serializing_if = "Option::is_none")]
-    pub base_head: Option<String>,
+/// A routine file to delete.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushRoutineFileDelete {
+    pub path: String,
+    /// The version the client last saw; the push is refused if the file changed since.
+    pub base_version: i64,
 }
 
-/// Success response: the new `main` SHA and the reconciled routines (kept opaque — the CLI only
-/// needs the count).
-#[derive(Debug, serde::Deserialize)]
-pub struct RoutinesPushResponse {
-    #[serde(default)]
-    pub head: String,
+/// Request body for `POST /cli/v1/workbooks/:id/routines/push` (`PushRoutineFilesDto`).
+#[derive(Debug, Clone, Serialize)]
+pub struct PushRoutineFilesRequest {
+    pub upserts: Vec<PushRoutineFileUpsert>,
+    pub deletes: Vec<PushRoutineFileDelete>,
+}
+
+/// A routine file's version after a push (`RoutineFileVersion`).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RoutineFileVersion {
+    pub path: String,
+    pub version: i64,
+}
+
+/// Success response (`PushRoutineFilesResponse`). `files` is the FULL post-push set for the
+/// workbook — including files other people changed — and `routines` the reconciled routine list,
+/// kept opaque because the CLI only counts it. The deprecated `head` field is ignored.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PushRoutineFilesResponse {
+    pub files: Vec<RoutineFileVersion>,
     #[serde(default)]
     pub routines: Vec<serde_json::Value>,
 }
 
-/// The `409 blocked_stale` envelope: `main` advanced past the client's `base_head`.
-#[derive(Debug, serde::Deserialize)]
-pub struct RoutinesPushBlockedStale {
+/// One file named by a `409 blocked_stale` push refusal.
+#[derive(Debug, Clone, serde::Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushRoutineStaleFile {
+    pub path: String,
+    /// The `baseVersion` the client sent (`None` = it expected a new file).
     #[serde(default)]
+    pub base_version: Option<i64>,
+    /// The server's current version (`None` = the file no longer exists on the server).
+    #[serde(default)]
+    pub current_version: Option<i64>,
+}
+
+/// The `409 blocked_stale` envelope: at least one pushed file changed on the server since the
+/// client's last pull, so nothing was written.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushRoutineFilesBlockedStale {
     pub status: String,
-    #[serde(rename = "currentRemoteHead", default)]
-    pub current_remote_head: String,
+    #[serde(default)]
+    pub stale_files: Vec<PushRoutineStaleFile>,
+    /// The server's human-readable explanation; shown only when `stale_files` is empty.
     #[serde(default)]
     pub message: String,
 }
 
-/// Outcome of a routines push: applied, or refused because the local copy is stale.
+/// Outcome of a routines push: applied, or refused because some pushed file is stale.
 #[derive(Debug)]
-pub enum RoutinesPushOutcome {
-    Pushed(RoutinesPushResponse),
-    BlockedStale(RoutinesPushBlockedStale),
+pub enum PushRoutineFilesOutcome {
+    Pushed(PushRoutineFilesResponse),
+    BlockedStale(PushRoutineFilesBlockedStale),
+}
+
+/// Relative path of the routine-files listing, with `metadataOnly=true` only when asked for.
+fn routine_files_list_path(workbook_id: &str, metadata_only: bool) -> String {
+    let path = format!("workbooks/{}/routines/files", workbook_id);
+    if metadata_only {
+        format!("{path}?metadataOnly=true")
+    } else {
+        path
+    }
+}
+
+/// Parse a 409 body as the routines `blocked_stale` envelope — strictly: `status` must be
+/// `"blocked_stale"`, so an unrelated 409 is never mistaken for a stale push.
+fn parse_blocked_stale_routine_push_body(body: &str) -> Option<PushRoutineFilesBlockedStale> {
+    serde_json::from_str::<PushRoutineFilesBlockedStale>(body)
+        .ok()
+        .filter(|blocked_stale| blocked_stale.status == "blocked_stale")
 }
 
 // ── Auth response types ─────────────────────────────────────────────────────

@@ -266,8 +266,18 @@ mod tests {
         assert!(ROUTINES_DOC.contains("routines status"));
         // Scheduling is documented as separate, not a YAML field.
         assert!(ROUTINES_DOC.contains("Deprecated and ignored"));
-        // Local materialization path.
-        assert!(ROUTINES_DOC.contains(".scratch/workspace/routines/"));
+        // REST-backed local copy + manifest (DEV-12617), with the server as source of truth.
+        assert!(ROUTINES_DOC.contains(".scratch/routines/"));
+        assert!(ROUTINES_DOC.contains(".scratch/routines-state.json"));
+        assert!(ROUTINES_DOC.contains("--discard-local"));
+        assert!(ROUTINES_DOC.contains("source of truth"));
+        assert!(!ROUTINES_DOC.contains("git-authoritative"));
+    }
+
+    #[test]
+    fn structure_doc_lists_routine_files_and_manifest() {
+        assert!(STRUCTURE_DOC.contains("routines/"));
+        assert!(STRUCTURE_DOC.contains("routines-state.json"));
     }
 }
 
@@ -298,6 +308,8 @@ My-Project/
     .scratchmd                <- workspace marker
     connections/              <- shared connection metadata (see below)
     docs/                     <- generated docs + helper files
+    routines/                 <- routine YAML files (see routines.md)
+    routines-state.json       <- routines sync state, managed by the CLI
     workspace/                <- workbook config repo materialized locally
   AGENTS.md              <- also symlinked as CLAUDE.md
 ```
@@ -441,7 +453,7 @@ Run `scratchmd <command> --help` for full flag details.
 | `workspaces show <id>` | Show workspace details |
 | `workspaces create --name <name>` | Create a new workspace |
 | `workspaces delete <id>` | Delete a workspace |
-| `workspaces init <id>` | Clone a workspace locally (creates directory + docs) |
+| `workspaces init <id>` | Clone a workspace locally (creates directory + docs, pulls routines) |
 
 ## files
 
@@ -510,13 +522,13 @@ Run `scratchmd <command> --help` for full flag details.
 
 ## routines
 
-Routine files (`routines/*.yaml`) define server-run, multi-step workflows. See [Routines](routines.md) for the file format. Delete a routine by removing its `.yaml` locally, then `routines push`.
+Routine files (`.scratch/routines/*.yaml`) define server-run, multi-step workflows. See [Routines](routines.md) for the file format. Delete a routine by removing its `.yaml` locally, then `routines push`.
 
 | Command | Description |
 |---|---|
-| `routines pull [--discard-local]` | Fetch the latest routine files from the server into the local workspace (`--discard-local` overwrites local routine edits) |
-| `routines push` | Push local routine file create / edit / delete to the server (it commits + reloads) |
-| `routines status` | Show local uncommitted routine edits and server drift (read-only) |
+| `routines pull [--discard-local]` | Bring server routine changes into `.scratch/routines/` file by file; keeps your edits to routines the server didn't change and stops on a conflicting edit (`--discard-local` takes the server's copy instead) |
+| `routines push` | Push local routine file create / edit / delete to the server (rejected as stale if a pushed routine changed on the server since your last pull — pull, then retry) |
+| `routines status` | Show local routine edits not yet pushed and server changes not yet pulled (read-only) |
 
 ## docs
 
@@ -1152,8 +1164,9 @@ Routines are file-defined, **sequential** workflow pipelines. A routine chains
 discrete steps — `pull`, `sync`, `publish-plan`, `publish` — into one ordered
 workflow that the **server** runs, either on a schedule or when triggered manually.
 
-A routine is a single YAML file, and that file *is* the definition
-(git-authoritative — there is no separate database copy). Steps run top to bottom;
+A routine is a single YAML file, identified by its path (`routines/<name>.yaml`). The
+**Scratch server is the source of truth**: it stores each routine's YAML text exactly as
+written, and your workspace holds a copy you edit and push back. Steps run top to bottom;
 if a step fails, the routine **stops** and the remaining steps do not run. A routine
 has at most one active run at a time.
 
@@ -1163,17 +1176,21 @@ app, not `scratchmd`.
 
 ## Where routine files live
 
-Routine files are stored at `routines/*.yaml` in the workbook config repo, which the
-CLI materializes locally at:
-
 ```
-.scratch/workspace/routines/*.yaml
+.scratch/routines/*.yaml        <- your copy of the workbook's routines — edit these
+.scratch/routines-state.json    <- sync state managed by the CLI — do not edit
 ```
 
-Edit them there like any other file. They are first materialized at
-`scratchmd workspaces init`; afterwards use `scratchmd routines pull` to refresh them
-and `scratchmd routines push` to send your edits back (see **Pulling, pushing, and
-deleting** below).
+`scratchmd workspaces init` downloads the routines. After that, `scratchmd routines pull`
+brings in server changes and `scratchmd routines push` sends your edits (see **Pulling,
+pushing, and deleting** below). Paths in `--json` output and messages are server-relative:
+`routines/daily.yaml` is `.scratch/routines/daily.yaml` on disk.
+
+`routines-state.json` records, per file, the server version you last pulled or pushed and a
+hash of its content; the CLI uses it to tell your edits apart from server changes. If it is
+missing (for example in a workspace created by an older `scratchmd`), run
+`scratchmd routines pull`. Older versions of `scratchmd` kept routines in
+`.scratch/workspace/routines/`; that folder is no longer read or updated.
 
 ## Scheduling is separate from the file
 
@@ -1280,16 +1297,20 @@ file must be valid YAML, have a non-empty `name`, have at least one `step`, and 
 
 | Command | What it does |
 |---------|--------------|
-| `scratchmd routines pull [--discard-local]` | Fetch the latest routine files from the server into `.scratch/workspace/routines/`. Refuses to overwrite local uncommitted routine edits unless `--discard-local` is given. |
-| `scratchmd routines push` | Push your local routine create / edit / delete to the server, which commits them to the config repo and reloads. If the server has advanced since your last pull, the push is rejected — run `routines pull`, then retry. |
-| `scratchmd routines status` | Read-only. Show your local uncommitted routine edits and any server drift (routine changes you have not pulled yet). |
+| `scratchmd routines pull [--discard-local]` | Bring server changes into `.scratch/routines/`, file by file. Routines you haven't edited are added, updated, or removed to match the server; your edits to routines the server didn't change are kept. If the same routine changed both locally and on the server (to different content), the pull stops without changing anything — re-run with `--discard-local` to replace your local edits with the server's copy (new local files you never pushed are always left alone). |
+| `scratchmd routines push` | Send your routine creates, edits, and deletes. Each file carries the version you last pulled; if someone changed that routine on the server since, the whole push is rejected (nothing is saved) and the stale files are listed — run `scratchmd routines pull`, then push again. |
+| `scratchmd routines status` | Read-only. List your routine edits not yet pushed and server changes not yet pulled. |
 
 All three accept `--workspace <dir>` (auto-detected from the current directory by
 default) and the global `--json` flag for machine-readable output.
 
-- **Create** a routine: add a new `routines/<name>.yaml` file under
-  `.scratch/workspace/routines/`, then `scratchmd routines push`.
+- **Create** a routine: add `.scratch/routines/<name>.yaml`, then `scratchmd routines push`.
 - **Edit** a routine: change the `.yaml` file, then `scratchmd routines push`.
-- **Delete** a routine: remove its `.yaml` file locally, then
-  `scratchmd routines push` — the server detects the deletion and removes it.
+- **Delete** a routine: remove its `.yaml` file, then `scratchmd routines push` — the
+  server deletes it.
+- **Push rejected as stale**: run `scratchmd routines pull`. If the pull stops on a
+  conflict, copy your version somewhere safe, run `scratchmd routines pull --discard-local`,
+  re-apply your edit, and push again.
+- Push routine edits before `scratchmd workspaces init --force`, which re-downloads the
+  workspace (a workspace with unpushed routine edits is moved aside rather than deleted).
 "#;

@@ -22,6 +22,10 @@
 //!    (closing the "data fsynced, rename not" reorder window on crash-unsafe
 //!    filesystems).
 //!
+//! 3. [`write_bytes_to_file_atomically`] — the same temp → fsync → rename →
+//!    dir-fsync discipline for an arbitrary file's raw bytes (record files,
+//!    routine YAML files), for callers that don't own a typed state envelope.
+//!
 //! Each state-file module keeps its own typed envelope + format-version handling
 //! and calls into here for the byte-level read and the post-rename dir fsync.
 
@@ -30,6 +34,7 @@
 #![allow(dead_code)]
 
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::Context;
@@ -132,6 +137,50 @@ pub fn fsync_parent_directory_best_effort(file_path: &Path) {
     }
 }
 
+/// Atomically replace `file_path` with `bytes`: write a hidden sibling temp file
+/// (`.<name>.tmp.<pid>`), fsync it, `rename` it over the target, then fsync the
+/// parent directory so the rename itself is durable. A crash mid-write leaves
+/// either the old file or the new one — never a half-written file. Creates the
+/// parent directory if needed. Because the final step is a `rename`, a symlink
+/// at `file_path` is replaced rather than written through. On failure the temp
+/// file is removed (best-effort) so it can't linger next to the target.
+pub fn write_bytes_to_file_atomically(file_path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent_directory = file_path.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "cannot write {} atomically: it has no parent directory",
+            file_path.display()
+        )
+    })?;
+    fs::create_dir_all(parent_directory)
+        .with_context(|| format!("failed to create dir {}", parent_directory.display()))?;
+    let file_name = file_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+    let temp_file_path = parent_directory.join(format!(".{file_name}.tmp.{}", std::process::id()));
+
+    let write_temp_file_then_rename_over_target = || -> anyhow::Result<()> {
+        {
+            let mut temp_file = fs::File::create(&temp_file_path)
+                .with_context(|| format!("failed to open {}", temp_file_path.display()))?;
+            temp_file
+                .write_all(bytes)
+                .with_context(|| format!("failed to write {}", temp_file_path.display()))?;
+            temp_file
+                .sync_all()
+                .with_context(|| format!("failed to fsync {}", temp_file_path.display()))?;
+        }
+        fs::rename(&temp_file_path, file_path)
+            .with_context(|| format!("failed to rename to {}", file_path.display()))
+    };
+    if let Err(write_or_rename_error) = write_temp_file_then_rename_over_target() {
+        let _ = fs::remove_file(&temp_file_path);
+        return Err(write_or_rename_error);
+    }
+    fsync_parent_directory_best_effort(file_path);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +258,45 @@ mod tests {
             .unwrap();
         // Only the insignificant trailing newline is trimmed; the document is intact.
         assert_eq!(recovered, b"{\"version\":2,\"patches\":[]}");
+    }
+
+    #[test]
+    fn write_bytes_atomically_writes_exact_bytes_and_leaves_no_temp_file() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("nested").join("daily.yaml");
+        let bytes_with_crlf_and_bom = b"\xEF\xBB\xBFname: Daily\r\nsteps: []\r\n";
+
+        write_bytes_to_file_atomically(&target, bytes_with_crlf_and_bom).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), bytes_with_crlf_and_bom);
+
+        // Overwrite replaces the content wholesale.
+        write_bytes_to_file_atomically(&target, b"name: Weekly\n").unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"name: Weekly\n");
+
+        let leftover_entries: Vec<String> = fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(leftover_entries, vec!["daily.yaml".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_bytes_atomically_replaces_a_symlink_instead_of_writing_through_it() {
+        let dir = tempdir().unwrap();
+        let symlink_target_outside = dir.path().join("outside.yaml");
+        fs::write(&symlink_target_outside, b"original").unwrap();
+        let link_path = dir.path().join("daily.yaml");
+        std::os::unix::fs::symlink(&symlink_target_outside, &link_path).unwrap();
+
+        write_bytes_to_file_atomically(&link_path, b"replaced").unwrap();
+
+        assert_eq!(fs::read(&symlink_target_outside).unwrap(), b"original");
+        assert!(!fs::symlink_metadata(&link_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read(&link_path).unwrap(), b"replaced");
     }
 
     #[test]

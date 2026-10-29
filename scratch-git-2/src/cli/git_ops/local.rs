@@ -376,13 +376,26 @@ pub(crate) fn worktree_status_porcelain(
     Ok(entries)
 }
 
-/// Create a sparse git worktree at `worktree_path` tracking `refname`.
-/// Excludes `.scratch/**` from checkout (data files only).
-/// Removes and recreates the directory if it already exists.
+/// Test convenience: [`setup_sparse_worktree_with_extra_excluded_patterns`] with no extra
+/// patterns — a sparse worktree of everything except `.scratch/**`.
+#[cfg(test)]
 pub(crate) fn setup_sparse_worktree(
     bare_repo: &Path,
     worktree_path: &Path,
     refname: &str,
+) -> anyhow::Result<()> {
+    setup_sparse_worktree_with_extra_excluded_patterns(bare_repo, worktree_path, refname, &[])
+}
+
+/// Create a sparse git worktree at `worktree_path` tracking `refname`.
+/// Excludes `.scratch/**` from checkout (data files only), plus whatever extra no-cone
+/// sparse-checkout patterns are given — e.g. `!/routines/` to leave a top-level directory out.
+/// Removes and recreates the directory if it already exists.
+pub(crate) fn setup_sparse_worktree_with_extra_excluded_patterns(
+    bare_repo: &Path,
+    worktree_path: &Path,
+    refname: &str,
+    extra_sparse_checkout_patterns: &[&str],
 ) -> anyhow::Result<()> {
     let git_dir = bare_repo.to_str().unwrap_or_default();
 
@@ -440,6 +453,7 @@ pub(crate) fn setup_sparse_worktree(
             "/*",
             "!.scratch",
         ])
+        .args(extra_sparse_checkout_patterns)
         .output()
         .context("failed to spawn git sparse-checkout set")?;
     if !output.status.success() {
