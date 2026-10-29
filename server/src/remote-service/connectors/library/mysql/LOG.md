@@ -119,3 +119,14 @@ Throwaway scripts against the local `server/localdev/docker-compose.mysql.yml` s
   removed, so deployed test / production connect. Decided without the database host guard (Postgres / Supabase
   parity) and before a managed-database `/connector-build-execute` pass; both stay in STATE.md's TODOs.
 - Port 3306 leaves the VPC flow-log suspicious-egress-port alert in a separate terraform MR.
+
+## 2026-10-29 — JSON numbers compare like DOUBLE (DEV-12415)
+
+- A MySQL → MySQL Live Export rewrote the torture row every run because its JSON holds `12345678901234567000` and the
+  destination stores `12345678901234570000`. MySQL keeps the number exactly (`CAST('{"big":12345678901234567000}' AS
+  JSON)` returns every digit): the classic publish stores the plan operation through Prisma `Json`, which rounds it one
+  float64 step (`1.234567890123457e19` in `PublishPlanOperation.content`; `0.30000000000000004` becomes `0.3` the same
+  way). Root cause filed as DEV-12614.
+- The JSON canonicalizer now compares every number inside a document that isn't a safe integer at 15 significant
+  digits, like DOUBLE, so the sync keeps the stored value and the next run writes nothing. Safe integers stay exact,
+  so a changed id inside a document still publishes.

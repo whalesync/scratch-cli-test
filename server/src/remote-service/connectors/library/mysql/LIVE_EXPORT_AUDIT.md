@@ -39,7 +39,7 @@
 | 7 | Destination-side spot check (≥3 records/table) | ✅ MYSQL · ✅ POSTGRES | `verify-mysql.mjs` and psql: torture, zero-date, all-empty rows and the 3 contacts (below) |
 | 8 | CRUD pass: edit / create / delete mirrored | ✅ MYSQL · ✅ POSTGRES | `crud-pass.mjs` tag 202610212148 → rrn_tba1s2Y4di and rrn_VuTfEv3PF3: 1 create / 2 edits / 1 delete, checked with SQL |
 | 9 | Pagination: 200+ record table fully synced | ✅ MYSQL · ✅ POSTGRES | 214/214 invoices after every run |
-| 10 | Second run is a no-op | ❌ MYSQL · ✅ POSTGRES · ❌ MariaDB | MySQL rrn_i28O1s2rYr and MariaDB rrn_OwZGfhAhGC rewrite 1 record each run: [DEV-12415](https://linear.app/whalesync/issue/DEV-12415). Postgres rrn_HmJy15i7M6 wrote nothing |
+| 10 | Second run is a no-op | ❌ MYSQL · ✅ POSTGRES · ❌ MariaDB | MySQL rrn_i28O1s2rYr and MariaDB rrn_OwZGfhAhGC rewrite 1 record each run: [DEV-12415](https://linear.app/whalesync/issue/DEV-12415), fixed in the MySQL canonicalizer (not re-run yet). Postgres rrn_HmJy15i7M6 wrote nothing |
 | 11 | Destination drift: out-of-band delete restored | ✅ MYSQL · ✅ POSTGRES | deleted "Filler invoice 005" in each → rrn_z4o6Djr6iR and rrn_tgBsPMeyfj re-created it |
 | 12 | Findings filed or queued below | ✅ | DEV-12412–DEV-12415 (sub-issues of DEV-12346, label `live-export-qa`) |
 
@@ -54,9 +54,14 @@
   MariaDB gets the same types in its own spelling (`int(11)`, JSON as `longtext`).
 - **Zero dates:** the source keeps `0000-00-00` verbatim (STATE.md), and the engine's date guard writes NULL with a
   warning ("Skipped invalid date … Wrote an empty value"). Later runs compare equal: no churn.
-- **Second run:** one rewrite per run, the torture row. Its JSON holds `12345678901234567000`, which MySQL returns as
-  `12345678901234570000`; [DEV-12415](https://linear.app/whalesync/issue/DEV-12415). Found by isolating: clearing the
-  zero-date row's JSON didn't stop it; the scratch-git history of the destination folder showed the changed key.
+- **Second run:** one rewrite per run, the torture row. Its JSON holds `12345678901234567000`, and the destination
+  stores `12345678901234570000`; [DEV-12415](https://linear.app/whalesync/issue/DEV-12415). Found by isolating: clearing
+  the zero-date row's JSON didn't stop it; the scratch-git history of the destination folder showed the changed key.
+  MySQL isn't the one changing it: the destination's `dirty` file still holds `…567000`, but the publish plan stores
+  the operation through Prisma `Json`, which rounds it one float64 step to `1.234567890123457e19`
+  (`PublishPlanOperation.content`), and MySQL stores what it is sent. Root cause:
+  [DEV-12614](https://linear.app/whalesync/issue/DEV-12614). DEV-12415's fix: the MySQL JSON canonicalizer compares
+  numbers that aren't safe integers at 15 significant digits, so the next run keeps the stored value.
 
 ## Destination: POSTGRES (local, schema `fable_qa_dest_from_mysql`) — 2026-10-21
 
@@ -69,7 +74,8 @@
 
 | Issue | Layer | Summary | Status |
 |---|---|---|---|
-| [DEV-12415](https://linear.app/whalesync/issue/DEV-12415) | dest-pack | MySQL → MySQL: a JSON integer above 2^53 rewrites the record every run | filed |
+| [DEV-12415](https://linear.app/whalesync/issue/DEV-12415) | dest-pack | MySQL → MySQL: a JSON integer above 2^53 rewrites the record every run | fixed (canonicalizer) |
+| [DEV-12614](https://linear.app/whalesync/issue/DEV-12614) | core | The publish plan's Prisma `Json` storage rounds numbers one float64 step (the cause of DEV-12415 and of the `ratio` downgrade) | filed |
 
 Destination-only findings (DEV-12412, DEV-12413, DEV-12414) are listed in STATE.md's destination round.
 
@@ -80,8 +86,8 @@ Destination-only findings (DEV-12412, DEV-12413, DEV-12414) are listed in STATE.
 | paid, flag_byte | TINYINT(1) → number | The connector reads TINYINT(1) as a number on purpose: the column can hold −128…127, and the seed's `2` survives |
 | status, tags | ENUM / SET → select / text | ENUM and SET members aren't recreated (`isRecreatableMySqlNativeColumnType`); the value text is kept |
 | bits, raw | BIT / VARBINARY → number / base64 | The read side's representation; a MySQL destination can't recreate them from it |
-| ratio | 0.30000000000000004 → 0.3 | Same 15-significant-digit behavior the Postgres audit accepted (A6). MySQL keeps all 17 digits from a literal insert, so the rounding is upstream of the connector, and the canonicalizer compares at 15 |
-| meta | JSON integer above 2^53 loses digits | Known gap (STATE.md); the churn it causes is DEV-12415 |
+| ratio | 0.30000000000000004 → 0.3 | Same 15-significant-digit behavior the Postgres audit accepted (A6). MySQL keeps all 17 digits from a literal insert; the rounding is the publish plan's Prisma `Json` storage ([DEV-12614](https://linear.app/whalesync/issue/DEV-12614)), and the canonicalizer compares at 15 |
+| meta | JSON integer above 2^53 loses digits | Known gap (STATE.md) on pull; the extra step lost on publish is [DEV-12614](https://linear.app/whalesync/issue/DEV-12614); the churn it caused is DEV-12415 (fixed) |
 | due, created_at | zero dates → NULL | Not real dates; the engine writes NULL with a warning, and runs converge |
 
 ### Observations (not filed)
@@ -102,3 +108,7 @@ Destination-only findings (DEV-12412, DEV-12413, DEV-12414) are listed in STATE.
 
 - 2026-10-21 — Claude Opus 5.5 (DEV-12346 worktree) — doc created. Seeded `fable_qa_my_*`; ran MYSQL → MYSQL, → POSTGRES
   and → MariaDB; gates 1–9 and 11 pass on all three; gate 10 fails on the MySQL-family destinations (DEV-12415).
+- 2026-10-29 — Claude Opus 5.5 (osaka-v1 worktree) — traced DEV-12415 in `wkb_Le3Qczfn5N`: the destination `dirty`
+  file holds `…567000` and `PublishPlanOperation.content` holds `1.234567890123457e19`, so the publish plan's Prisma
+  `Json` storage rounds it, not MySQL (filed DEV-12614). Fixed the churn in the MySQL JSON canonicalizer; gate 10 not
+  re-run yet.

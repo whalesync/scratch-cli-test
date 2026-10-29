@@ -5,10 +5,10 @@
  * MySQL stores most values as sent, but re-renders several column types on read-back, so the value the sync wrote
  * and the value the next pull stores would never compare equal structurally — every run would re-publish every row.
  * Each canonicalizer reduces a value to what MySQL itself returns after the write, applying MySQL's own rounding
- * rules (each verified against MySQL 8.4 and MariaDB 11.4). One deliberate difference, only ever LOSSIER than
+ * rules (each verified against MySQL 8.4 and MariaDB 11.4). Two deliberate differences, only ever LOSSIER than
  * MySQL: DOUBLE compares at 15 significant digits (Postgres parity), so two doubles that differ only beyond that
- * compare equal. A value shape a rule doesn't recognise passes through unchanged and compares structurally — at
- * worst a needless re-publish.
+ * compare equal, and so do the numbers inside a JSON document that aren't safe integers (see JSON below). A value
+ * shape a rule doesn't recognise passes through unchanged and compares structurally — at worst a needless re-publish.
  *
  * - DATE / DATETIME / TIMESTAMP / TIME: reduced to the literal the WRITE PATH sends
  *   (`convertTemporalValueToMySqlLiteral` / `convertRecognizedTimeTextToMySqlTimeLiteral`, shared with
@@ -31,7 +31,9 @@
  * - ENUM: case-folded to the declared member (`_ci` collations store the declared spelling: 'MIXED' → 'Mixed').
  * - SET: members case-folded, de-duplicated and put in declared order ('z,x,X' is stored as 'x,z').
  * - CHAR(n): trailing spaces dropped (MySQL strips them on retrieval).
- * - JSON: parsed JSON text compares as a value (MySQL normalises key order and whitespace).
+ * - JSON: parsed JSON text compares as a value (MySQL normalises key order and whitespace). Inside it, a safe integer
+ *   compares exactly and any other number at DOUBLE's 15 significant digits (12345678901234567000 ≡
+ *   12345678901234570000, 0.30000000000000004 ≡ 0.3).
  * - Columns where the write path turns `''` into NULL compare `''` ≡ null ≡ absent (`emptyAsNull`, applied first).
  *
  * Read-only columns get no canonicalizer (they are never written). VARCHAR / TEXT and the other text-like columns
@@ -44,6 +46,7 @@ import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
+import { isPlainObject } from 'lodash';
 import type {
   FieldValueCanonicalizer,
   FieldValueCanonicalizerContext,
@@ -321,6 +324,39 @@ function mysqlSetMembersCanonicalizer(declaredMembers: readonly string[]): Field
 const charValueWithTrailingSpacesTrimmed: FieldValueCanonicalizer = (value) =>
   typeof value === 'string' ? value.replace(/ +$/, '') : value;
 
+const numberRoundedToDoubleSignificantDigits = numberRoundedToSignificantDigits(MYSQL_DOUBLE_SIGNIFICANT_DIGITS);
+
+/**
+ * Every number inside a JSON document that isn't a safe integer, rounded to DOUBLE's 15 significant digits; safe
+ * integers stay exact, so a changed id inside a document still reads as a change. Arrays and plain objects are walked
+ * into (never mutated); every other value passes through.
+ *
+ * Why (DEV-12415): the classic publish path can deliver such a number one float64 step off (Prisma rounds `Json`
+ * input, DEV-12614), MySQL stores what it was sent, and an exact compare would then see the source's
+ * 12345678901234567000 and the stored 12345678901234570000 as a change and re-publish the document on every run.
+ */
+const jsonDocumentNumbersComparedAtDoublePrecisionUnlessSafeInteger: FieldValueCanonicalizer = (value) => {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) ? value : numberRoundedToDoubleSignificantDigits(value);
+  }
+  if (Array.isArray(value)) return value.map(jsonDocumentNumbersComparedAtDoublePrecisionUnlessSafeInteger);
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([documentKey, documentValue]) => [
+        documentKey,
+        jsonDocumentNumbersComparedAtDoublePrecisionUnlessSafeInteger(documentValue),
+      ]),
+    );
+  }
+  return value;
+};
+
+/** JSON: JSON text parsed into the document it encodes, then its numbers compared as above. */
+const mysqlJsonDocumentCanonicalizer: FieldValueCanonicalizer = composeCanonicalizers(
+  parsedJsonText(),
+  jsonDocumentNumbersComparedAtDoublePrecisionUnlessSafeInteger,
+);
+
 /**
  * Decimal text (and numbers, and exponent notation) rounded half away from zero to a whole number, as MySQL stores
  * a value with a fraction into an integer or scale-0 DECIMAL column: 3.7 → "4", 2.5 → "3", -2.5 → "-3",
@@ -353,7 +389,7 @@ export function mysqlFieldValueCanonicalizerForNativeColumnType(
   const baseTypeName = readMySqlNativeColumnTypeBaseName(nativeColumnTypeSpelling);
   switch (baseTypeName) {
     case 'json':
-      return parsedJsonText();
+      return mysqlJsonDocumentCanonicalizer;
     case 'decimal':
     case 'numeric': {
       // A bare DECIMAL is DECIMAL(10,0) and DECIMAL(p) is DECIMAL(p,0): both store whole numbers.
@@ -429,7 +465,7 @@ function mysqlFieldValueCanonicalizerForColumnFamily(
     case PostgresColumnType.NUMERIC_STRING:
       return composeCanonicalizers(decimalExponentTextExpanded, decimalTextNormalized());
     case PostgresColumnType.JSONB:
-      return parsedJsonText();
+      return mysqlJsonDocumentCanonicalizer;
     default:
       return undefined;
   }

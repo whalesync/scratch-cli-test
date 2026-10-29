@@ -136,6 +136,7 @@ const destinationTableSpec = buildMySqlTableSpec({
   opens_at: textColumn('time'),
   opens_at_with_milliseconds: textColumn('time(3)'),
   payload: { nativeColumnType: 'json', connectorDataType: PostgresColumnType.JSONB, valueSchema: Type.Unknown() },
+  legacy_payload: { connectorDataType: PostgresColumnType.JSONB, valueSchema: Type.Unknown() },
   picture: { ...textColumn('blob'), isReadOnly: true },
   computed_total: { ...numberColumn('int'), isReadOnly: true },
 });
@@ -187,6 +188,7 @@ describe('resolveMySqlFieldValueCanonicalizer', () => {
         'opens_at',
         'opens_at_with_milliseconds',
         'payload',
+        'legacy_payload',
       ].sort(),
     );
   });
@@ -420,6 +422,32 @@ describe('resolveMySqlFieldValueCanonicalizer', () => {
     expectSame('payload', { a: 2 }, { a: 2 });
     expectDifferent('payload', { a: 2 }, '{"a":3}');
     expectSame('payload', null, '');
+  });
+
+  // DEV-12415: the publish can deliver a number one float64 step off (DEV-12614), and MySQL stores what it was sent.
+  it('compares numbers inside a JSON document that are not safe integers at 15 significant digits, like DOUBLE', () => {
+    for (const fieldPath of ['payload', 'legacy_payload']) {
+      expectSame(fieldPath, { big: 12345678901234570000 }, '{"big":12345678901234567000}');
+      expectSame(fieldPath, { big: 12345678901234570000 }, { big: 12345678901234567000 });
+      expectSame(fieldPath, { ratio: 0.3 }, { ratio: 0.30000000000000004 });
+      expectSame(fieldPath, { a: [1, { b: 12345678901234570000 }] }, '{"a":[1,{"b":12345678901234567000}]}');
+      expectSame(fieldPath, 12345678901234570000, 12345678901234567000);
+      expectDifferent(fieldPath, { x: 1.5 }, { x: 1.6 });
+      expectDifferent(fieldPath, { big: 12345678901234570000 }, { big: 12345678901235000000 });
+    }
+  });
+
+  it('keeps safe integers and strings inside a JSON document exact', () => {
+    expectDifferent('payload', { id: 1234567890123456 }, { id: 1234567890123457 });
+    expectDifferent('payload', { id: 9007199254740991 }, { id: 9007199254740990 });
+    expectDifferent('payload', { n: 2 }, { n: 3 });
+    expectDifferent('payload', { s: '12345678901234567000' }, { s: '12345678901234570000' });
+    expectDifferent('payload', [true, 'x'], [false, 'x']);
+    const storedDocument = { nested: { big: 12345678901234567000, keep: 'text' } };
+    expect(canonicalizerFor('payload')(storedDocument)).toEqual({
+      nested: { big: 12345678901234600000, keep: 'text' },
+    });
+    expect(storedDocument).toEqual({ nested: { big: 12345678901234567000, keep: 'text' } });
   });
 
   describe('TIME compares as the literal the write path sends', () => {
