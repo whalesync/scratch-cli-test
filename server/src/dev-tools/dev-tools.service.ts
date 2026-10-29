@@ -4,6 +4,7 @@ import type { AnyId, DecryptedCredentials, HardDeleteUserResponse, ScheduleActio
 import {
   createConnectorAccountId,
   createDataFolderId,
+  createRoutineDefinitionId,
   createScheduleId,
   createSyncId,
   createSyncTablePairId,
@@ -18,6 +19,8 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { RoutineDefinitionStoreService } from 'src/routine/routine-definition-store.service';
+import { assertValidRoutineFilePath } from 'src/routine/routine-file-path';
 import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { isErr } from 'src/types/results';
 import { SubscriptionService } from 'src/users/subscription.service';
@@ -76,6 +79,8 @@ export interface WorkbookExportJson {
       enabled: boolean;
     }
   >;
+  /** Absent in exports made before DEV-12621 — import treats that as no routines. */
+  routineDefinitions?: Record<string, { filePath: string; content: string; version: number; source: string }>;
 }
 
 @Injectable()
@@ -90,6 +95,7 @@ export class DevToolsService {
     private readonly workbookService: WorkbookService,
     private readonly auditLogService: AuditLogService,
     private readonly posthogService: PostHogService,
+    private readonly routineDefinitionStoreService: RoutineDefinitionStoreService,
   ) {}
 
   async exportWorkbook(workbookId: string): Promise<WorkbookExportJson> {
@@ -171,6 +177,18 @@ export class DevToolsService {
       };
     }
 
+    // Build routine definitions map. Read through the store (not an include) so a workbook still
+    // pending its one-time git import exports its git routines instead of none.
+    const routineDefinitions: NonNullable<WorkbookExportJson['routineDefinitions']> = {};
+    for (const rd of await this.routineDefinitionStoreService.listDefinitions(workbookId as WorkbookId)) {
+      routineDefinitions[rd.id] = {
+        filePath: rd.filePath,
+        content: rd.content,
+        version: rd.version,
+        source: rd.source,
+      };
+    }
+
     return {
       version: 1,
       exportedAt: new Date().toISOString(),
@@ -179,6 +197,7 @@ export class DevToolsService {
       dataFolders,
       syncs,
       schedules,
+      routineDefinitions,
     };
   }
 
@@ -339,7 +358,29 @@ export class DevToolsService {
         }
       }
 
-      // 5. Create Schedules — remap entityId using ID prefix
+      // 5. Create RoutineDefinitions — written via tx (not the store) because the store reads the
+      // workbook outside this transaction. Entity ids inside the YAML are remapped to the new ones;
+      // ROUTINE schedules key on the file path, so they need no remap.
+      const routineDefinitionEntries = Object.values(json.routineDefinitions ?? {});
+      if (routineDefinitionEntries.length > 0) {
+        const oldEntityIdToNewEntityIdMap = new Map([...connectorAccountIdMap, ...dataFolderIdMap, ...syncIdMap]);
+        for (const rd of routineDefinitionEntries) {
+          assertValidRoutineFilePath(rd.filePath);
+        }
+        await tx.routineDefinition.createMany({
+          data: routineDefinitionEntries.map((rd) => ({
+            id: createRoutineDefinitionId(),
+            workbookId: newWorkbookId,
+            filePath: rd.filePath,
+            content: this.remapEntityIdsInRoutineYamlContent(rd.content, oldEntityIdToNewEntityIdMap),
+            version: rd.version,
+            source: rd.source,
+            updatedByUserId: null,
+          })),
+        });
+      }
+
+      // 6. Create Schedules — remap entityId using ID prefix
       for (const [, sch] of Object.entries(json.schedules)) {
         const newScheduleId = createScheduleId();
 
@@ -367,6 +408,21 @@ export class DevToolsService {
 
       return { workbookId: newWorkbookId };
     });
+  }
+
+  /**
+   * Rewrites whole-token coa_/dfd_/syn_ ids in routine YAML text to the imported workbook's ids
+   * (routine steps may reference a connection, folder or sync by id). Works on the text, not a
+   * parsed copy, so comments and formatting survive; ids not in the map are left untouched.
+   */
+  private remapEntityIdsInRoutineYamlContent(
+    routineYamlContent: string,
+    oldEntityIdToNewEntityIdMap: Map<string, string>,
+  ): string {
+    return routineYamlContent.replace(
+      /\b(?:coa|dfd|syn)_[0-9A-Za-z]+/g,
+      (oldEntityId) => oldEntityIdToNewEntityIdMap.get(oldEntityId) ?? oldEntityId,
+    );
   }
 
   /**

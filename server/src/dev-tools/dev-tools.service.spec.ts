@@ -1,15 +1,19 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import type { RoutineDefinition as PrismaRoutineDefinition } from '@prisma/client';
 import { ScratchPlanType } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
+import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { UserCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { RoutineDefinitionStoreService } from 'src/routine/routine-definition-store.service';
+import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { badRequestError, ok } from 'src/types/results';
 import type { Actor } from 'src/users/types';
 import { UsersService } from 'src/users/users.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
-import { DevToolsService } from './dev-tools.service';
+import { DevToolsService, WorkbookExportJson } from './dev-tools.service';
 
 /**
  * Unit tests for the admin "grant a free trial" dev tool. The eligibility rule ("never had a
@@ -40,6 +44,7 @@ describe('DevToolsService.startTrialForUser', () => {
       {} as never, // workbookService — unused
       {} as never, // auditLogService — unused
       {} as never, // posthogService — unused
+      {} as never, // routineDefinitionStoreService — unused
     );
   });
 
@@ -138,6 +143,7 @@ describe('DevToolsService.hardDeleteUser', () => {
       workbookService as unknown as WorkbookService,
       auditLogService as unknown as AuditLogService,
       posthogService as unknown as PostHogService,
+      {} as never, // routineDefinitionStoreService — unused
     );
   });
 
@@ -187,5 +193,255 @@ describe('DevToolsService.hardDeleteUser', () => {
     // organizationId omitted → the org and its workbooks are left intact.
     expect(usersService.deleteShadowUserAndOrganization).toHaveBeenCalledWith('usr_target', undefined);
     expect(result).toEqual({ deletedWorkbookCount: 0, organizationDeleted: false });
+  });
+});
+
+/**
+ * Unit tests for carrying routine definitions through the dev-tools workbook export/import
+ * (DEV-12621). Export must read through the definition store; import must recreate the rows on the
+ * new workbook inside the import transaction, rewriting the connection/folder/sync ids the YAML
+ * references to the imported workbook's new ids while leaving the rest of the text verbatim.
+ */
+describe('DevToolsService workbook export/import — routine definitions', () => {
+  let service: DevToolsService;
+  let workbookFindUnique: jest.Mock;
+  let routineDefinitionStoreService: { listDefinitions: jest.Mock };
+  type CreateRowWithIdMock = jest.Mock<Promise<void>, [{ data: { id: string } }]>;
+  let tx: {
+    workbook: { create: CreateRowWithIdMock };
+    workspacePermission: { create: CreateRowWithIdMock };
+    connectorAccount: { create: CreateRowWithIdMock };
+    dataFolder: { create: CreateRowWithIdMock };
+    sync: { create: CreateRowWithIdMock };
+    syncTablePair: { create: CreateRowWithIdMock };
+    schedule: { create: CreateRowWithIdMock };
+    routineDefinition: { createMany: jest.Mock<Promise<{ count: number }>, [{ data: { content: string }[] }]> };
+  };
+
+  const OLD_CONNECTOR_ACCOUNT_ID = 'coa_OLDconnect';
+  const OLD_DATA_FOLDER_ID = 'dfd_OLDfolder1';
+  const OLD_SYNC_ID = 'syn_OLDsync001';
+  const SYNC_ID_NOT_IN_EXPORT = 'syn_NOTexport';
+
+  function makeExportJson(overrides: Partial<WorkbookExportJson> = {}): WorkbookExportJson {
+    return {
+      version: 1,
+      exportedAt: '2026-10-29T00:00:00.000Z',
+      workbook: { name: 'Blog', version: 1 },
+      connectorAccounts: {
+        [OLD_CONNECTOR_ACCOUNT_ID]: {
+          service: 'AIRTABLE',
+          displayName: 'Airtable',
+          authType: 'USER_PROVIDED_PARAMS',
+          credentials: {},
+          isOAuth: false,
+          modifier: null,
+          extras: null,
+        },
+      },
+      dataFolders: {
+        [OLD_DATA_FOLDER_ID]: {
+          name: 'posts',
+          connectorAccountId: OLD_CONNECTOR_ACCOUNT_ID,
+          connectorService: 'AIRTABLE',
+          path: '/blog/posts',
+          version: 1,
+          tableId: ['tbl1'],
+          isAssetTable: false,
+          options: null,
+        },
+      },
+      syncs: {
+        [OLD_SYNC_ID]: {
+          displayName: 'Posts sync',
+          displayOrder: 0,
+          mappings: null,
+          syncState: 'OFF',
+          publishAfterSync: false,
+          tablePairs: {},
+        },
+      },
+      schedules: {},
+      ...overrides,
+    };
+  }
+
+  function makeRoutineYaml(ids: { connectorAccountId: string; dataFolderId: string; syncId: string }): string {
+    return [
+      '# Nightly refresh — keep this comment',
+      'name: Nightly',
+      'steps:',
+      '  - action: pull',
+      '    folders:',
+      `      - ${ids.dataFolderId}`,
+      '      - /blog/posts',
+      `    connection: ${ids.connectorAccountId}`,
+      '  - action: sync',
+      `    sync: ${ids.syncId}`,
+      '  - action: publish',
+      `    folder: ${ids.dataFolderId} # trailing comment`,
+      '',
+    ].join('\n');
+  }
+
+  beforeEach(() => {
+    workbookFindUnique = jest.fn();
+    const createRowWithIdMock = (): CreateRowWithIdMock =>
+      jest.fn<Promise<void>, [{ data: { id: string } }]>().mockResolvedValue(undefined);
+    tx = {
+      workbook: { create: createRowWithIdMock() },
+      workspacePermission: { create: createRowWithIdMock() },
+      connectorAccount: { create: createRowWithIdMock() },
+      dataFolder: { create: createRowWithIdMock() },
+      sync: { create: createRowWithIdMock() },
+      syncTablePair: { create: createRowWithIdMock() },
+      schedule: { create: createRowWithIdMock() },
+      routineDefinition: {
+        createMany: jest
+          .fn<Promise<{ count: number }>, [{ data: { content: string }[] }]>()
+          .mockResolvedValue({ count: 1 }),
+      },
+    };
+    const dbService = {
+      client: {
+        workbook: { findUnique: workbookFindUnique },
+        $transaction: jest.fn((callback: (transactionClient: typeof tx) => Promise<unknown>) => callback(tx)),
+      },
+    };
+    routineDefinitionStoreService = { listDefinitions: jest.fn().mockResolvedValue([]) };
+    const credentialEncryptionService = {
+      decryptCredentials: jest.fn().mockResolvedValue({}),
+      encryptCredentials: jest.fn().mockResolvedValue({ encrypted: true }),
+    };
+    const scratchGitService = { initRepo: jest.fn().mockResolvedValue(undefined) };
+
+    service = new DevToolsService(
+      dbService as unknown as DbService,
+      {} as never, // usersService — unused
+      {} as never, // stripePaymentService — unused
+      {} as never, // subscriptionService — unused
+      credentialEncryptionService as unknown as CredentialEncryptionService,
+      scratchGitService as unknown as ScratchGitService,
+      {} as never, // workbookService — unused
+      {} as never, // auditLogService — unused
+      {} as never, // posthogService — unused
+      routineDefinitionStoreService as unknown as RoutineDefinitionStoreService,
+    );
+  });
+
+  it('export includes every routine definition read through the store, keyed by row id', async () => {
+    workbookFindUnique.mockResolvedValue({
+      id: 'wkb_source',
+      name: 'Blog',
+      version: 3,
+      connectorAccounts: [],
+      dataFolders: [],
+      syncs: [],
+      schedules: [],
+    });
+    routineDefinitionStoreService.listDefinitions.mockResolvedValue([
+      {
+        id: 'rdf_nightly01',
+        workbookId: 'wkb_source',
+        filePath: 'routines/nightly.yaml',
+        content: 'name: Nightly\n',
+        version: 4,
+        source: 'cli',
+        updatedByUserId: 'usr_someone',
+      } as PrismaRoutineDefinition,
+    ]);
+
+    const exported = await service.exportWorkbook('wkb_source');
+
+    expect(routineDefinitionStoreService.listDefinitions).toHaveBeenCalledWith('wkb_source');
+    expect(exported.routineDefinitions).toEqual({
+      rdf_nightly01: { filePath: 'routines/nightly.yaml', content: 'name: Nightly\n', version: 4, source: 'cli' },
+    });
+  });
+
+  it('import recreates routine definitions on the new workbook with entity ids remapped and text otherwise verbatim', async () => {
+    const oldIds = {
+      connectorAccountId: OLD_CONNECTOR_ACCOUNT_ID,
+      dataFolderId: OLD_DATA_FOLDER_ID,
+      syncId: OLD_SYNC_ID,
+    };
+    const exportJson = makeExportJson({
+      routineDefinitions: {
+        rdf_nightly01: {
+          filePath: 'routines/nightly.yaml',
+          content: makeRoutineYaml(oldIds),
+          version: 4,
+          source: 'generated',
+        },
+      },
+    });
+
+    const { workbookId: newWorkbookId } = await service.importWorkbook(exportJson, 'usr_importer', 'org_importer');
+
+    const newIds = {
+      connectorAccountId: tx.connectorAccount.create.mock.calls[0][0].data.id,
+      dataFolderId: tx.dataFolder.create.mock.calls[0][0].data.id,
+      syncId: tx.sync.create.mock.calls[0][0].data.id,
+    };
+    expect(newIds.connectorAccountId).not.toBe(OLD_CONNECTOR_ACCOUNT_ID);
+    expect(newIds.dataFolderId).not.toBe(OLD_DATA_FOLDER_ID);
+    expect(newIds.syncId).not.toBe(OLD_SYNC_ID);
+
+    expect(tx.routineDefinition.createMany).toHaveBeenCalledTimes(1);
+    expect(tx.routineDefinition.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          id: expect.stringMatching(/^rdf_/) as unknown as string,
+          workbookId: newWorkbookId,
+          filePath: 'routines/nightly.yaml',
+          content: makeRoutineYaml(newIds),
+          version: 4,
+          source: 'generated',
+          updatedByUserId: null,
+        },
+      ],
+    });
+  });
+
+  it('import leaves an id that is not part of the export untouched', async () => {
+    const exportJson = makeExportJson({
+      routineDefinitions: {
+        rdf_nightly01: {
+          filePath: 'routines/nightly.yaml',
+          content: `name: Nightly\nsteps:\n  - action: sync\n    sync: ${SYNC_ID_NOT_IN_EXPORT}\n`,
+          version: 1,
+          source: 'web',
+        },
+      },
+    });
+
+    await service.importWorkbook(exportJson, 'usr_importer', 'org_importer');
+
+    expect(tx.routineDefinition.createMany.mock.calls[0][0].data[0].content).toBe(
+      `name: Nightly\nsteps:\n  - action: sync\n    sync: ${SYNC_ID_NOT_IN_EXPORT}\n`,
+    );
+  });
+
+  it('import of an export made before routine definitions were carried creates no routine rows', async () => {
+    const exportJsonWithoutRoutineDefinitions = makeExportJson();
+    delete exportJsonWithoutRoutineDefinitions.routineDefinitions;
+
+    await expect(
+      service.importWorkbook(exportJsonWithoutRoutineDefinitions, 'usr_importer', 'org_importer'),
+    ).resolves.toEqual({ workbookId: expect.stringMatching(/^wkb_/) as unknown as string });
+    expect(tx.routineDefinition.createMany).not.toHaveBeenCalled();
+  });
+
+  it('import rejects a routine definition whose file path escapes routines/', async () => {
+    const exportJson = makeExportJson({
+      routineDefinitions: {
+        rdf_escaping1: { filePath: 'routines/../secrets.yaml', content: 'name: x\n', version: 1, source: 'web' },
+      },
+    });
+
+    await expect(service.importWorkbook(exportJson, 'usr_importer', 'org_importer')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(tx.routineDefinition.createMany).not.toHaveBeenCalled();
   });
 });

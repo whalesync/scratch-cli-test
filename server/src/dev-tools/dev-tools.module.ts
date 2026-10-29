@@ -8,6 +8,7 @@ import { JobModule } from 'src/job/job.module';
 import { PaymentModule } from 'src/payment/payment.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
+import { RoutineExecutionModule } from 'src/routine/routine-execution.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { SlackNotificationModule } from 'src/slack/slack-notification.module';
 import { UserModule } from 'src/users/users.module';
@@ -33,6 +34,7 @@ import { DevToolsService } from './dev-tools.service';
     SlackNotificationModule,
     EmailModule,
     PosthogModule,
+    RoutineExecutionModule,
   ],
   exports: [], //export this service to use in other modules
   controllers: [DevToolsController],

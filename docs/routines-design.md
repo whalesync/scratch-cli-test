@@ -409,6 +409,8 @@ Accessible from the routine's sidebar entry or a detail panel:
 
 **The transitional git mirror.** While `ROUTINES_GIT_MIRROR_ENABLED` (default on) every definition change is followed by a full-state one-way mirror of `routines/` into the config repo (`RoutineGitMirrorService`), so pre-DEV-11399 `scratchmd routines pull|status|push` binaries keep working. Nothing reads it back. Once the REST-backed CLI has shipped, flip the flag off and run the `routine-git-cleanup` code migration (refused while the mirror is on) to delete `routines/*.yaml` from git; history keeps the old copies.
 
+**Workbook export/import.** The dev-tools workbook export (`DevToolsService.exportWorkbook`) carries every definition (`filePath`, `content`, `version`, `source`; DEV-12621), and import recreates them on the new workbook. The one edit import makes to the text is rewriting `coa_`/`dfd_`/`syn_` ids to the imported workbook's new ids, since steps can reference a connection, folder or sync by id; comments and formatting are otherwise untouched. `ROUTINE` schedules already travel and need no remap because they key on the file path. `RoutineRun` history does not travel, and imported definitions are not written to the transitional git mirror.
+
 **Concurrency.** The CLI push carries a per-file `baseVersion` (the `version` it last pulled, or `null` for "expect new"); the whole push is applied in one transaction under a per-workbook advisory lock and refused with `409 blocked_stale` naming the stale files if any version disagrees. The pre-DEV-11399 `baseHead` git SHA is accepted and ignored (logged) — honouring it against the lagging mirror would produce false conflicts.
 
 ## CLI Support
