@@ -1767,11 +1767,120 @@ describe('IntercomApiClient', () => {
       );
     });
 
-    it('rethrows other errors untouched', async () => {
-      const serverError = new Error('socket hang up');
-      mockGet.mockRejectedValueOnce(serverError);
+    it("rethrows a failure that isn't an Intercom HTTP error untouched", async () => {
+      const failureOutsideIntercom = new Error('Timed out waiting for rate limit quota');
+      mockGet.mockRejectedValueOnce(failureOutsideIntercom);
 
-      await expect(client.listDataAttributes('contact')).rejects.toBe(serverError);
+      await expect(client.listDataAttributes('contact')).rejects.toBe(failureOutsideIntercom);
+    });
+
+    // The table spec is built where failures are logged as-is, so no AxiosError — whose config carries the access
+    // token — may leave listDataAttributes (DEV-12581).
+    describe('an Intercom failure other than a 401/403', () => {
+      const failedDataAttributesRequestConfig = () => ({
+        method: 'get',
+        baseURL: 'https://api.intercom.io',
+        url: '/data_attributes',
+        params: { model: 'contact' },
+        headers: new axios.AxiosHeaders({ Authorization: 'Bearer test-access-token' }),
+      });
+
+      const intercomAnsweredWith = (status: number, statusText: string, body: unknown) =>
+        new axios.AxiosError(
+          `Request failed with status code ${status}`,
+          'ERR_BAD_RESPONSE',
+          failedDataAttributesRequestConfig(),
+          {},
+          { status, statusText, data: body, headers: {}, config: failedDataAttributesRequestConfig() as never },
+        );
+
+      const listContactAttributesExpectingAFailure = async (): Promise<IntercomError> => {
+        try {
+          await client.listDataAttributes('contact');
+        } catch (error) {
+          expect(error).toBeInstanceOf(IntercomError);
+          return error as IntercomError;
+        }
+        throw new Error('listDataAttributes was expected to fail');
+      };
+
+      const expectNoRequestConfigOnTheThrownError = (thrown: IntercomError, failedRequest: axios.AxiosError) => {
+        expect(axios.isAxiosError(thrown)).toBe(false);
+        expect(thrown).not.toHaveProperty('config');
+        expect(JSON.stringify(thrown)).not.toContain('test-access-token');
+        // The request stays reachable for extractConnectorErrorDetails, as a native cause: not enumerable, so it is
+        // never spread into a log line.
+        expect(thrown.cause).toBe(failedRequest);
+        expect(Object.keys(thrown)).not.toContain('cause');
+      };
+
+      it("throws an IntercomError for a 500 that names the attributes, the status and Intercom's message", async () => {
+        const serverError = intercomAnsweredWith(500, 'Internal Server Error', {
+          type: 'error.list',
+          request_id: 'req_0001',
+          errors: [{ code: 'server_error', message: 'Server Error' }],
+        });
+        mockGet.mockRejectedValueOnce(serverError);
+
+        const thrown = await listContactAttributesExpectingAFailure();
+
+        expectNoRequestConfigOnTheThrownError(thrown, serverError);
+        expect(thrown.statusCode).toBe(500);
+        expect(thrown.message).toBe(
+          "Couldn't list this Intercom workspace's contact attributes, which the table's columns are built from: " +
+            'Intercom answered HTTP 500 ("Server Error"). Try again in a few minutes.',
+        );
+        // A 500 isn't retried under the policy listDataAttributes uses.
+        expect(mockGet).toHaveBeenCalledTimes(1);
+      });
+
+      it('throws an IntercomError for a network error that names the error code', async () => {
+        const connectionReset = new axios.AxiosError(
+          'socket hang up',
+          'ECONNRESET',
+          failedDataAttributesRequestConfig(),
+          {},
+        );
+        mockGet.mockRejectedValueOnce(connectionReset);
+
+        const thrown = await listContactAttributesExpectingAFailure();
+
+        expectNoRequestConfigOnTheThrownError(thrown, connectionReset);
+        expect(thrown.statusCode).toBeUndefined();
+        expect(thrown.message).toBe(
+          "Couldn't list this Intercom workspace's contact attributes, which the table's columns are built from: " +
+            'the request failed before Intercom answered (ECONNRESET). Try again in a few minutes.',
+        );
+      });
+
+      it('throws an IntercomError for a 503 that outlasts the retries', async () => {
+        const serviceUnavailable = intercomAnsweredWith(503, 'Service Unavailable', '<html>Service Unavailable</html>');
+        const firstAttemptPlusEveryRetry = 6;
+        for (let attempt = 0; attempt < firstAttemptPlusEveryRetry; attempt++) {
+          mockGet.mockRejectedValueOnce(serviceUnavailable);
+        }
+
+        const thrown = await listContactAttributesExpectingAFailure();
+
+        expectNoRequestConfigOnTheThrownError(thrown, serviceUnavailable);
+        expect(thrown.statusCode).toBe(503);
+        expect(thrown.message).toContain('Intercom answered HTTP 503. Try again in a few minutes.');
+        expect(mockGet).toHaveBeenCalledTimes(firstAttemptPlusEveryRetry);
+      });
+
+      it("doesn't suggest trying again for a 4xx that retrying can't fix", async () => {
+        mockGet.mockRejectedValueOnce(
+          intercomAnsweredWith(400, 'Bad Request', {
+            type: 'error.list',
+            errors: [{ code: 'parameter_invalid', message: 'Model is invalid' }],
+          }),
+        );
+
+        const thrown = await listContactAttributesExpectingAFailure();
+
+        expect(thrown.statusCode).toBe(400);
+        expect(thrown.message).toMatch(/Intercom answered HTTP 400 \("Model is invalid"\)\.$/);
+      });
     });
   });
 

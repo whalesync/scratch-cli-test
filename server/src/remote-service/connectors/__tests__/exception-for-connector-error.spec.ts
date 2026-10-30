@@ -185,11 +185,11 @@ describe('exceptionForConnectorError', () => {
   });
 
   /**
-   * `expandedErrorsFormat` in logger.ts expands an Error by spreading its own
-   * enumerable properties, and an AxiosError carries `config` — whose
-   * `headers.Authorization` the api-client interceptor has already set to the
-   * customer's live token. Passing the raw error here wrote that credential into
-   * Cloud Logging on every connector failure.
+   * An AxiosError carries `config`, whose `headers.Authorization` the api-client
+   * interceptor has already set to the customer's live token. Passing the raw
+   * error here once wrote that credential into Cloud Logging on every connector
+   * failure. `expandedErrorsFormat` in logger.ts now reduces AxiosErrors itself
+   * (DEV-12581), but this log line stays curated rather than relying on it.
    */
   describe('credential safety', () => {
     function logRecordFor(error: axios.AxiosError): Record<string, unknown> {

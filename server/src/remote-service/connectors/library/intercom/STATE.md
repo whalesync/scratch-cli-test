@@ -182,6 +182,7 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 ## Gotchas
 - **Contacts:** `GET /contacts` is sorted by `last_seen_at` DESC (verified live) — never use it for a full walk; use the creation-order search walk.
 - **Contacts:** a 401/403 on contacts/attributes means the token's Intercom app lacks **"Read and list users and companies"** — `testConnection` (`GET /me`) passes without it, so the connector rethrows naming the permission.
+- **Contacts/Companies:** any other failure of `GET /data_attributes` (a 500, a network error, throttling or a 502–504 that outlasted the retries) is thrown as an `IntercomError` naming the attributes, with the AxiosError as its non-enumerable `cause` — never as the raw AxiosError. The table spec is built in catch blocks that log the error as-is, and an AxiosError's `config` carries the access token (DEV-12581).
 - **Contacts:** custom attribute keys are sparse (absent, not null, when never set) and names may contain spaces/capitals; date attributes are Unix seconds.
 - **Contacts:** nested `tags`/`notes`/`companies` lists are stubs, at most 10 inlined (`has_more`/`url` for the rest); a contact's tag stubs carry no names.
 - **Companies:** only companies with at least one contact are listable — a company that loses its last contact drops out of the scroll (within ~1–3 min, flapping meanwhile) and the next full pull removes it. Newly linked companies take 2–4 min to appear.

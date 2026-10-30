@@ -368,6 +368,38 @@ function intercomReadPermissionErrorOrOriginal(error: unknown, whatWasBeingRead:
 }
 
 /**
+ * The error to throw for a failed `GET /data_attributes`: an {@link IntercomError} for every Intercom HTTP failure, never
+ * the raw AxiosError. The call runs while the Contacts or Companies table spec is built, and the callers that build table
+ * specs log whatever they catch as-is, while an AxiosError's `config` carries the access token (DEV-12581).
+ *  - 401/403: the missing-permission explanation from {@link intercomReadPermissionErrorOrOriginal}.
+ *  - Any other status, or a request Intercom never answered (a 500, a network error, throttling or a 502–504 that
+ *    outlasted the retries): an error saying what failed, with the AxiosError as its `cause`. A `cause` isn't enumerable,
+ *    so it is never spread into a log line, and `extractConnectorErrorDetails` describes the request from it without the
+ *    token.
+ *  - Anything that isn't an Intercom HTTP error (e.g. the rate limiter giving up waiting for quota): returned untouched.
+ *    It carries no request config, and it isn't Intercom's failure.
+ */
+function errorToThrowForFailedIntercomDataAttributesListing(error: unknown, model: 'contact' | 'company'): unknown {
+  const permissionErrorOrOriginal = intercomReadPermissionErrorOrOriginal(error, `${model} attributes`);
+  if (permissionErrorOrOriginal !== error || !axios.isAxiosError(error)) return permissionErrorOrOriginal;
+
+  const status = error.response?.status;
+  const intercomErrorMessage = readIntercomErrorMessage(error);
+  const whatWentWrong =
+    status !== undefined
+      ? `Intercom answered HTTP ${status}${intercomErrorMessage ? ` ("${intercomErrorMessage}")` : ''}`
+      : `the request failed before Intercom answered (${error.code ?? error.message})`;
+  const isWorthTryingAgainLater = status === undefined || status >= 500 || isIntercomRateLimitError(error);
+  return new IntercomError(
+    `Couldn't list this Intercom workspace's ${model} attributes, which the table's columns are built from: ` +
+      `${whatWentWrong}.${isWorthTryingAgainLater ? ' Try again in a few minutes.' : ''}`,
+    status,
+    error.response?.data,
+    { cause: error },
+  );
+}
+
+/**
  * How many complete page walks {@link IntercomApiClient.listArticles} /
  * `listCollections` will attempt before accepting an unverified (short) walk
  * and logging a warning. See `listWithFaithfulPageWalk` for why re-walking
@@ -1498,6 +1530,8 @@ export class IntercomApiClient {
   /**
    * The attribute definitions for a model — the source of a contact's or company's
    * `custom_attributes` schema. Not paginated; archived attributes are excluded by default.
+   * An Intercom HTTP failure is thrown as an {@link IntercomError}, never as the raw AxiosError
+   * (see {@link errorToThrowForFailedIntercomDataAttributesListing}).
    */
   async listDataAttributes(model: 'contact' | 'company'): Promise<IntercomDataAttribute[]> {
     try {
@@ -1506,7 +1540,7 @@ export class IntercomApiClient {
       );
       return response.data.data ?? [];
     } catch (error) {
-      throw intercomReadPermissionErrorOrOriginal(error, `${model} attributes`);
+      throw errorToThrowForFailedIntercomDataAttributesListing(error, model);
     }
   }
 }

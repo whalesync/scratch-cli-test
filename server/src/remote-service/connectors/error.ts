@@ -234,16 +234,15 @@ export function exceptionForConnectorError(
   const details = connector.extractConnectorErrorDetails(error);
   const isCredentialRejection = isConnectorCredentialRejection(error);
 
-  // NEVER pass the raw `error` to the logger. `expandedErrorsFormat` (logger.ts)
-  // expands an Error by spreading its own enumerable properties, and an
-  // `AxiosError` carries `config` — whose `headers.Authorization` the shared
-  // api-client interceptor has already set to the customer's live token by the
-  // time the request fails. Under the cloud JSON format that writes the
-  // credential straight into Cloud Logging, on every connector failure, with
-  // 401/403 being precisely where a valid credential is in play. Log a curated
-  // set of fields instead, and route the URL through the redaction helper the
-  // outbound-HTTP logger already uses (some APIs take credentials in the query
-  // string).
+  // Log a curated set of fields, never the raw `error`. An `AxiosError` carries
+  // `config`, whose `headers.Authorization` the shared api-client interceptor has
+  // already set to the customer's live token by the time the request fails, with
+  // 401/403 being precisely where a valid credential is in play.
+  // `expandedErrorsFormat` (logger.ts) now reduces any AxiosError it is handed to
+  // a credential-free summary (DEV-12581), but that is only the backstop: these
+  // fields add the connector's description and keep the query string, routed
+  // through the redaction helper the outbound-HTTP logger already uses (some APIs
+  // take credentials in the query string), where the backstop drops it.
   WSLogger.error({
     source: 'exceptionForConnectorError',
     message: `${connector.service} connector call failed: ${details.userFriendlyMessage}`,
