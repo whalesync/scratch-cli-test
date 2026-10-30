@@ -2,7 +2,6 @@ pub mod conflicts_log;
 pub mod credentials;
 pub mod markers;
 pub mod project_config;
-pub mod routines_state_manifest;
 pub mod workspaces;
 
 // Re-export the moved workspace_lock module so existing `crate::config::workspace_lock::*`

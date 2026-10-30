@@ -25,6 +25,6 @@ pub(crate) use local::setup_sparse_worktree;
 pub(crate) use local::{
     diff_name_status, diff_name_status_without_rename_detection, ensure_full_worktree,
     setup_sparse_worktree_with_extra_excluded_patterns, update_ref, worktree_checkout_path,
-    worktree_reset_mixed, worktree_status_porcelain,
+    worktree_reset_mixed,
 };
 pub(crate) use remote::{clone_bare, fetch_origin};

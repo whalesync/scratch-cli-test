@@ -79,10 +79,7 @@ transformers/
         accepted-patches.json          # User's approved-but-not-published edits — see REVIEW_MODEL.md
       scratch/
         {CONNECTOR-NAME}/              # Per-connection schema files + validator config (cache)
-    routines/                          # Routine YAML (server path routines/{name}.yaml), pulled/pushed over REST
-      {name}.yaml
-    routines-state.json                # Routines manifest: per-file server version + sha256 (merge base)
-    workspace/                         # Materialization of workbook config repo (at `workspaces init`; `routines/` left out)
+    workspace/                         # Materialization of workbook config repo (`routines/` left out)
       syncs/*.json
       transformers/*.rhai
       docs.md
@@ -107,7 +104,7 @@ Key properties:
 - **`accepted-patches.json` is the authoritative "approved-but-not-yet-published" store** — see [REVIEW_MODEL.md](REVIEW_MODEL.md). The CLI no longer maintains a local `refs/heads/dirty` branch; `setup_connection` prunes that ref post-clone (slice F.5).
 - **`.scratch/connections/scratch/{CONNECTOR-NAME}/` is a cache.** Schemas + views live in the worktree's `.scratch/` tree natively; the cache directory exists because some readers (`shared/validators`, `shared/index`, `cli/commands/validation`) still resolve schemas from there rather than from the worktree.
 - **`.repos/` is flat per workbook** — the composite `repoPath` (`{orgId}/{workbookId}/{connectorAccountId}`) remains the logical repo ID, but local bare repos and DBs use only the final basename inside the workbook root.
-- **Routines have no local git backing** (DEV-12617). The server stores routine definitions in Postgres; `scratchmd routines pull|push|status` sync `.scratch/routines/` over the REST API, and `.scratch/routines-state.json` records each file's server `version` (sent back as the push's per-file `baseVersion`) and content hash. The config checkout leaves `routines/` out, so the server's transitional git mirror of it never lands on disk.
+- **The CLI has no routine support** (DEV-12661). The server stores routine definitions in Postgres. The config checkout leaves `routines/` out, so the server's transitional git mirror of it never lands on disk.
 
 ### Pre-Phase-5 layout (historical)
 
@@ -211,8 +208,6 @@ Derived paths (same formula on both sides):
 | └─ Accepted patches      | `{connection_root}/accepted-patches.json`                   |
 | Connection scratch cache | `{loculdir}/.scratch/connections/scratch/{connector_name}/` |
 | Workbook materialization | `{loculdir}/.scratch/workspace/`                            |
-| Routine files (CLI only) | `{loculdir}/.scratch/routines/`                             |
-| Routines manifest        | `{loculdir}/.scratch/routines-state.json`                   |
 
 `WorkspaceLayout::worktree_path(connector_name)` returns the "user-facing worktree" row.
 

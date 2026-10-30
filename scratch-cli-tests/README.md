@@ -12,7 +12,6 @@ Black-box integration tests for the `scratchmd` Rust CLI binary (`scratch-git-2/
 | **Connections**    | Add, list, show, and remove Postgres connections (requires `DATABASE_URL`)               |
 | **Linked Folders** | Discover available tables, link/unlink folders, pull data from Postgres                  |
 | **Files**          | Download files to disk, upload local edits, and verify a full round-trip cycle           |
-| **Routines**       | Needs no connection or `DATABASE_URL` (routines are REST-backed). Create, update, and remove routine YAML in `.scratch/routines/`: `routines push` from one clone, `routines pull` into another verifies each change reached the server. Also covers `workspaces init` writing `.scratch/routines-state.json` and downloading existing routines; the manifest's `version`/`sha256` matching the server; a missing routines folder refused as mass deletes and restored by pull; a stale push (409) recovered via `pull` → `pull --discard-local` → re-push; a new-file collision (`baseVersion: null`); and `pull` keeping local edits the server didn't touch |
 | **Publish**        | End-to-end accept → upload → publish → download cycle: verifies `accepted-patches.json` generation, `/upload-patch` round-trip, `/publish-v2/{plan,run}-job` completion, Postgres-side application, and post-publish reconciliation |
 | **Driver Publish** | Driver-based end-to-end publish flows over related `authors`/`posts` tables: edit, create, delete, publish, and post-publish reconciliation |
 | **Workspace Sync** | Detect added/removed connections on download, test `--on-delete=remove` and `keep` modes |
@@ -98,7 +97,6 @@ npx jest --runInBand --forceExit workspaces
 npx jest --runInBand --forceExit connections
 npx jest --runInBand --forceExit linked-folders
 npx jest --runInBand --forceExit files
-npx jest --runInBand --forceExit routines
 npx jest --runInBand --forceExit driver-publish
 npx jest --runInBand --forceExit publish
 npx jest --runInBand --forceExit workspace-sync

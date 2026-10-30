@@ -30,8 +30,10 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
     std::fs::write(docs_dir.join("commands.md"), COMMANDS_DOC)?;
     std::fs::write(docs_dir.join("editing-data.md"), EDITING_DATA_DOC)?;
     std::fs::write(docs_dir.join("validations.md"), VALIDATIONS_DOC)?;
-    std::fs::write(docs_dir.join("routines.md"), ROUTINES_DOC)?;
     std::fs::write(docs_dir.join("sandbox-recovery.md"), SANDBOX_RECOVERY_DOC)?;
+    // Older versions wrote a routines doc for `scratchmd routines`, which no longer exists
+    // (DEV-12661). Remove it so agents in an existing workspace stop following its commands.
+    let _ = std::fs::remove_file(docs_dir.join("routines.md"));
 
     Ok(())
 }
@@ -79,7 +81,6 @@ Once your local agent has made changes, open the Scratch desktop app to review t
 - [Schema files (field definitions). Must read before editing records!](.scratch/docs/schema.md)
 - [Editing data (creating, updating, deleting records)](.scratch/docs/editing-data.md)
 - [Validation (checking records before publish)](.scratch/docs/validations.md)
-- [Routines (server-run, multi-step workflow pipelines)](.scratch/docs/routines.md)
 - [CLI command reference](.scratch/docs/commands.md)
 
 ## Link the user to folders and records (Scratch Desktop deep links)
@@ -232,52 +233,25 @@ mod tests {
     }
 
     #[test]
-    fn agents_index_links_to_routines_doc() {
-        let docs = claude_md(
-            "Test Workbook",
-            "https://app.scratch.md",
-            "/usr/local/bin/scratchmd",
-        );
-        assert!(docs.contains("(.scratch/docs/routines.md)"));
-    }
-
-    #[test]
-    fn commands_doc_lists_routines_commands() {
-        assert!(COMMANDS_DOC.contains("## routines"));
-        assert!(COMMANDS_DOC.contains("routines pull"));
-        assert!(COMMANDS_DOC.contains("routines push"));
-        assert!(COMMANDS_DOC.contains("routines status"));
-    }
-
-    #[test]
     fn commands_doc_lists_record_tree_command() {
         assert!(COMMANDS_DOC.contains("record-tree --folder"));
     }
 
     #[test]
-    fn routines_doc_covers_format_and_cli() {
-        // File format: per-action step fields and the pull-only full-pull option.
-        assert!(ROUTINES_DOC.contains("folders"));
-        assert!(ROUTINES_DOC.contains("publish-plan"));
-        assert!(ROUTINES_DOC.contains("fullPull"));
-        // The three CLI verbs and the delete recipe.
-        assert!(ROUTINES_DOC.contains("routines pull"));
-        assert!(ROUTINES_DOC.contains("routines push"));
-        assert!(ROUTINES_DOC.contains("routines status"));
-        // Scheduling is documented as separate, not a YAML field.
-        assert!(ROUTINES_DOC.contains("Deprecated and ignored"));
-        // REST-backed local copy + manifest (DEV-12617), with the server as source of truth.
-        assert!(ROUTINES_DOC.contains(".scratch/routines/"));
-        assert!(ROUTINES_DOC.contains(".scratch/routines-state.json"));
-        assert!(ROUTINES_DOC.contains("--discard-local"));
-        assert!(ROUTINES_DOC.contains("source of truth"));
-        assert!(!ROUTINES_DOC.contains("git-authoritative"));
-    }
+    fn write_docs_removes_the_retired_routines_doc_and_no_longer_mentions_routines() {
+        let workspace = tempfile::TempDir::new().unwrap();
+        let docs_dir = workspace.path().join(".scratch/docs");
+        std::fs::create_dir_all(&docs_dir).unwrap();
+        std::fs::write(docs_dir.join("routines.md"), "# Routines\n").unwrap();
 
-    #[test]
-    fn structure_doc_lists_routine_files_and_manifest() {
-        assert!(STRUCTURE_DOC.contains("routines/"));
-        assert!(STRUCTURE_DOC.contains("routines-state.json"));
+        write_docs(workspace.path(), "Test Workbook").unwrap();
+
+        assert!(!docs_dir.join("routines.md").exists());
+        assert!(docs_dir.join("commands.md").exists());
+        let agents_md = std::fs::read_to_string(workspace.path().join("AGENTS.md")).unwrap();
+        for generated_doc in [agents_md.as_str(), STRUCTURE_DOC, COMMANDS_DOC] {
+            assert!(!generated_doc.to_lowercase().contains("routine"));
+        }
     }
 }
 
@@ -308,8 +282,6 @@ My-Project/
     .scratchmd                <- workspace marker
     connections/              <- shared connection metadata (see below)
     docs/                     <- generated docs + helper files
-    routines/                 <- routine YAML files (see routines.md)
-    routines-state.json       <- routines sync state, managed by the CLI
     workspace/                <- workbook config repo materialized locally
   AGENTS.md              <- also symlinked as CLAUDE.md
 ```
@@ -453,7 +425,7 @@ Run `scratchmd <command> --help` for full flag details.
 | `workspaces show <id>` | Show workspace details |
 | `workspaces create --name <name>` | Create a new workspace |
 | `workspaces delete <id>` | Delete a workspace |
-| `workspaces init <id>` | Clone a workspace locally (creates directory + docs, pulls routines) |
+| `workspaces init <id>` | Clone a workspace locally (creates directory + docs) |
 
 ## files
 
@@ -519,16 +491,6 @@ Run `scratchmd <command> --help` for full flag details.
 | `validation get-files-with-problems --folder <connection>/<folder> [--limit <n>]` | Filenames in a folder with ≥1 error-level violation |
 | `validation get-stats` | Workspace-wide error/warning counts grouped by connection + folder |
 | `validation dump-config [--connection <name>]` | Print the loaded `validation.json` config (no DB required) |
-
-## routines
-
-Routine files (`.scratch/routines/*.yaml`) define server-run, multi-step workflows. See [Routines](routines.md) for the file format. Delete a routine by removing its `.yaml` locally, then `routines push`.
-
-| Command | Description |
-|---|---|
-| `routines pull [--discard-local]` | Bring server routine changes into `.scratch/routines/` file by file; keeps your edits to routines the server didn't change and stops on a conflicting edit (`--discard-local` takes the server's copy instead) |
-| `routines push` | Push local routine file create / edit / delete to the server (rejected as stale if a pushed routine changed on the server since your last pull — pull, then retry) |
-| `routines status` | Show local routine edits not yet pushed and server changes not yet pulled (read-only) |
 
 ## docs
 
@@ -1152,165 +1114,4 @@ The `-l` flag is required — without it, AppleScript's default PATH is `/usr/bi
 - Don't try `brew install`, `apt install`, `cargo install`, or downloading a Linux binary from GitHub releases — none of those work inside the sandbox today.
 - Don't fabricate `scratchmd` output if you can't run it. Tell the user the sandbox can't reach the CLI and ask them to install the Control your Mac extension.
 - Don't call `osascript` with a bare `do shell script "scratchmd ..."` (no `-lc`) — same PATH problem; it will fail.
-"#;
-
-// ---------------------------------------------------------------------------
-// .scratch/docs/routines.md
-// ---------------------------------------------------------------------------
-
-const ROUTINES_DOC: &str = r#"# Routines
-
-Routines are file-defined, **sequential** workflow pipelines. A routine chains
-discrete steps — `pull`, `sync`, `publish-plan`, `publish` — into one ordered
-workflow that the **server** runs, either on a schedule or when triggered manually.
-
-A routine is a single YAML file, identified by its path (`routines/<name>.yaml`). The
-**Scratch server is the source of truth**: it stores each routine's YAML text exactly as
-written, and your workspace holds a copy you edit and push back. Steps run top to bottom;
-if a step fails, the routine **stops** and the remaining steps do not run. A routine
-has at most one active run at a time.
-
-The CLI's job is to **pull, edit, and push routine files** — it does not run them.
-Triggering a run, watching run history, and cancelling are done from the Scratch web
-app, not `scratchmd`.
-
-## Where routine files live
-
-```
-.scratch/routines/*.yaml        <- your copy of the workbook's routines — edit these
-.scratch/routines-state.json    <- sync state managed by the CLI — do not edit
-```
-
-`scratchmd workspaces init` downloads the routines. After that, `scratchmd routines pull`
-brings in server changes and `scratchmd routines push` sends your edits (see **Pulling,
-pushing, and deleting** below). Paths in `--json` output and messages are server-relative:
-`routines/daily.yaml` is `.scratch/routines/daily.yaml` on disk.
-
-`routines-state.json` records, per file, the server version you last pulled or pushed and a
-hash of its content; the CLI uses it to tell your edits apart from server changes. If it is
-missing (for example in a workspace created by an older `scratchmd`), run
-`scratchmd routines pull`. Older versions of `scratchmd` kept routines in
-`.scratch/workspace/routines/`; that folder is no longer read or updated.
-
-## Scheduling is separate from the file
-
-A routine's **schedule is not part of the YAML.** When and how often a routine runs
-is configured from the Scratch app's **Schedules** UI (or the schedule API) and
-stored separately from the routine file. A `schedule:` key inside a routine YAML is
-**deprecated and ignored** — leaving one in place only produces a non-blocking
-deprecation warning. Do not add a `schedule:` field; set the schedule in the app.
-
-## Routine file format
-
-```yaml
-# routines/daily-content-sync.yaml
-name: Daily Content Sync
-comment: Pull blog content, run the sync, then publish.
-steps:
-  - action: pull
-    folders:
-      - /blog/posts
-      - /blog/authors
-  - action: sync
-    sync: syn_0123456789
-  - action: publish-plan
-    folder: /blog/posts
-  - action: publish
-    folder: /blog/posts
-```
-
-### Top-level fields
-
-| Field      | Required | Description |
-|------------|----------|-------------|
-| `name`     | yes      | Human-readable routine name (non-empty). |
-| `steps`    | yes      | Ordered list of steps; at least one. |
-| `comment`  | no       | Free-text note. |
-| `schedule` | —        | **Deprecated and ignored.** Schedule a routine from the Scratch app instead (see above). |
-
-### Step fields
-
-Each entry under `steps` is one step. `action` is required; which other fields are
-valid depends on the action.
-
-| Field        | Applies to | Description |
-|--------------|------------|-------------|
-| `action`     | all        | One of `pull`, `sync`, `publish-plan`, `publish`. (`discard-pending-changes` also exists — an advanced pre-flight cleanup that discards leftover working-set edits before the run.) |
-| `name`       | all (opt)  | Optional label for the step; must be unique within the routine. |
-| `folders`    | `pull`     | List of one or more target folders — POSIX paths (e.g. `/blog/posts`) and/or DataFolderIds (`dfd_...`). All must belong to the **same connection**. Pull steps use `folders`, not `folder`. |
-| `folder`     | `publish`, `publish-plan` | A single target folder — a POSIX path or a DataFolderId (`dfd_...`). |
-| `connection` | opt        | Target connection — its name or a ConnectorAccountId (`coa_...`). |
-| `sync`       | `sync`     | **Required on sync steps.** The SyncId (`syn_...`) to run. A sync step takes only `sync` — not `folder` / `folders` / `connection`. |
-| `comment`    | all (opt)  | Free-text note on the step. |
-| `timeout`    | all (opt)  | Per-step timeout in **seconds** (positive integer). Capped per action — see below. |
-| `options`    | opt        | Action-specific settings (see **Step options** below). |
-
-#### Step options
-
-`options` is a nested map of action-specific settings.
-
-| Option     | Applies to | Description |
-|------------|------------|-------------|
-| `fullPull` | `pull`     | `true` forces a full re-pull. Omitted / `false` = the default incremental pull. |
-
-```yaml
-steps:
-  - action: pull
-    folders: [/blog/posts]
-    options:
-      fullPull: true # force a full re-pull instead of incremental
-```
-
-#### Timeout caps
-
-An omitted `timeout` defaults to the per-action maximum; a specified one is capped at it.
-
-| Action                    | Max timeout |
-|---------------------------|-------------|
-| `pull`                    | 3600 s |
-| `publish`                 | 3600 s |
-| `sync`                    | 1800 s |
-| `publish-plan`            | 1800 s |
-| `discard-pending-changes` | 600 s |
-
-### Available actions
-
-| Action         | Description |
-|----------------|-------------|
-| `pull`         | Pull data from the external service into the workspace. Targets `folders`. |
-| `sync`         | Run a sync (copy / transform between folders). Targets `sync`. |
-| `publish-plan` | Build a publish plan (diff for review) — does **not** publish. Targets `folder`. |
-| `publish`      | Build the plan **and** publish approved changes to the service. Targets `folder`. |
-
-## Validation
-
-The **server is authoritative** for validation — it alone can resolve a workbook's
-folders, connections, and syncs, so a `routines push` may be rejected with a
-validation error (e.g. an unknown folder, a `folder` on a `pull` step, or `fullPull`
-on a non-pull step).
-
-`scratchmd routines push` runs a **light local check** first, for fast feedback: the
-file must be valid YAML, have a non-empty `name`, have at least one `step`, and use a
-`.yaml` / `.yml` extension. Everything else is enforced server-side.
-
-## Pulling, pushing, and deleting
-
-| Command | What it does |
-|---------|--------------|
-| `scratchmd routines pull [--discard-local]` | Bring server changes into `.scratch/routines/`, file by file. Routines you haven't edited are added, updated, or removed to match the server; your edits to routines the server didn't change are kept. If the same routine changed both locally and on the server (to different content), the pull stops without changing anything — re-run with `--discard-local` to replace your local edits with the server's copy (new local files you never pushed are always left alone). |
-| `scratchmd routines push` | Send your routine creates, edits, and deletes. Each file carries the version you last pulled; if someone changed that routine on the server since, the whole push is rejected (nothing is saved) and the stale files are listed — run `scratchmd routines pull`, then push again. |
-| `scratchmd routines status` | Read-only. List your routine edits not yet pushed and server changes not yet pulled. |
-
-All three accept `--workspace <dir>` (auto-detected from the current directory by
-default) and the global `--json` flag for machine-readable output.
-
-- **Create** a routine: add `.scratch/routines/<name>.yaml`, then `scratchmd routines push`.
-- **Edit** a routine: change the `.yaml` file, then `scratchmd routines push`.
-- **Delete** a routine: remove its `.yaml` file, then `scratchmd routines push` — the
-  server deletes it.
-- **Push rejected as stale**: run `scratchmd routines pull`. If the pull stops on a
-  conflict, copy your version somewhere safe, run `scratchmd routines pull --discard-local`,
-  re-apply your edit, and push again.
-- Push routine edits before `scratchmd workspaces init --force`, which re-downloads the
-  workspace (a workspace with unpushed routine edits is moved aside rather than deleted).
 "#;

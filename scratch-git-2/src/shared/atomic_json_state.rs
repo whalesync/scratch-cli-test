@@ -23,8 +23,8 @@
 //!    filesystems).
 //!
 //! 3. [`write_bytes_to_file_atomically`] — the same temp → fsync → rename →
-//!    dir-fsync discipline for an arbitrary file's raw bytes (record files,
-//!    routine YAML files), for callers that don't own a typed state envelope.
+//!    dir-fsync discipline for an arbitrary file's raw bytes (e.g. record
+//!    files), for callers that don't own a typed state envelope.
 //!
 //! Each state-file module keeps its own typed envelope + format-version handling
 //! and calls into here for the byte-level read and the post-rename dir fsync.

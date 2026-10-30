@@ -33,7 +33,7 @@ Always run commands from inside `scratch-git-2/` (or the repo root using Turbore
 
 ## Testing
 
-`cargo test` covers the Rust unit/integration tests inside this crate. **It does not cover the black-box CLI integration suite** in [`/scratch-cli-tests`](../scratch-cli-tests/), which exercises the compiled `scratchmd` binary end-to-end against a running server (workspaces, connections, linked folders, files, routines, publish, driver-publish, workspace-sync).
+`cargo test` covers the Rust unit/integration tests inside this crate. **It does not cover the black-box CLI integration suite** in [`/scratch-cli-tests`](../scratch-cli-tests/), which exercises the compiled `scratchmd` binary end-to-end against a running server (workspaces, connections, linked folders, files, publish, driver-publish, workspace-sync).
 
 **When you change `scratchmd` CLI behavior, keep `scratch-cli-tests` up to date.** Any change to a command's flags, arguments, `--json` output shape, exit codes, or the publish/pull/sync round-trip can break — or should be covered by — that suite. Before finishing CLI work:
 

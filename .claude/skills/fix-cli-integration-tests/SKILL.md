@@ -174,8 +174,8 @@ relevant areas. Focus the correlation on paths that drive these tests:
 
 - `scratch-git-2/` — the Rust `scratchmd` CLI and git service (the binary under
   test). Most CLI-behavior regressions live here.
-- `server/` — especially publish, sync, pull, validators, files, routines, and
-  workspace endpoints the CLI calls.
+- `server/` — especially publish, sync, pull, validators, files, and workspace
+  endpoints the CLI calls.
 - `scratch-cli-tests/` — changes to the tests themselves (a test edit that
   doesn't match current behavior is a common cause).
 - `gitlab-ci/` — CI/env changes that could break setup.
