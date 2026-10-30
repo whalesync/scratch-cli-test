@@ -1,40 +1,20 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { RoutineDefinition as PrismaRoutineDefinition } from '@prisma/client';
-import {
-  createRoutineDefinitionId,
-  PushRoutineStaleFileDto,
-  RoutineFileVersion,
-  WorkbookId,
-} from '@spinner/shared-types';
+import { createRoutineDefinitionId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { assertValidRoutineFilePath, ROUTINES_DIRECTORY } from './routine-file-path';
 
-/** Where a routine definition's current content came from (`RoutineDefinition.source`). */
+/**
+ * Where a routine definition's current content came from (`RoutineDefinition.source`). Nothing
+ * writes `'cli'` since the CLI push was removed (DEV-12661), but existing rows may still carry it.
+ */
 export type RoutineDefinitionSource = 'web' | 'cli' | 'generated' | 'git-import';
 
 /** What {@link RoutineDefinitionStoreService.upsertDefinition} did with the row. */
 export type RoutineDefinitionWriteOutcome = 'created' | 'updated' | 'unchanged';
-
-/** One routine file to create or overwrite in a batch push, with its optional per-file staleness guard. */
-export interface RoutineDefinitionPushUpsert {
-  filePath: string;
-  content: string;
-  /** The version the client last saw; `null` = "expect new"; `undefined` = no guard for this file. */
-  baseVersion: number | null | undefined;
-}
-
-/** One routine file to delete in a batch push, with its optional per-file staleness guard. */
-export interface RoutineDefinitionPushDelete {
-  filePath: string;
-  baseVersion: number | null | undefined;
-}
-
-export type RoutineDefinitionPushResult =
-  | { status: 'applied'; files: RoutineFileVersion[]; upsertedFilePaths: string[]; deletedFilePaths: string[] }
-  | { status: 'blocked_stale'; staleFiles: PushRoutineStaleFileDto[] };
 
 /** Outcome of one workbook's one-time import of `routines/*.yaml` from its config git repo. */
 export interface RoutineGitImportOutcome {
@@ -57,8 +37,8 @@ export interface RoutineGitImportOutcome {
 /**
  * The single owner of routine *definitions*: the `RoutineDefinition` table, plus the one-time
  * import of `routines/*.yaml` from the workbook config git repo for workbooks that predate the
- * table (DEV-11399). Every reader of a routine's YAML — the REST list/get/edit endpoints, the CLI
- * push, the executor's `triggerRun`, the scheduler — goes through here, so "Postgres is the source
+ * table (DEV-11399). Every reader of a routine's YAML — the REST list/get/edit endpoints, the
+ * executor's `triggerRun`, the scheduler — goes through here, so "Postgres is the source
  * of truth, git is a one-shot fallback" is enforced in exactly one place.
  *
  * The fallback is deliberately NOT a perpetual "read git when the row is missing": that would
@@ -136,111 +116,6 @@ export class RoutineDefinitionStoreService {
     await this.ensureImportedFromGit(workbookId);
     const deleted = await this.db.client.routineDefinition.deleteMany({ where: { workbookId, filePath } });
     return deleted.count === 1;
-  }
-
-  /**
-   * Applies a batch of upserts + deletes atomically, under a per-workbook advisory lock so two
-   * concurrent pushes serialize. Every file's `baseVersion` (when given) is compared against the
-   * current row FIRST; if any is stale the transaction rolls back having written nothing and the
-   * stale files are reported. Deleting an absent path is a no-op. An upsert whose content is
-   * byte-identical to the row is skipped (no version bump), so re-pushing converges.
-   *
-   * The caller must have validated every upsert (parse + references) and run
-   * {@link ensureImportedFromGit} before calling — the import does its own writes and must not
-   * nest inside this transaction.
-   */
-  async applyPush(
-    workbookId: WorkbookId,
-    push: {
-      upserts: RoutineDefinitionPushUpsert[];
-      deletes: RoutineDefinitionPushDelete[];
-      source: RoutineDefinitionSource;
-      updatedByUserId: string | null;
-    },
-  ): Promise<RoutineDefinitionPushResult> {
-    await this.ensureImportedFromGit(workbookId);
-
-    return this.db.client.$transaction(async (tx) => {
-      const lockKey = `routines:${workbookId}`;
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey})::bigint)`;
-
-      const currentRows = await tx.routineDefinition.findMany({ where: { workbookId } });
-      const currentRowByFilePath = new Map(currentRows.map((row) => [row.filePath, row]));
-
-      const staleFiles: PushRoutineStaleFileDto[] = [];
-      for (const upsert of push.upserts) {
-        const current = currentRowByFilePath.get(upsert.filePath);
-        if (isBaseVersionStale(upsert.baseVersion, current?.version ?? null)) {
-          staleFiles.push({
-            path: upsert.filePath,
-            baseVersion: upsert.baseVersion ?? null,
-            currentVersion: current?.version ?? null,
-          });
-        }
-      }
-      for (const deletion of push.deletes) {
-        const current = currentRowByFilePath.get(deletion.filePath);
-        // Deleting an already-absent path is a no-op regardless of what the client thought it had.
-        if (current !== undefined && isBaseVersionStale(deletion.baseVersion, current.version)) {
-          staleFiles.push({
-            path: deletion.filePath,
-            baseVersion: deletion.baseVersion ?? null,
-            currentVersion: current.version,
-          });
-        }
-      }
-      if (staleFiles.length > 0) {
-        return { status: 'blocked_stale', staleFiles };
-      }
-
-      const upsertedFilePaths: string[] = [];
-      for (const upsert of push.upserts) {
-        const current = currentRowByFilePath.get(upsert.filePath);
-        if (current === undefined) {
-          await tx.routineDefinition.create({
-            data: {
-              id: createRoutineDefinitionId(),
-              workbookId,
-              filePath: upsert.filePath,
-              content: upsert.content,
-              source: push.source,
-              updatedByUserId: push.updatedByUserId,
-            },
-          });
-          upsertedFilePaths.push(upsert.filePath);
-        } else if (current.content !== upsert.content) {
-          await tx.routineDefinition.update({
-            where: { id: current.id },
-            data: {
-              content: upsert.content,
-              version: { increment: 1 },
-              source: push.source,
-              updatedByUserId: push.updatedByUserId,
-            },
-          });
-          upsertedFilePaths.push(upsert.filePath);
-        }
-      }
-
-      const deletedFilePaths = push.deletes
-        .map((deletion) => deletion.filePath)
-        .filter((filePath) => currentRowByFilePath.has(filePath));
-      if (deletedFilePaths.length > 0) {
-        await tx.routineDefinition.deleteMany({ where: { workbookId, filePath: { in: deletedFilePaths } } });
-      }
-
-      const rowsAfterPush = await tx.routineDefinition.findMany({
-        where: { workbookId },
-        orderBy: { filePath: 'asc' },
-        select: { filePath: true, version: true },
-      });
-      return {
-        status: 'applied',
-        files: rowsAfterPush.map((row) => ({ path: row.filePath, version: row.version })),
-        upsertedFilePaths,
-        deletedFilePaths,
-      };
-    });
   }
 
   /**
@@ -367,16 +242,4 @@ export class RoutineDefinitionStoreService {
     }
     return getWorkbookRepoPath(workbook.organizationId, workbookId);
   }
-}
-
-/**
- * A client's `baseVersion` is stale when it disagrees with the row: it claimed a version the row
- * no longer has, claimed "new" (`null`) but a row exists, or claimed a version but the row is gone.
- * `undefined` means the client sent no guard for this file (pre-DEV-11399 CLI) — never stale.
- */
-export function isBaseVersionStale(baseVersion: number | null | undefined, currentVersion: number | null): boolean {
-  if (baseVersion === undefined) {
-    return false;
-  }
-  return baseVersion !== currentVersion;
 }

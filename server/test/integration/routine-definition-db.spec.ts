@@ -1,9 +1,8 @@
 /**
  * Real-Postgres integration tests for RoutineDefinitionStoreService (DEV-11399) — the things
  * mocks can't prove: that `(workbookId, filePath)` is unique, that Workbook→RoutineDefinition
- * `onDelete: Cascade` removes rows, that the per-file `baseVersion` guard inside the advisory-locked
- * transaction actually rejects a stale push (and writes nothing), and that the one-shot git import
- * is idempotent when two reads race.
+ * `onDelete: Cascade` removes rows, and that the one-shot git import is idempotent when two reads
+ * race.
  *
  * scratch-git is mocked (the import source is the only git surface here); everything else is real
  * Prisma. Requires the `routine_definitions_in_db` migration to have been applied.
@@ -101,99 +100,6 @@ describe('RoutineDefinitionStoreService (real DB)', () => {
     await prisma.workbook.delete({ where: { id: workbookId } });
 
     expect(await prisma.routineDefinition.count({ where: { workbookId } })).toBe(0);
-  });
-
-  describe('applyPush', () => {
-    it('refuses a stale baseVersion and writes nothing', async () => {
-      await store.upsertDefinition(workbookId, 'routines/a.yaml', 'name: A\n', {
-        source: 'web',
-        updatedByUserId: null,
-      });
-      await store.upsertDefinition(workbookId, 'routines/a.yaml', 'name: A2\n', {
-        source: 'web',
-        updatedByUserId: null,
-      }); // v2
-
-      const result = await store.applyPush(workbookId, {
-        upserts: [{ filePath: 'routines/a.yaml', content: 'name: Stale edit\n', baseVersion: 1 }],
-        deletes: [],
-        source: 'cli',
-        updatedByUserId: 'usr_1',
-      });
-
-      expect(result).toEqual({
-        status: 'blocked_stale',
-        staleFiles: [{ path: 'routines/a.yaml', baseVersion: 1, currentVersion: 2 }],
-      });
-      const row = await prisma.routineDefinition.findUniqueOrThrow({
-        where: { workbookId_filePath: { workbookId, filePath: 'routines/a.yaml' } },
-      });
-      expect(row).toMatchObject({ content: 'name: A2\n', version: 2 });
-    });
-
-    it('applies creates, edits and deletes atomically and returns the full post-push version set', async () => {
-      await store.upsertDefinition(workbookId, 'routines/edit.yaml', 'name: Old\n', {
-        source: 'web',
-        updatedByUserId: null,
-      });
-      await store.upsertDefinition(workbookId, 'routines/gone.yaml', 'name: Gone\n', {
-        source: 'web',
-        updatedByUserId: null,
-      });
-
-      const result = await store.applyPush(workbookId, {
-        upserts: [
-          { filePath: 'routines/new.yaml', content: 'name: New\n', baseVersion: null },
-          { filePath: 'routines/edit.yaml', content: 'name: Edited\n', baseVersion: 1 },
-        ],
-        deletes: [
-          { filePath: 'routines/gone.yaml', baseVersion: 1 },
-          { filePath: 'routines/never.yaml', baseVersion: 1 },
-        ],
-        source: 'cli',
-        updatedByUserId: 'usr_1',
-      });
-
-      expect(result).toEqual({
-        status: 'applied',
-        files: [
-          { path: 'routines/edit.yaml', version: 2 },
-          { path: 'routines/new.yaml', version: 1 },
-        ],
-        upsertedFilePaths: ['routines/new.yaml', 'routines/edit.yaml'],
-        deletedFilePaths: ['routines/gone.yaml'],
-      });
-      expect(await prisma.routineDefinition.count({ where: { workbookId } })).toBe(2);
-    });
-
-    it("serializes two concurrent pushes: the second sees the first one's version and is refused", async () => {
-      await store.upsertDefinition(workbookId, 'routines/a.yaml', 'name: A\n', {
-        source: 'web',
-        updatedByUserId: null,
-      });
-
-      const [first, second] = await Promise.all([
-        store.applyPush(workbookId, {
-          upserts: [{ filePath: 'routines/a.yaml', content: 'name: First\n', baseVersion: 1 }],
-          deletes: [],
-          source: 'cli',
-          updatedByUserId: 'usr_1',
-        }),
-        store.applyPush(workbookId, {
-          upserts: [{ filePath: 'routines/a.yaml', content: 'name: Second\n', baseVersion: 1 }],
-          deletes: [],
-          source: 'cli',
-          updatedByUserId: 'usr_2',
-        }),
-      ]);
-
-      const statuses = [first.status, second.status].sort();
-      expect(statuses).toEqual(['applied', 'blocked_stale']);
-      const row = await prisma.routineDefinition.findUniqueOrThrow({
-        where: { workbookId_filePath: { workbookId, filePath: 'routines/a.yaml' } },
-      });
-      expect(row.version).toBe(2);
-    });
   });
 
   describe('ensureImportedFromGit', () => {

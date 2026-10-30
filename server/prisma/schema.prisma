@@ -1029,7 +1029,7 @@ model Schedule {
 /// A routine definition — the verbatim YAML text the user edits — one row per routine file.
 /// Postgres is the source of truth (DEV-11399): the server parses `content` on every read and
 /// never stores a parsed copy, so comments and formatting round-trip unchanged through the
-/// editor and the CLI. `routines/*.yaml` in the workbook config git repo is only (a) the one-time
+/// editor. `routines/*.yaml` in the workbook config git repo is only (a) the one-time
 /// import source for workbooks that predate this table (see Workbook.routinesPendingGitImport)
 /// and (b) a one-way mirror written after each change while ROUTINES_GIT_MIRROR_ENABLED, so
 /// older `scratchmd routines pull` binaries keep working during the transition.
@@ -1047,8 +1047,7 @@ model RoutineDefinition {
   filePath        String
   /// The verbatim YAML text of the routine file.
   content         String
-  /// Optimistic-concurrency token, bumped on every content change. The CLI push echoes the
-  /// version it edited per file; a mismatch is a 409 blocked_stale (SyncDraft.version precedent).
+  /// Bumped on every content change. Carried through dev-tools workbook export/import.
   version         Int     @default(1)
   /// Where the current content came from: "web" | "cli" | "generated" | "git-import".
   source          String

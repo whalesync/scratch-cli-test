@@ -12,7 +12,6 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { PublishPlanCrudService } from 'src/publish-plan/publish-plan-crud.service';
 import { PublishPlanDiffService } from 'src/publish-plan/publish-plan-diff.service';
-import { RoutineService } from 'src/routine/routine.service';
 import type { RepoId } from 'src/scratch-git/scratch-git.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookRepoService, getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
@@ -91,7 +90,6 @@ describe('CliWorkbookController', () => {
   let publishPlanCrudService: jest.Mocked<PublishPlanCrudService>;
   let publishPlanDiffService: jest.Mocked<PublishPlanDiffService>;
   let auditLogService: jest.Mocked<AuditLogService>;
-  let routineService: jest.Mocked<RoutineService>;
 
   beforeEach(() => {
     workbookService = {
@@ -169,10 +167,6 @@ describe('CliWorkbookController', () => {
       logEvent: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<AuditLogService>;
 
-    routineService = {
-      pushRoutineFiles: jest.fn(),
-    } as unknown as jest.Mocked<RoutineService>;
-
     controller = new CliWorkbookController(
       workbookService,
       configService,
@@ -185,7 +179,6 @@ describe('CliWorkbookController', () => {
       publishPlanCrudService,
       publishPlanDiffService,
       auditLogService,
-      routineService,
     );
   });
 

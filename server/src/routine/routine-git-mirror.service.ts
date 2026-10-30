@@ -14,8 +14,9 @@ import { RoutineDefinitionStoreService } from './routine-definition-store.servic
  * Full-state rather than per-operation, so a dropped background call self-heals on the next write.
  *
  * Nothing ever reads routine definitions back from git except the one-time import in
- * {@link RoutineDefinitionStoreService.ensureImportedFromGit}. This is the single hook to remove
- * once the REST-backed CLI has shipped and the `routine-git-cleanup` migration has run.
+ * {@link RoutineDefinitionStoreService.ensureImportedFromGit}. The current CLI has no routine
+ * support (DEV-12661), so this is the single hook to remove once the `routine-git-cleanup`
+ * migration has run (DEV-12619/DEV-12620).
  */
 @Injectable()
 export class RoutineGitMirrorService {
@@ -43,8 +44,8 @@ export class RoutineGitMirrorService {
 
   /**
    * Converges `routines/` on the config repo `main` to the DB rows. Returns the resulting `main`
-   * head (what pre-DEV-11399 CLIs re-materialize to after a push), or `null` when the mirror is
-   * disabled. Throws on git failure — the background wrapper is what swallows.
+   * head, or `null` when the mirror is disabled. Throws on git failure — the background wrapper is
+   * what swallows.
    */
   async mirrorWorkbookRoutines(workbookId: WorkbookId, actor: Actor): Promise<string | null> {
     if (!this.isEnabled()) {

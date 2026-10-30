@@ -161,8 +161,9 @@ export class ScratchConfigService {
   /**
    * Whether routine definitions (Postgres, DEV-11399) are mirrored one-way into `routines/*.yaml`
    * of the workbook config git repo after every change. Default ON: pre-DEV-11399 `scratchmd
-   * routines pull|status|push` binaries read that repo, so the mirror keeps them working until the
-   * REST-backed CLI ships. Flip off (and run the `routine-git-cleanup` code migration) afterwards.
+   * routines pull|status|push` binaries read that repo, so the mirror keeps them working. The
+   * current CLI has no routine support (DEV-12661); flip off (and run the `routine-git-cleanup`
+   * code migration) under DEV-12619.
    */
   isRoutinesGitMirrorEnabled(): boolean {
     return this.getOptionalFlagVariable('ROUTINES_GIT_MIRROR_ENABLED', true);

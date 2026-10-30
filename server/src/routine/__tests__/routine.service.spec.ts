@@ -16,7 +16,7 @@ const WORKBOOK_ID = 'wkb_test1234' as WorkbookId;
 const ACTOR: Actor = { userId: 'usr_test1234', organizationId: 'org_test1234' };
 
 /** A stored RoutineDefinition row as the store returns it. */
-function definitionRow(filePath: string, content: string, version = 1) {
+function definitionRow(filePath: string, content: string) {
   return {
     id: `rdf_${filePath.replace(/[^a-z0-9]/gi, '').slice(0, 10)}`,
     createdAt: new Date('2026-06-19T00:00:00.000Z'),
@@ -24,7 +24,7 @@ function definitionRow(filePath: string, content: string, version = 1) {
     workbookId: WORKBOOK_ID,
     filePath,
     content,
-    version,
+    version: 1,
     source: 'web',
     updatedByUserId: 'usr_test1234',
   };
@@ -117,9 +117,7 @@ describe('RoutineService', () => {
   let getDefinition: jest.Mock;
   let upsertDefinition: jest.Mock;
   let deleteDefinition: jest.Mock;
-  let applyPush: jest.Mock;
   let mirrorWorkbookRoutinesInBackground: jest.Mock;
-  let mirrorWorkbookRoutines: jest.Mock;
   let deleteRoutineScheduleByFilePath: jest.Mock;
   let deleteOrphanedRoutineSchedules: jest.Mock;
   let findRoutineSchedules: jest.Mock;
@@ -142,11 +140,7 @@ describe('RoutineService', () => {
         Promise.resolve({ definition: definitionRow(filePath, content), outcome: 'created' }),
       );
     deleteDefinition = jest.fn().mockResolvedValue(true);
-    applyPush = jest
-      .fn()
-      .mockResolvedValue({ status: 'applied', files: [], upsertedFilePaths: [], deletedFilePaths: [] });
     mirrorWorkbookRoutinesInBackground = jest.fn();
-    mirrorWorkbookRoutines = jest.fn().mockResolvedValue('headsha123');
     deleteRoutineScheduleByFilePath = jest.fn().mockResolvedValue(undefined);
     deleteOrphanedRoutineSchedules = jest.fn().mockResolvedValue(undefined);
     findRoutineSchedules = jest.fn().mockResolvedValue([]);
@@ -167,11 +161,9 @@ describe('RoutineService', () => {
       getDefinition,
       upsertDefinition,
       deleteDefinition,
-      applyPush,
     } as unknown as RoutineDefinitionStoreService;
     const routineGitMirror = {
       mirrorWorkbookRoutinesInBackground,
-      mirrorWorkbookRoutines,
     } as unknown as RoutineGitMirrorService;
     const scheduleService = {
       deleteRoutineScheduleByFilePath,
@@ -334,43 +326,6 @@ describe('RoutineService', () => {
     it('reads definitions from the store (which owns the one-time git import), never git directly', async () => {
       await service.listRoutines(WORKBOOK_ID);
       expect(listDefinitions).toHaveBeenCalledWith(WORKBOOK_ID);
-    });
-  });
-
-  describe('listRoutineFiles', () => {
-    it('returns every file with its version and content', async () => {
-      listDefinitions.mockResolvedValue([
-        definitionRow('routines/a.yaml', 'name: A\nsteps:\n  - action: pull\n', 3),
-        definitionRow('routines/b.yaml', 'name: B\nsteps:\n  - action: pull\n', 1),
-      ]);
-
-      const result = await service.listRoutineFiles(WORKBOOK_ID, {});
-
-      expect(result).toEqual({
-        files: [
-          {
-            path: 'routines/a.yaml',
-            version: 3,
-            updatedAt: '2026-06-19T00:00:00.000Z',
-            content: 'name: A\nsteps:\n  - action: pull\n',
-          },
-          {
-            path: 'routines/b.yaml',
-            version: 1,
-            updatedAt: '2026-06-19T00:00:00.000Z',
-            content: 'name: B\nsteps:\n  - action: pull\n',
-          },
-        ],
-      });
-    });
-
-    it('omits content when metadataOnly is set', async () => {
-      listDefinitions.mockResolvedValue([definitionRow('routines/a.yaml', 'name: A\nsteps:\n  - action: pull\n', 2)]);
-
-      const result = await service.listRoutineFiles(WORKBOOK_ID, { metadataOnly: true });
-
-      expect(result.files).toEqual([{ path: 'routines/a.yaml', version: 2, updatedAt: '2026-06-19T00:00:00.000Z' }]);
-      expect(result.files[0]).not.toHaveProperty('content');
     });
   });
 
@@ -631,180 +586,6 @@ describe('RoutineService', () => {
       );
       expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
       expect(mirrorWorkbookRoutinesInBackground).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('pushRoutineFiles', () => {
-    const VALID = 'name: Daily\nsteps:\n  - action: pull\n';
-
-    it('applies upserts and deletes via the store, reloads, mirrors synchronously, and returns versions + head', async () => {
-      applyPush.mockResolvedValue({
-        status: 'applied',
-        files: [{ path: 'routines/new.yaml', version: 1 }],
-        upsertedFilePaths: ['routines/new.yaml'],
-        deletedFilePaths: ['routines/old.yaml'],
-      });
-      // reloadRoutines reads the written definitions back to reconcile + return them.
-      listDefinitions.mockResolvedValue([definitionRow('routines/new.yaml', VALID)]);
-
-      const result = await service.pushRoutineFiles(
-        WORKBOOK_ID,
-        {
-          upserts: [{ path: 'routines/new.yaml', content: VALID, baseVersion: null }],
-          deletes: [{ path: 'routines/old.yaml', baseVersion: 2 }],
-        },
-        ACTOR,
-      );
-
-      expect(applyPush).toHaveBeenCalledWith(WORKBOOK_ID, {
-        upserts: [{ filePath: 'routines/new.yaml', content: VALID, baseVersion: null }],
-        deletes: [{ filePath: 'routines/old.yaml', baseVersion: 2 }],
-        source: 'cli',
-        updatedByUserId: ACTOR.userId,
-      });
-      expect(deleteOrphanedRoutineSchedules).toHaveBeenCalledWith(WORKBOOK_ID, ['routines/new.yaml']);
-      expect(mirrorWorkbookRoutines).toHaveBeenCalledWith(WORKBOOK_ID, ACTOR);
-      expect(result.files).toEqual([{ path: 'routines/new.yaml', version: 1 }]);
-      expect(result.head).toBe('headsha123');
-      expect(result.routines).toHaveLength(1);
-      expect(logEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ eventType: 'update', message: 'Pushed routines: 1 upsert(s), 1 delete(s)' }),
-      );
-    });
-
-    it('accepts bare-string deletes from a pre-DEV-11399 CLI (no per-file guard)', async () => {
-      await service.pushRoutineFiles(WORKBOOK_ID, { upserts: [], deletes: ['routines/old.yaml'] }, ACTOR);
-
-      expect(applyPush).toHaveBeenCalledWith(
-        WORKBOOK_ID,
-        expect.objectContaining({ deletes: [{ filePath: 'routines/old.yaml', baseVersion: undefined }] }),
-      );
-    });
-
-    it('refuses with 409 blocked_stale naming the stale files, with no reload/mirror/audit', async () => {
-      applyPush.mockResolvedValue({
-        status: 'blocked_stale',
-        staleFiles: [{ path: 'routines/a.yaml', baseVersion: 1, currentVersion: 3 }],
-      });
-
-      const pushPromise = service.pushRoutineFiles(
-        WORKBOOK_ID,
-        { upserts: [{ path: 'routines/a.yaml', content: VALID, baseVersion: 1 }], deletes: [] },
-        ACTOR,
-      );
-      const thrown: unknown = await pushPromise.catch((error: unknown) => error);
-      expect(thrown).toBeInstanceOf(ConflictException);
-      const blockedStale = (thrown as ConflictException).getResponse() as {
-        status: string;
-        staleFiles: unknown[];
-        message: string;
-      };
-      expect(blockedStale).toMatchObject({
-        status: 'blocked_stale',
-        staleFiles: [{ path: 'routines/a.yaml', baseVersion: 1, currentVersion: 3 }],
-      });
-      expect(blockedStale.message).toContain('routines/a.yaml');
-
-      expect(deleteOrphanedRoutineSchedules).not.toHaveBeenCalled();
-      expect(mirrorWorkbookRoutines).not.toHaveBeenCalled();
-      expect(logEvent).not.toHaveBeenCalled();
-    });
-
-    it('ignores the deprecated baseHead git SHA (pre-DEV-11399 CLI) and still applies the push', async () => {
-      await service.pushRoutineFiles(
-        WORKBOOK_ID,
-        { upserts: [{ path: 'routines/a.yaml', content: VALID }], deletes: [], baseHead: 'staleLocalHead' },
-        ACTOR,
-      );
-
-      expect(applyPush).toHaveBeenCalledTimes(1);
-      expect(applyPush).toHaveBeenCalledWith(
-        WORKBOOK_ID,
-        expect.objectContaining({
-          upserts: [{ filePath: 'routines/a.yaml', content: VALID, baseVersion: undefined }],
-        }),
-      );
-    });
-
-    it('returns head "" when the mirror is disabled', async () => {
-      mirrorWorkbookRoutines.mockResolvedValue(null);
-
-      const result = await service.pushRoutineFiles(
-        WORKBOOK_ID,
-        { upserts: [{ path: 'routines/a.yaml', content: VALID }], deletes: [] },
-        ACTOR,
-      );
-
-      expect(result.head).toBe('');
-    });
-
-    it('returns head "" (and still succeeds) when the git mirror fails after the definitions were saved', async () => {
-      mirrorWorkbookRoutines.mockRejectedValue(new Error('git down'));
-
-      const result = await service.pushRoutineFiles(
-        WORKBOOK_ID,
-        { upserts: [{ path: 'routines/a.yaml', content: VALID }], deletes: [] },
-        ACTOR,
-      );
-
-      // The pre-DEV-11399 CLI deserializes `head` as a non-nullable string and treats "" as "skip".
-      expect(result.head).toBe('');
-      expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'update' }));
-    });
-
-    it('rejects a path outside routines/ before any store call', async () => {
-      await expect(
-        service.pushRoutineFiles(
-          WORKBOOK_ID,
-          { upserts: [{ path: 'secrets/leak.yaml', content: VALID }], deletes: [] },
-          ACTOR,
-        ),
-      ).rejects.toThrow(BadRequestException);
-
-      expect(applyPush).not.toHaveBeenCalled();
-    });
-
-    it('rejects a path listed in both upserts and deletes', async () => {
-      await expect(
-        service.pushRoutineFiles(
-          WORKBOOK_ID,
-          { upserts: [{ path: 'routines/a.yaml', content: VALID }], deletes: ['routines/a.yaml'] },
-          ACTOR,
-        ),
-      ).rejects.toThrow(BadRequestException);
-
-      expect(applyPush).not.toHaveBeenCalled();
-    });
-
-    it('rejects malformed YAML before any write', async () => {
-      await expect(
-        service.pushRoutineFiles(
-          WORKBOOK_ID,
-          { upserts: [{ path: 'routines/a.yaml', content: 'steps: [] # missing name' }], deletes: [] },
-          ACTOR,
-        ),
-      ).rejects.toThrow(BadRequestException);
-
-      expect(applyPush).not.toHaveBeenCalled();
-    });
-
-    it('rejects an unresolved reference before any write', async () => {
-      validateRoutine.mockResolvedValue(['steps.0.connection: connection "ghost" not found in this workbook']);
-
-      await expect(
-        service.pushRoutineFiles(
-          WORKBOOK_ID,
-          {
-            upserts: [
-              { path: 'routines/a.yaml', content: 'name: A\nsteps:\n  - action: pull\n    connection: ghost\n' },
-            ],
-            deletes: [],
-          },
-          ACTOR,
-        ),
-      ).rejects.toThrow(BadRequestException);
-
-      expect(applyPush).not.toHaveBeenCalled();
     });
   });
 

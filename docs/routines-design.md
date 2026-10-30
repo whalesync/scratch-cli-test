@@ -18,7 +18,7 @@ The term "routine" is approachable for non-technical users. It conveys something
 
 ## Routine File Format
 
-A routine file is identified by its path under `routines/` (e.g. `routines/daily-content-sync.yaml`); that path is what the API, the schedules, the run history and the CLI all key on. The text itself lives in Postgres (see [Storage and migration](#storage-and-migration)); while the transitional git mirror is on it is also written to `routines/` at the root of the workbook config repo — the same repo that already holds `syncs/` and `transformers/` — which is what `scratchmd` binaries older than DEV-12617 read. The current CLI never reads the config repo for routines: it pulls and pushes them over REST into `<workspace>/.scratch/routines/`. See [CLI Support](#cli-support).
+A routine file is identified by its path under `routines/` (e.g. `routines/daily-content-sync.yaml`); that path is what the API, the schedules, and the run history all key on. The text itself lives in Postgres (see [Storage and migration](#storage-and-migration)); while the transitional git mirror is on it is also written to `routines/` at the root of the workbook config repo — the same repo that already holds `syncs/` and `transformers/` — which is what `scratchmd` binaries older than DEV-12617 read. The current CLI has no routine support (DEV-12661), and its config checkout leaves `routines/` out.
 
 ```yaml
 # routines/daily-content-sync.yaml
@@ -363,8 +363,6 @@ POST   /workbooks/:workbookId/routines/trigger                  Trigger a manual
 GET    /workbooks/:workbookId/routine-runs                      List runs for a workbook
 GET    /workbooks/:workbookId/routine-runs/:runId               Get run details (with steps)
 POST   /workbooks/:workbookId/routine-runs/:runId/cancel        Cancel a running routine
-GET    /cli/v1/workbooks/:workbookId/routines/files             Every routine file + version (+ content unless ?metadataOnly=true)
-POST   /cli/v1/workbooks/:workbookId/routines/push              Batch create/edit/delete, guarded per file by baseVersion
 ```
 
 ### Notes
@@ -403,46 +401,15 @@ Accessible from the routine's sidebar entry or a detail panel:
 
 **Before DEV-11399** the YAML file in the config git repo *was* the definition: every list, edit and scheduled run did a git round-trip through scratch-git, and a routine only existed once its file was committed to `main`.
 
-**Since DEV-11399** the definition is a `RoutineDefinition` row: `(workbookId, filePath)` unique, `content` = the verbatim YAML text, `version` = an optimistic-concurrency counter bumped on every content change, `source` = who last wrote it (`web` / `cli` / `generated` / `git-import`). Nothing stores a parsed copy — the server parses `content` on every read, so comments and formatting round-trip unchanged through the editor and the CLI, malformed files are still storable (they surface as `parseError`), and a parser change never needs a backfill. `RoutineDefinitionStoreService` (`server/src/routine/routine-definition-store.service.ts`) is the only code that touches the table or reads definitions from git.
+**Since DEV-11399** the definition is a `RoutineDefinition` row: `(workbookId, filePath)` unique, `content` = the verbatim YAML text, `version` = a counter bumped on every content change, `source` = who last wrote it (`web` / `cli` / `generated` / `git-import`). Nothing stores a parsed copy — the server parses `content` on every read, so comments and formatting round-trip unchanged through the editor, malformed files are still storable (they surface as `parseError`), and a parser change never needs a backfill. `RoutineDefinitionStoreService` (`server/src/routine/routine-definition-store.service.ts`) is the only code that touches the table or reads definitions from git.
 
 **The git fallback is a one-shot import, not a perpetual fallback.** `Workbook.routinesPendingGitImport` is `true` for every workbook that existed when the table was added and `false` for new ones. The first routine read of a flagged workbook (list, get, trigger, scheduled run) copies `routines/*.yaml` into rows (`source: 'git-import'`; a row a user wrote meanwhile wins) and clears the flag. After that git is never consulted for definitions again — a perpetual "read git when the row is missing" would resurrect every deleted routine. The import throws rather than importing a partial set when scratch-git fails, because `reloadRoutines` orphan-cleans ROUTINE schedules against the list it gets and a partial list would delete live schedules. An **empty** listing clears the flag only after scratch-git confirms the repo exists (`/api/repo/manage/:id/exists`): scratch-git answers `[]` for a repo it does not have, and clearing the flag on that answer would silently lose every routine the real repo holds (locally this bites when two checkouts' scratch-git instances, each with its own `local/scratch-git-repos/`, take turns on port 3100). A workbook whose repo is missing keeps its flag and is reported separately by `routine-git-import`.
 
 **Draining the long tail.** The admin code migration `routine-git-import` (`POST /code-migrations/run`) runs the same import over still-flagged workbooks in batches and reports `remainingCount`; when it holds at 0 the fallback code can be deleted.
 
-**The transitional git mirror.** While `ROUTINES_GIT_MIRROR_ENABLED` (default on) every definition change is followed by a full-state one-way mirror of `routines/` into the config repo (`RoutineGitMirrorService`), so `scratchmd routines pull|status|push` binaries older than DEV-12617 keep working. Nothing reads it back — the REST-backed CLI (DEV-12617) doesn't either. Once the old binaries have aged out — the server's `Ignoring deprecated baseHead on routines push` warning stops appearing, since the new CLI never sends `baseHead` — flip the flag off and run the `routine-git-cleanup` code migration (refused while the mirror is on) to delete `routines/*.yaml` from git; history keeps the old copies.
+**The transitional git mirror.** While `ROUTINES_GIT_MIRROR_ENABLED` (default on) every definition change is followed by a full-state one-way mirror of `routines/` into the config repo (`RoutineGitMirrorService`), so `scratchmd routines pull|status|push` binaries older than DEV-12617 keep working. Nothing reads it back. The current CLI has no routine support (DEV-12661), and prod shows no CLI routine use, so the mirror no longer waits on old binaries aging out: flip the flag off and run the `routine-git-cleanup` code migration (refused while the mirror is on) to delete `routines/*.yaml` from git (DEV-12619); history keeps the old copies.
 
 **Workbook export/import.** The dev-tools workbook export (`DevToolsService.exportWorkbook`) carries every definition (`filePath`, `content`, `version`, `source`; DEV-12621), and import recreates them on the new workbook. The one edit import makes to the text is rewriting `coa_`/`dfd_`/`syn_` ids to the imported workbook's new ids, since steps can reference a connection, folder or sync by id; comments and formatting are otherwise untouched. `ROUTINE` schedules already travel and need no remap because they key on the file path. `RoutineRun` history does not travel, and imported definitions are not written to the transitional git mirror.
-
-**Concurrency.** The CLI push carries a per-file `baseVersion` (the `version` it last pulled, or `null` for "expect new"); the whole push is applied in one transaction under a per-workbook advisory lock and refused with `409 blocked_stale` naming the stale files if any version disagrees. The pre-DEV-11399 `baseHead` git SHA is accepted and ignored (logged) — honouring it against the lagging mirror would produce false conflicts. The REST-backed CLI takes each `baseVersion` from its local manifest (see [CLI Support](#cli-support)).
-
-## CLI Support
-
-`scratchmd routines pull|status|push` (DEV-12617) work against the REST API, not the workbook config repo. The CLI edits routine files; it never runs them.
-
-### Local layout
-
-```
-<workspace>/.scratch/
-  routines/*.yaml        # local copy of every routine file; users edit these
-  routines-state.json    # manifest, written only by the CLI
-```
-
-The manifest is `{ "formatVersion": 1, "workbookId": "wkb_…", "files": { "routines/<name>.yaml": { "version": n, "sha256": "<hex>" } } }`: per file, the server `version` last pulled or pushed and the SHA-256 of the exact bytes written or sent. Paths are server-relative everywhere (manifest keys, `--json`, API bodies) — `routines/<name>.yaml` lives at `.scratch/routines/<name>.yaml`. The manifest is the merge base for all three commands; a missing (or foreign-workbook) manifest is an empty base, so the first pull in a workspace made by an older CLI simply downloads everything.
-
-### Commands
-
-- **`workspaces init`** runs an initial pull, so `.scratch/routines/` and the manifest exist even with no connections and no routines; a failed initial pull only warns. The config-repo checkout (`.scratch/workspace/`) leaves `routines/` out, so the mirror's copy never lands on disk.
-- **`routines pull [--discard-local]`** (`GET /cli/v1/workbooks/:id/routines/files`, with content) merges per file by **content hash** against the manifest: server-only changes are applied, local edits the server didn't touch are kept, identical changes on both sides are just recorded. It refuses — exit 1, nothing written — only when a file changed on both sides to different content; `--discard-local` resets every server-tracked file to the server's copy instead (local-only new files are never touched). Files are written atomically and the manifest last, so a crash leaves files ahead of the manifest and a re-run converges. Hashes rather than versions drive the merge because a delete→recreate restarts `version` at 1.
-- **`routines push`** (`POST …/routines/push`) sends each local change with `baseVersion` = its manifest version (`null` for a new file — sent explicitly, since an omitted `baseVersion` disables the guard). The batch applies atomically or fails `409 blocked_stale` naming the stale files; the CLI exits 1 and asks for `routines pull`. On success only the pushed files' manifest entries are updated (the response lists every file, including others' changes this workspace hasn't pulled). If `.scratch/routines/` is missing while the manifest tracks files, push refuses rather than deleting every routine.
-- **`routines status`** compares disk vs manifest hashes (local changes) and the metadata-only listing (`?metadataOnly=true`) vs manifest versions (remote changes). Read-only.
-
-Unpushed edits an older CLI left in `.scratch/workspace/routines/` are detected (`git status` in that worktree, only when it is this workspace's linked config worktree) and surfaced: before the first REST-backed pull they block `pull` (unless `--discard-local`) and `push`; afterwards they only warn. This shim goes away with the mirror.
-
-`.scratch/workspace/` (syncs, transformers, validators) is materialized from the config repo at `workspaces init` only; `routines pull|push` no longer touch it.
-
-### Advanced routine support is out of scope for v1
-
-The initial implementation treats the CLI purely as a place to **view and edit** routine files. Driving routines from the CLI — listing routines, triggering a manual run, watching run status, cancelling a run — would mean new CLI commands calling the [REST API](#rest-api) (`POST …/routines/trigger`, `GET …/routine-runs`, etc.). That is **explicitly deferred**: routines are server-executed and managed through the web UI for v1. The CLI gains routine-run commands only if later demand justifies them.
 
 ## Relationship to Existing Schedule System
 

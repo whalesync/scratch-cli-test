@@ -105,7 +105,7 @@ describe('RoutineGitMirrorService', () => {
     expect(commitFilesToBranch).toHaveBeenCalledTimes(1);
   });
 
-  it('mirrorWorkbookRoutines propagates a git failure (the synchronous push path decides what to do)', async () => {
+  it('mirrorWorkbookRoutines propagates a git failure (the caller decides what to do)', async () => {
     listDefinitions.mockResolvedValue([definition('routines/a.yaml', 'name: A\n')]);
     commitFilesToBranch.mockRejectedValue(new Error('git down'));
 

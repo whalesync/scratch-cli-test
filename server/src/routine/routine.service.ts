@@ -4,11 +4,6 @@ import {
   CreateRoutineFileDto,
   isActiveRoutineRunStatus,
   Job,
-  ListRoutineFilesQueryDto,
-  ListRoutineFilesResponse,
-  PushRoutineFilesBlockedStaleDto,
-  PushRoutineFilesDto,
-  PushRoutineFilesResponse,
   Routine,
   RoutineFileContent,
   RoutineRun,
@@ -25,11 +20,7 @@ import { ScheduleService } from 'src/schedule/schedule.service';
 import { Actor } from 'src/users/types';
 import { RoutineRunEntity } from './entities/routine-run.entity';
 import { RoutineEntity } from './entities/routine.entity';
-import {
-  RoutineDefinitionPushDelete,
-  RoutineDefinitionSource,
-  RoutineDefinitionStoreService,
-} from './routine-definition-store.service';
+import { RoutineDefinitionSource, RoutineDefinitionStoreService } from './routine-definition-store.service';
 import { assertValidRoutineFilePath } from './routine-file-path';
 import { RoutineGitMirrorService } from './routine-git-mirror.service';
 import { RoutineParserService } from './routine-parser.service';
@@ -254,23 +245,6 @@ export class RoutineService {
   }
 
   /**
-   * Every routine file with its optimistic-concurrency `version` (and, unless `metadataOnly`, its
-   * YAML text) — what an API-backed `scratchmd routines pull|status` materializes locally instead
-   * of fetching the config git repo.
-   */
-  async listRoutineFiles(workbookId: WorkbookId, query: ListRoutineFilesQueryDto): Promise<ListRoutineFilesResponse> {
-    const definitions = await this.routineDefinitionStore.listDefinitions(workbookId);
-    return {
-      files: definitions.map((definition) => ({
-        path: definition.filePath,
-        version: definition.version,
-        updatedAt: definition.updatedAt.toISOString(),
-        ...(query.metadataOnly ? {} : { content: definition.content }),
-      })),
-    };
-  }
-
-  /**
    * Creates a new routine YAML file. Fails fast: rejects an invalid path (400), a path that
    * already exists (409), or content that doesn't parse/validate (400) — nothing is committed
    * unless the YAML is a valid routine. The schedule is managed separately via the Schedule API.
@@ -400,122 +374,6 @@ export class RoutineService {
       entityId: workbookId,
       organizationId: actor.organizationId,
     });
-  }
-
-  /**
-   * Batch-pushes routine files from the CLI: a set of upserts (created/edited files) and deletes
-   * (removed paths) applied to the routine definitions atomically, then reconciled via Reload
-   * Routines. This is the server side of `scratchmd routines push`.
-   *
-   * Fail-fast at the boundary: every path is bounds-checked and every upsert is parsed +
-   * reference-validated BEFORE anything is written, so an invalid push writes nothing. Optimistic
-   * concurrency is per file: an upsert/delete carrying `baseVersion` must still match the stored
-   * `RoutineDefinition.version` (or `null` for "expect new"), otherwise the whole push is refused
-   * with a 409 `blocked_stale` naming the stale files (the CLI prompts a `routines pull` + retry)
-   * — a stale push never clobbers newer routines. The pre-DEV-11399 `baseHead` git SHA is ignored
-   * (logged) because routine definitions no longer live in git.
-   *
-   * Unlike the single-file create/update endpoints this uses upsert semantics: a file is created or
-   * overwritten either way (no 409-on-exists), and deleting an absent file is a no-op.
-   */
-  async pushRoutineFiles(
-    workbookId: WorkbookId,
-    dto: PushRoutineFilesDto,
-    actor: Actor,
-  ): Promise<PushRoutineFilesResponse> {
-    // 1. Validate every path (upserts + deletes) up front; reject a path listed in both.
-    const deletes: RoutineDefinitionPushDelete[] = dto.deletes.map((deletion) =>
-      typeof deletion === 'string'
-        ? { filePath: deletion, baseVersion: undefined }
-        : { filePath: deletion.path, baseVersion: deletion.baseVersion },
-    );
-    for (const upsert of dto.upserts) {
-      assertValidRoutineFilePath(upsert.path);
-    }
-    for (const deletion of deletes) {
-      assertValidRoutineFilePath(deletion.filePath);
-    }
-    const deletePathSet = new Set(deletes.map((deletion) => deletion.filePath));
-    const pathsBothUpsertedAndDeleted = dto.upserts
-      .map((upsert) => upsert.path)
-      .filter((path) => deletePathSet.has(path));
-    if (pathsBothUpsertedAndDeleted.length > 0) {
-      throw new BadRequestException(
-        `routine file path(s) cannot be both upserted and deleted: ${pathsBothUpsertedAndDeleted.join(', ')}`,
-      );
-    }
-
-    if (dto.baseHead) {
-      // A pre-DEV-11399 CLI. Its git-SHA guard has no meaning against Postgres-held definitions
-      // (and would false-positive against the lagging mirror), so it is ignored — but counted, so
-      // we can see when the old binaries are gone and the mirror can be switched off.
-      WSLogger.warn({
-        source: 'RoutineService.pushRoutineFiles',
-        message: 'Ignoring deprecated baseHead on routines push (pre-DEV-11399 CLI)',
-        workbookId,
-        userId: actor.userId,
-      });
-    }
-
-    // 2. Parse + reference-validate every upsert before any write (the server is authoritative on
-    //    references — the CLI cannot resolve a workbook's folders/connections).
-    for (const upsert of dto.upserts) {
-      const parseResult = this.parser.parse(upsert.content);
-      if ('error' in parseResult) {
-        throw new BadRequestException(`${upsert.path}: ${parseResult.error}`);
-      }
-      await this.assertRoutineReferencesExist(workbookId, parseResult.routine);
-    }
-
-    // 3. Apply atomically under the per-workbook lock; the store checks every baseVersion first
-    //    and writes nothing when any is stale.
-    const pushResult = await this.routineDefinitionStore.applyPush(workbookId, {
-      upserts: dto.upserts.map((upsert) => ({
-        filePath: upsert.path,
-        content: upsert.content,
-        baseVersion: upsert.baseVersion,
-      })),
-      deletes,
-      source: 'cli',
-      updatedByUserId: actor.userId,
-    });
-    if (pushResult.status === 'blocked_stale') {
-      const blockedStale: PushRoutineFilesBlockedStaleDto = {
-        status: 'blocked_stale',
-        staleFiles: pushResult.staleFiles,
-        message: `Server routines have changed since your last pull (${pushResult.staleFiles
-          .map((staleFile) => staleFile.path)
-          .join(', ')}). Run \`scratchmd routines pull\`, then retry the push.`,
-      };
-      throw new ConflictException(blockedStale);
-    }
-
-    // 4. Reconcile all ROUTINE schedules from the just-written definitions, then mirror to git
-    //    synchronously so pre-DEV-11399 CLIs get the head they re-materialize to. A mirror failure
-    //    must not fail the push — the definitions are already saved — so it degrades to `head: ''`
-    //    (the old CLI's "nothing to re-materialize"; it cannot deserialize a null here).
-    const routines = await this.reloadRoutines(workbookId, actor);
-    let head = '';
-    try {
-      head = (await this.routineGitMirror.mirrorWorkbookRoutines(workbookId, actor)) ?? '';
-    } catch (error) {
-      WSLogger.warn({
-        source: 'RoutineService.pushRoutineFiles',
-        message: 'Routines were saved but mirroring them to the workbook config repo failed',
-        workbookId,
-        error,
-      });
-    }
-
-    await this.auditLogService.logEvent({
-      actor,
-      eventType: 'update',
-      message: `Pushed routines: ${pushResult.upsertedFilePaths.length} upsert(s), ${pushResult.deletedFilePaths.length} delete(s)`,
-      entityId: workbookId,
-      organizationId: actor.organizationId,
-    });
-
-    return { files: pushResult.files, head, routines };
   }
 
   // ── internals ────────────────────────────────────────────────────────────────
