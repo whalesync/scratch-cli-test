@@ -263,17 +263,4 @@ export class CliAuthService {
       };
     }
   }
-
-  /**
-   * Cleans up expired authorization codes.
-   * Should be called periodically (e.g., via cron job).
-   */
-  async cleanupExpiredCodes(): Promise<number> {
-    const result = await this.db.client.authorizationCode.deleteMany({
-      where: {
-        expiresAt: { lt: new Date() },
-      },
-    });
-    return result.count;
-  }
 }

@@ -3,6 +3,7 @@ import { UserRole } from '@prisma/client';
 import type { RequestWithUser } from 'src/auth/types';
 import { CronDebugController } from '../cron-debug.controller';
 import { ExpiredApiTokenCleanupService } from '../expired-api-token-cleanup.service';
+import { ExpiredPendingAuthorizationCleanupService } from '../expired-pending-authorization-cleanup.service';
 import { OldJobCleanupService } from '../old-job-cleanup.service';
 import { RecordCountRefreshService } from '../record-count-refresh.service';
 import { RehostedAssetReaperService } from '../rehosted-asset-reaper.service';
@@ -27,6 +28,7 @@ describe('CronDebugController', () => {
   let subscriptionEnforcement: { enforceLapsedSubscriptions: jest.Mock };
   let rehostedAssetReaper: { reapUnreferencedRehostedAssetObjects: jest.Mock };
   let whalesyncRunNotificationSweeper: { sweepWhalesyncRunNotifications: jest.Mock };
+  let expiredPendingAuthorizationCleanup: { deleteExpiredPendingOAuthInstallsAndCliAuthorizationCodes: jest.Mock };
   let controller: CronDebugController;
 
   const originalRunningInCloud = process.env.RUNNING_IN_CLOUD;
@@ -54,6 +56,9 @@ describe('CronDebugController', () => {
     subscriptionEnforcement = { enforceLapsedSubscriptions: jest.fn().mockResolvedValue(undefined) };
     rehostedAssetReaper = { reapUnreferencedRehostedAssetObjects: jest.fn().mockResolvedValue(undefined) };
     whalesyncRunNotificationSweeper = { sweepWhalesyncRunNotifications: jest.fn().mockResolvedValue(undefined) };
+    expiredPendingAuthorizationCleanup = {
+      deleteExpiredPendingOAuthInstallsAndCliAuthorizationCodes: jest.fn().mockResolvedValue(undefined),
+    };
     controller = new CronDebugController(
       recordCountRefresh as unknown as RecordCountRefreshService,
       oldJobCleanup as unknown as OldJobCleanupService,
@@ -65,6 +70,7 @@ describe('CronDebugController', () => {
       subscriptionEnforcement as unknown as SubscriptionEnforcementService,
       rehostedAssetReaper as unknown as RehostedAssetReaperService,
       whalesyncRunNotificationSweeper as unknown as WhalesyncRunNotificationSweeperService,
+      expiredPendingAuthorizationCleanup as unknown as ExpiredPendingAuthorizationCleanupService,
     );
   });
 
@@ -109,6 +115,15 @@ describe('CronDebugController', () => {
     const result = await controller.triggerCronJob('whalesync-run-notification-sweeper', ADMIN_REQ);
     expect(whalesyncRunNotificationSweeper.sweepWhalesyncRunNotifications).toHaveBeenCalledTimes(1);
     expect(result.slug).toBe('whalesync-run-notification-sweeper');
+    expect(result.ran).toBe(true);
+  });
+
+  it('triggers the expired pending authorization cleanup by slug', async () => {
+    const result = await controller.triggerCronJob('expired-pending-authorization-cleanup', ADMIN_REQ);
+    expect(
+      expiredPendingAuthorizationCleanup.deleteExpiredPendingOAuthInstallsAndCliAuthorizationCodes,
+    ).toHaveBeenCalledTimes(1);
+    expect(result.slug).toBe('expired-pending-authorization-cleanup');
     expect(result.ran).toBe(true);
   });
 

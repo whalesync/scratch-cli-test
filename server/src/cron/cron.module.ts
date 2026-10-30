@@ -12,6 +12,7 @@ import { JobModule } from '../job/job.module';
 import { WorkerEnqueuerModule } from '../worker-enqueuer/worker-enqueuer.module';
 import { CronDebugController } from './cron-debug.controller';
 import { ExpiredApiTokenCleanupService } from './expired-api-token-cleanup.service';
+import { ExpiredPendingAuthorizationCleanupService } from './expired-pending-authorization-cleanup.service';
 import { OldJobCleanupService } from './old-job-cleanup.service';
 import { RecordCountRefreshService } from './record-count-refresh.service';
 import { RehostedAssetReaperService } from './rehosted-asset-reaper.service';
@@ -44,6 +45,7 @@ import { WhalesyncRunNotificationSweeperService } from './whalesync-run-notifica
     StaleJobReaperService,
     OldJobCleanupService,
     ExpiredApiTokenCleanupService,
+    ExpiredPendingAuthorizationCleanupService,
     RoutineRunReaperService,
     RecordCountRefreshService,
     ScratchGitDiskObservabilityService,
@@ -56,6 +58,7 @@ import { WhalesyncRunNotificationSweeperService } from './whalesync-run-notifica
     StaleJobReaperService,
     OldJobCleanupService,
     ExpiredApiTokenCleanupService,
+    ExpiredPendingAuthorizationCleanupService,
     RoutineRunReaperService,
     RecordCountRefreshService,
     ScratchGitDiskObservabilityService,

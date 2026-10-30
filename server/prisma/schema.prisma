@@ -171,8 +171,8 @@ model ConnectorAccount {
 /// by `service`, so any OAuth connector (GoHighLevel, Webflow, …) reuses it.
 /// Server-only — not a shared wire type. The `id` IS the unguessable installId and
 /// is treated as a bearer secret: single-use (deleted on claim) and short-TTL (rows
-/// past `expiresAt` are rejected on claim; the `@@index([expiresAt])` supports a
-/// future periodic cleanup sweep of orphaned rows).
+/// past `expiresAt` are rejected on claim; the `@@index([expiresAt])` supports the
+/// hourly ExpiredPendingAuthorizationCleanupService sweep that deletes them).
 model PendingOAuthInstall {
   id                   String    @id // the unguessable installId — bearer secret
   createdAt            DateTime  @default(now())

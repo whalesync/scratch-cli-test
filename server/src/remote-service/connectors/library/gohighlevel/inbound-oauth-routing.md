@@ -89,8 +89,9 @@ GHL auth codes are single-use and expire in minutes. A brand-new user in case (A
 minutes to sign up and verify email — redeeming lazily at claim time would routinely fail. So we
 redeem the instant we land and stash the result. The cost is that we briefly hold **orphan tokens not
 yet attached to any user**. Mitigations: encrypted at rest (same AES-256-GCM envelope as
-`ConnectorAccount`), 1-hour TTL, single-use (`installId` deleted on claim), and the `@@index([expiresAt])`
-supports a future cleanup sweep.
+`ConnectorAccount`), 1-hour TTL, single-use (`installId` deleted on claim), and an hourly cron sweep
+(`ExpiredPendingAuthorizationCleanupService`, backed by the `@@index([expiresAt])`) deletes unclaimed rows an
+hour after they expire.
 
 ## Security: the `installId` is a bearer secret
 

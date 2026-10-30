@@ -39,6 +39,7 @@ describe('CronController', () => {
     expect(jobs).toEqual(CRON_JOB_DEFINITIONS);
     expect(jobs.map((job) => job.slug).sort()).toEqual([
       'expired-api-token-cleanup',
+      'expired-pending-authorization-cleanup',
       'old-job-cleanup',
       'record-count-refresh',
       'rehosted-asset-reaper',

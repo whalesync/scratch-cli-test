@@ -15,6 +15,7 @@ import type { RequestWithUser } from 'src/auth/types';
 import { WSLogger } from 'src/logger';
 import { CRON_TRIGGERING_DISABLED_MESSAGE, isManualCronTriggeringAllowed } from './cron-job-definitions';
 import { ExpiredApiTokenCleanupService } from './expired-api-token-cleanup.service';
+import { ExpiredPendingAuthorizationCleanupService } from './expired-pending-authorization-cleanup.service';
 import { OldJobCleanupService } from './old-job-cleanup.service';
 import { RecordCountRefreshService } from './record-count-refresh.service';
 import { RehostedAssetReaperService } from './rehosted-asset-reaper.service';
@@ -48,6 +49,7 @@ export class CronDebugController {
     private readonly subscriptionEnforcement: SubscriptionEnforcementService,
     private readonly rehostedAssetReaper: RehostedAssetReaperService,
     private readonly whalesyncRunNotificationSweeper: WhalesyncRunNotificationSweeperService,
+    private readonly expiredPendingAuthorizationCleanup: ExpiredPendingAuthorizationCleanupService,
   ) {}
 
   /**
@@ -63,6 +65,8 @@ export class CronDebugController {
       'stale-active-job-reaper': () => this.staleJobReaper.reapStaleActiveJobs(),
       'routine-run-reaper': () => this.routineRunReaper.reapStuckRoutineRuns(),
       'expired-api-token-cleanup': () => this.expiredApiTokenCleanup.cleanupExpiredWhalesyncSessionTokens(),
+      'expired-pending-authorization-cleanup': () =>
+        this.expiredPendingAuthorizationCleanup.deleteExpiredPendingOAuthInstallsAndCliAuthorizationCodes(),
       'scratch-git-disk-observability': () => this.scratchGitDiskObservability.emitDiskObservabilityMetrics(),
       'staging-dir-reaper': () => this.stagingDirReaper.reapStagingDirs(),
       'subscription-enforcement': () => this.subscriptionEnforcement.enforceLapsedSubscriptions(),

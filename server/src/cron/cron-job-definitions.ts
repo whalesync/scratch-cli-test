@@ -42,6 +42,12 @@ export const CRON_JOB_DEFINITIONS: CronJobSummaryDto[] = [
     schedule: 'EVERY_HOUR',
   },
   {
+    slug: 'expired-pending-authorization-cleanup',
+    description:
+      'Delete pending inbound OAuth installs and CLI login authorization codes more than an hour past expiry.',
+    schedule: 'EVERY_HOUR',
+  },
+  {
     slug: 'scratch-git-disk-observability',
     description: "Emit scratch-git's worst-repo loose-object gauge for disk-bloat observability.",
     schedule: 'EVERY_HOUR',
