@@ -3,7 +3,10 @@
 - Umbrella Linear issue: ⚠ not yet filed (`Live Export QA: AIRTABLE source`, project [MAJOR] Live Export) — the local
   `linear` CLI token is read-only; bodies are queued under Findings below.
 - Credentials: `local/audit-creds/airtable.env` (`apiKey=…`, plus `AIRTABLE_SEED_BASE_ID=<base the key can see>`).
-  Burner base: "Blog Posts - Rob" `appIOZD3KYGS2VpDE` (2026-09-01 round); `appGoopxI4Px4dyuv` (2026-08-05 round).
+  Burner base: "My Fake CRM" `appFqqAKBLkVcK469` (2026-10-29 MYSQL round; the creds file names it as
+  `DEST_PARENT_ID`, so pass `AIRTABLE_SEED_BASE_ID=appFqqAKBLkVcK469` to `seed.mjs` / `crud-pass.mjs`, which otherwise
+  fall back to `appGoopxI4Px4dyuv`); "Blog Posts - Rob" `appIOZD3KYGS2VpDE` (2026-09-01 round); `appGoopxI4Px4dyuv`
+  (2026-08-05 round).
 - OAuth-only? no (personal access token via `userProvidedParams`).
 - Seed script: `tools/live-export-audit/seeds/airtable/seed.mjs` (idempotent; creates tables if missing, wipes + re-seeds
   records) · CRUD pass: `tools/live-export-audit/seeds/airtable/crud-pass.mjs`.
@@ -21,17 +24,17 @@
 
 | # | Gate | Status | Evidence |
 |---|---|---|---|
-| 1 | Preflight (server, token, creds) | ✅ | 2026-09-01 preflight wkb_Ejm0QuhT4T (plan-only); worktree server on :3010 |
+| 1 | Preflight (server, token, creds) | ✅ | 2026-09-01 preflight wkb_Ejm0QuhT4T (plan-only); worktree server on :3010 · 2026-10-29 atlanta worktree, master `1a9dfe28f` |
 | 2 | Recon: connector + View read, tables chosen | ✅ | `airtable-default-view.ts` TYPE_MAP, `airtable-json-schema.ts`; invoices + contacts chosen for type coverage + FK both directions; hidden left out on purpose |
-| 3 | Torture data seeded + read back via service API | ✅ | `seed.mjs` → `{"fable_qa_at_invoices":213,"fable_qa_at_contacts":3,"fable_qa_at_hidden":2}` read-back OK |
-| 4 | Plan audit: every downgraded field judged | ✅ | report `audit-airtable-postgres.json` (scratchpad); see Accepted downgrades |
-| 5 | FKs identified as foreignKey; links resolve on destination | ✅ | `Contact`/`Hidden Ref`/inverse link all `foreignKey`; Postgres got real `REFERENCES … ON DELETE SET NULL` constraints; Hidden Ref correctly dropped |
-| 6 | First run: publish failures = 0 or all filed | ✅ POSTGRES | rrn_J74MgTfHy9: 216 creates, `failedOperations: []` |
-| 7 | Destination-side spot check (≥3 records/table) | ✅ POSTGRES | psql on `audit_dest`: torture, all-empty, long-4001, filler-001 + all 3 contacts, field-by-field (below) |
-| 8 | CRUD pass: edit / create / delete mirrored | ✅ POSTGRES | rrn_o4vlTTbjGN: 1 create, 1 delete, edits verified via psql |
-| 9 | Pagination: 200+ record table fully synced | ✅ POSTGRES | 213/213 invoices on Postgres after every run |
-| 10 | Second run is a no-op | ❌ POSTGRES | rrn_zC3szsaMjk 212 edits; rrn_iydAgAp9in 211 edits — exactly the records with a `Due` date. Finding F1 |
-| 11 | Destination drift: out-of-band delete restored | ✅ POSTGRES | deleted "Filler invoice 005" row via psql → rrn_zVvlecT0Zh re-created it (new uuid, same `airtable_record_id`), count back to 213 |
+| 3 | Torture data seeded + read back via service API | ✅ | `seed.mjs` → `{"fable_qa_at_invoices":213,"fable_qa_at_contacts":3,"fable_qa_at_hidden":2}` read-back OK (2026-10-29 into `appFqqAKBLkVcK469`: invoices `tblAsakY0Y4ubECRj`, contacts `tblKfQ9UWiSrI6ypF`, hidden `tbl4nFrxuUT80Jp1W`) |
+| 4 | Plan audit: every downgraded field judged | ✅ | report `audit-airtable-postgres.json` (scratchpad); `/tmp/audit-airtable-mysql.json` (same notes); see Accepted downgrades |
+| 5 | FKs identified as foreignKey; links resolve on destination | ✅ | `Contact`/`Hidden Ref`/inverse link all `foreignKey`; Postgres, MySQL and MariaDB got real `ON DELETE SET NULL` constraints; Hidden Ref correctly dropped |
+| 6 | First run: publish failures = 0 or all filed | ✅ POSTGRES · ✅ MYSQL · ✅ MariaDB | rrn_J74MgTfHy9 · rrn_xcQwhEinN8 · rrn_ZAGXyDxa9W: 216 creates each, `failedOperations: []` |
+| 7 | Destination-side spot check (≥3 records/table) | ✅ POSTGRES · ✅ MYSQL · ✅ MariaDB | psql on `audit_dest`: torture, all-empty, long-4001, filler-001 + all 3 contacts, field-by-field (below) · MySQL and MariaDB: every Airtable record (read through Airtable's API) compared field by field with its row, 213/213 + 3/3, no differences |
+| 8 | CRUD pass: edit / create / delete mirrored | ✅ POSTGRES · ✅ MYSQL · ✅ MariaDB | rrn_o4vlTTbjGN: 1 create, 1 delete, edits verified via psql · tag 202610292322 → rrn_Ut1RhBjFDi · rrn_oNoudAWfXR: 1 create / 2 edits / 1 delete, full comparison clean |
+| 9 | Pagination: 200+ record table fully synced | ✅ POSTGRES · ✅ MYSQL · ✅ MariaDB | 213/213 invoices after every run |
+| 10 | Second run is a no-op | ❌ POSTGRES · ✅ MYSQL · ✅ MariaDB | Postgres: rrn_zC3szsaMjk 212 edits; rrn_iydAgAp9in 211 edits — exactly the records with a `Due` date. Finding F1 (fixed in DEV-12576, not re-audited) · MySQL rrn_69LdQf24iK and MariaDB rrn_kDqYDjGcEX "No changes", and again after CRUD and drift (rrn_WPUcWNfuXa · rrn_zJ20ylcjk1) |
+| 11 | Destination drift: out-of-band delete restored | ✅ POSTGRES · ✅ MYSQL · ✅ MariaDB | deleted "Filler invoice 005" row via psql → rrn_zVvlecT0Zh re-created it (new uuid, same `airtable_record_id`), count back to 213 · same with SQL on MySQL / MariaDB → rrn_KUITsu28YV · rrn_QX4u1X9Jgm published exactly 1 create |
 | 12 | Findings filed or queued below | ⚠ partly filed | F1 filed as DEV-12576; the umbrella issue is still queued (Human remainder) |
 
 ## Destination: GOOGLE_SHEETS (2026-08-05)
@@ -164,6 +167,42 @@ time, not a product defect.
 | A6 | Rich | richText → `text` holding Airtable markdown | Honest for a SQL destination; Airtable itself rewrites `*italic*` to `_italic_` and appends a newline |
 | A7 | Qty | number → `double precision` | Airtable numbers are floats; 2^53−1 survives; beyond that Airtable itself is lossy |
 
+## Destination: MYSQL (MySQL 8.4 and MariaDB 11.4, 2026-10-29)
+
+> Run for [DEV-12346](https://linear.app/whalesync/issue/DEV-12346) (MySQL as a Live Export destination) with a new
+> token and base after the 10-21 attempt hit `PUBLIC_API_BILLING_LIMIT_EXCEEDED`. Local spinner from the atlanta
+> worktree at master `1a9dfe28f`. Destination database `fable_qa_dest_from_airtable` on both servers (`mysql.env`,
+> `--dest-creds mysql-mariadb.env`).
+
+- Workbooks: MySQL `wkb_GSz6BeMQOn` (sync `syn_NgnyRMnoyM`, report `/tmp/audit-airtable-mysql.json`); MariaDB
+  `wkb_LPaE0JHavX` (sync `syn_VcbEJyrSPH`, `/tmp/audit-airtable-mariadb.json`).
+- Runs (MySQL): rrn_xcQwhEinN8 (216 creates) · rrn_69LdQf24iK (nothing) · rrn_Ut1RhBjFDi (CRUD 1 / 2 / 1) ·
+  rrn_KUITsu28YV (drift, 1 create) · rrn_WPUcWNfuXa (nothing).
+- Runs (MariaDB): rrn_ZAGXyDxa9W · rrn_kDqYDjGcEX · rrn_oNoudAWfXR · rrn_QX4u1X9Jgm · rrn_zJ20ylcjk1, with the same
+  results.
+- **Plan:** the same notes as the Postgres round: `Tags` downgraded (A1), `Hidden Ref` dropped, and `Contact` and the
+  inverse link as foreign keys.
+- **Created schema** (`verify-mysql.mjs`): InnoDB, utf8mb4, comment `live_export:<source folder id>`, and an
+  `id bigint unsigned auto_increment` key.
+  - Columns: text, url and phone → `mediumtext`; `Rich` → `longtext`; currency, number and percent → `double`;
+    checkbox → `tinyint(1)`; date → `date`; dateTime and `Created Time` → `datetime(3)`.
+  - Links: `Contact` → `bigint unsigned`, and the contacts' inverse link → `bigint unsigned`, both with real
+    `ON DELETE SET NULL` constraints.
+  - MariaDB uses the same plan in its own spelling (`bigint(20) unsigned`).
+- **Read-back:** every record listed through Airtable's API was compared field by field with its MySQL row, links
+  mapped back to Airtable record ids. That's 213/213 invoices and 3/3 contacts, with no differences on either server,
+  after the first run and again after CRUD.
+  - Torture row: unicode / RTL / HTML entity intact, 2,001-character notes, the Airtable markdown in `Rich`, −1234.5,
+    0, 0.12345678, 0.875, 2026-12-31, `2026-08-05 04:30:15.000`, "Paid, with comma", `alpha, has, comma, γάμμα`, the
+    quoted url, the phone number, and Contact → Alice.
+  - Long row: 4,001 characters, `Qty` 9007199254740991 exact, `0100-01-01`, `9999-12-31 23:59:59.000`, and
+    Contact → Bob.
+  - All-empty row: every column NULL.
+  - Contacts' inverse links: Alice and Carol → Torture, Bob → Long.
+- **Accepted downgrades:** A1–A7 above apply unchanged. A MySQL `double` holds the same values the Postgres
+  `double precision` did, and an unchecked checkbox is NULL (A5).
+- No findings.
+
 ## Human remainder (not automatable — do before launch)
 
 - [ ] OAuth connect flow in real UI — n/a (PAT), but check the API-key placeholder/help text in the wizard
@@ -181,3 +220,6 @@ time, not a product defect.
   set into `appIOZD3KYGS2VpDE` (seed.mjs now honours `AIRTABLE_SEED_BASE_ID` from env or the creds file), added
   `crud-pass.mjs`, ran gates 1–12 against POSTGRES with the field-value canonicalizers on; isolated the
   second-run churn to the pg `date` column (F1); queued F1 for filing.
+- 2026-10-29 — Claude Opus 5.5 (DEV-12346, atlanta worktree) — seeded the torture set into a new base
+  `appFqqAKBLkVcK469` (new token) and ran AIRTABLE → MYSQL and → MariaDB: gates 6–11 pass on both, and the
+  field-by-field comparison against Airtable's API is clean.

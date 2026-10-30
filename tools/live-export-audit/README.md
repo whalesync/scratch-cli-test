@@ -63,7 +63,7 @@ torture set is identical. Each one is idempotent — re-running updates rather t
 - `seeds/salesforce/` — `create-oauth-connection.mjs` plants a SALESFORCE OAuth connection from a password-grant
   token (no consent screen, no connected-app secrets in `server/.env`); `--refresh coa_…` re-mints its token
 - `seeds/airtable/` — `seed.mjs` (honours `AIRTABLE_SEED_BASE_ID` from the env or `airtable.env`), `crud-pass.mjs`
-- `seeds/postgres/` — `seed.mjs`, `crud-pass.mjs` (plain SQL through the server's `pg`; table ids are `public/<table>`)
+- `seeds/postgres/` — `seed.mjs` (`--names` adds a table whose column names MySQL can't hold as-is), `crud-pass.mjs` (plain SQL through the server's `pg`; table ids are `public/<table>`)
 - `seeds/mysql/` — `seed.mjs` (`--wide` adds a 185-column table, `--reset-dest` empties the destination databases),
   `crud-pass.mjs` (SQL through the server's `mysql2`; table ids are `fable_qa_my_src/<table>`). Also creates one
   empty destination database per source (`fable_qa_dest_from_airtable`, `…_supabase`, `…_mysql`) for `--dest-parent`.

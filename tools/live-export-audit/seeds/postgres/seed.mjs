@@ -12,6 +12,12 @@
  * a table deliberately NOT exported, an all-null record, unicode / long-text
  * torture values and 210 filler invoices for pagination. `updated_at` is
  * present so incremental pull can be exercised.
+ *
+ * `--names` also recreates `fable_qa_pg_names` (1 row): column names a MySQL
+ * destination can't hold as-is — an emoji, a trailing space — plus one at
+ * Postgres's 63-character limit (DEV-12413).
+ *
+ * Usage: node tools/live-export-audit/seeds/postgres/seed.mjs [--names]
  */
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -33,6 +39,7 @@ function readEnvFile(file) {
   }
   return out;
 }
+const flags = new Set(process.argv.slice(2));
 const env = readEnvFile(path.join(REPO_ROOT, "local/audit-creds/postgres.env"));
 const client = new Client({ connectionString: env.connectionString });
 await client.connect();
@@ -221,11 +228,32 @@ await client.query(
   [INV_LONG, CONTACT_BOB],
 );
 
+const NAMES_PROBE_ROW_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+if (flags.has("--names")) {
+  await client.query(`
+    DROP TABLE IF EXISTS fable_qa_pg_names;
+    CREATE TABLE fable_qa_pg_names (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "mood 😀" text,
+      this_is_a_very_long_column_name_that_sits_right_at_the_pg_limit text,
+      "Trailing space " text,
+      plain text
+    );
+  `);
+  await client.query(
+    `INSERT INTO fable_qa_pg_names
+     (id, "mood 😀", this_is_a_very_long_column_name_that_sits_right_at_the_pg_limit, "Trailing space ", plain)
+     VALUES ($1, 'happy', 'long', 'trail', 'p')`,
+    [NAMES_PROBE_ROW_ID],
+  );
+}
+
 const counts = {};
 for (const t of [
   "fable_qa_pg_invoices",
   "fable_qa_pg_contacts",
   "fable_qa_pg_hidden",
+  ...(flags.has("--names") ? ["fable_qa_pg_names"] : []),
 ]) {
   counts[t] = Number(
     (await client.query(`SELECT count(*)::int AS n FROM ${t}`)).rows[0].n,
@@ -236,7 +264,8 @@ console.log("seeded:", JSON.stringify(counts));
 if (
   counts.fable_qa_pg_invoices !== 213 ||
   counts.fable_qa_pg_contacts !== 3 ||
-  counts.fable_qa_pg_hidden !== 2
+  counts.fable_qa_pg_hidden !== 2 ||
+  (flags.has("--names") && counts.fable_qa_pg_names !== 1)
 ) {
   throw new Error("unexpected counts");
 }

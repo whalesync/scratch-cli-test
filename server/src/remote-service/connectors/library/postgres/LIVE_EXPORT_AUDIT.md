@@ -26,12 +26,12 @@
 | 3 | Torture data seeded + read back via service API | ✅ | `seed.mjs` → `{"fable_qa_pg_invoices":213,"fable_qa_pg_contacts":3,"fable_qa_pg_hidden":2}` |
 | 4 | Plan audit: every downgraded field judged | ✅ | report `audit-postgres-airtable.json` (scratchpad); see Accepted downgrades + F3 |
 | 5 | FKs identified as foreignKey; links resolve on destination | ✅ | `contact_id`, `hidden_id`, `favorite_invoice_id` all `foreignKey`; Airtable `multipleRecordLinks` created and populated; `hidden_id` correctly dropped |
-| 6 | First run: publish failures = 0 or all filed | ✅ AIRTABLE | rrn_h7D9EcxFug: 216 creates, `failedOperations: []` · ✅ MYSQL rrn_MfEyIJwCPd: 216 creates, `failedOperations: []` · ✅ MariaDB rrn_27vT6iO976: 216 creates, none failed |
+| 6 | First run: publish failures = 0 or all filed | ✅ AIRTABLE | rrn_h7D9EcxFug: 216 creates, `failedOperations: []` · ✅ MYSQL rrn_PopmGHsmb7 (2026-10-29 rerun; 10-21 rrn_MfEyIJwCPd): 216 creates, `failedOperations: []` · ✅ MariaDB rrn_0RrVY7DjN2 (10-21 rrn_27vT6iO976): 216 creates, none failed |
 | 7 | Destination-side spot check (≥3 records/table) | ✅ AIRTABLE | Airtable REST: torture, all-empty, long-4001, filler-001 + all 3 contacts (below) · ✅ MYSQL `verify-mysql.mjs` + SQL: torture, all-empty, long-4001, all 3 contacts (below) |
-| 8 | CRUD pass: edit / create / delete mirrored | ✅ AIRTABLE | rrn_Nv8exXMy4B: 1 create / 2 edits / 1 delete, verified via Airtable REST · ✅ MYSQL rrn_JxG35NOy9r: 1 create / 2 edits / 1 delete, verified with SQL |
+| 8 | CRUD pass: edit / create / delete mirrored | ✅ AIRTABLE | rrn_Nv8exXMy4B: 1 create / 2 edits / 1 delete, verified via Airtable REST · ✅ MYSQL rrn_lpqMRJglHU · MariaDB rrn_0ltTs6LJYH (10-21 rrn_JxG35NOy9r): 1 create / 2 edits / 1 delete, verified with SQL |
 | 9 | Pagination: 200+ record table fully synced | ✅ AIRTABLE | 213/213 invoices on Airtable (paged count) · ✅ MYSQL 213/213 after every run |
-| 10 | Second run is a no-op | ✅ AIRTABLE | rrn_DIWZLS1Uyy "No changes"; rrn_oCaJrbLyCu (after CRUD) "No changes" — with the DEV-11420 Airtable canonicalizers on · ✅ MYSQL rrn_bllrxdoqyS and rrn_bvk10Ed1J2 (after CRUD and drift) wrote nothing · ✅ MariaDB rrn_h4RypGxVUJ |
-| 11 | Destination drift: out-of-band delete restored | ✅ AIRTABLE | deleted "Filler invoice 005" via Airtable REST → rrn_PrkFndWPZn published exactly 1 create, record back with same `postgres_record_id` · ✅ MYSQL deleted "Filler invoice 005" with SQL → rrn_PkfI0lff8T published exactly 1 create |
+| 10 | Second run is a no-op | ✅ AIRTABLE | rrn_DIWZLS1Uyy "No changes"; rrn_oCaJrbLyCu (after CRUD) "No changes" — with the DEV-11420 Airtable canonicalizers on · ✅ MYSQL rrn_P1mLEoNgbt and rrn_8d1nqgCivV (after CRUD and drift) wrote nothing · ✅ MariaDB rrn_KTiAQgUt8V and rrn_3eHhvbs1WK (10-21 rrn_bllrxdoqyS, rrn_bvk10Ed1J2, rrn_h4RypGxVUJ) |
+| 11 | Destination drift: out-of-band delete restored | ✅ AIRTABLE | deleted "Filler invoice 005" via Airtable REST → rrn_PrkFndWPZn published exactly 1 create, record back with same `postgres_record_id` · ✅ MYSQL deleted "Filler invoice 005" with SQL → rrn_DVBjdmWCkI published exactly 1 create (MariaDB rrn_AOvHzauKMK; 10-21 rrn_PkfI0lff8T) |
 | 12 | Findings filed or queued below | ⚠ partly filed | F1/F2 filed as DEV-12576; F3 queued as evidence on DEV-10795; the umbrella issue is still queued (Human remainder) |
 
 Pull-side note: incremental pull needs a user-declared `modifiedAtField` (`pg-incremental.ts`); the harness runs full
@@ -178,6 +178,15 @@ multi-value field. Not re-filed because the generic ask was canceled; leaving th
   destination ids of the torture and long invoices.
 - **MariaDB 11.4:** the same plan with MariaDB spellings (`int(11)`, `bigint(20) unsigned`); 216 creates, second run
   wrote nothing.
+- **Rerun 2026-10-29** (atlanta worktree, master `1a9dfe28f`, after the DEV-12412–DEV-12415 fixes; `postgres.env`
+  now ends in `?sslmode=disable`, needed since DEV-12575). Fresh workbooks: MySQL `wkb_gRTj1gfC06` (sync
+  `syn_yQGX3gQjpi`, `/tmp/rerun-D-postgres-mysql.json`) and MariaDB `wkb_DmNKhWv5KX` (sync `syn_5gNlpnkyKw`).
+  - MySQL runs: rrn_PopmGHsmb7 (216 creates) · rrn_P1mLEoNgbt (nothing) · rrn_lpqMRJglHU (CRUD 1 / 2 / 1) ·
+    rrn_DVBjdmWCkI (drift, 1 create) · rrn_8d1nqgCivV (nothing).
+  - MariaDB runs: rrn_0RrVY7DjN2 · rrn_KTiAQgUt8V · rrn_0ltTs6LJYH · rrn_AOvHzauKMK · rrn_3eHhvbs1WK, with the same
+    results.
+  - One change from 10-21: pg `date` now creates a MySQL `date` column (DEV-12576), not `datetime(3)`.
+  - The spot checks match the bullets above, and both foreign keys are real constraints on both servers.
 - No MySQL-specific findings from this source. MySQL-destination findings from the MySQL source round and the probes are
   in `library/mysql/STATE.md` (Live Export destination round) and filed as DEV-12412–DEV-12415.
 
@@ -199,3 +208,6 @@ multi-value field. Not re-filed because the generic ask was canceled; leaving th
   parsing) and F3 (arrays → comma text); queued for filing.
 - 2026-10-21 — Claude Opus 5.5 (DEV-12346 worktree) — added the MYSQL destination round (and MariaDB 11.4): gates 6–11
   pass, second runs write nothing. The seed ran against a new local database `fable_qa_audit`.
+- 2026-10-29 — Claude Opus 5.5 (atlanta worktree) — reran the MYSQL and MariaDB destination rounds on fresh workbooks
+  after the DEV-12412–DEV-12415 fixes: gates 6–11 pass on both. `seed.mjs --names` now recreates `fable_qa_pg_names`,
+  the DEV-12413 probe table (see MySQL STATE.md).

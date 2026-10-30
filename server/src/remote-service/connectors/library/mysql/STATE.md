@@ -58,7 +58,7 @@ Living checklist of what's left: gaps found while adopting human-built code, unf
 
 - [ ] Managed test database (RDS / Aurora, Cloud SQL, TiDB Cloud or Aiven) → `/connector-build-execute` (milestones 2–8 through the CLI) + `/connector-build-review` PASS. Aiven was tried by hand (see Test account); the CLI pass and the review are still to do.
 - [ ] Positive `VERIFY_IDENTITY` coverage — needs a server certificate with a matching SAN (neither local flavor's auto-generated cert has one). The opt-in `mysql-ssl` compose service (profile `ssl`, 127.0.0.1:3308, test CA with SAN `localhost`, `require_secure_transport=ON`; see `server/localdev/README.md`) provides one: `localhost` + `VERIFY_IDENTITY` + its `ca.pem` connected in-process on 2026-10-19. Still missing: a spec against it and a CLI / web round-trip.
-- [x] Live Export smoke — done 2026-10-21 with `/test-live-export` (POSTGRES → MYSQL, MYSQL → MYSQL / POSTGRES, and MariaDB 11.4 as a destination); see [Live Export destination round](#live-export-destination-round-2026-10-21) and `LIVE_EXPORT_AUDIT.md`. An automated twin would still adapt `server/test/integration/live-export-engine-equivalence.spec.ts` (recording source connector, real MySQL destination, don't mock the destination's `refreshSchemasForConnection`).
+- [x] Live Export smoke — done 2026-10-21 with `/test-live-export` (POSTGRES → MYSQL, MYSQL → MYSQL / POSTGRES, and MariaDB 11.4 as a destination), rerun clean 2026-10-29 with AIRTABLE → MYSQL added after the DEV-12412–DEV-12415 fixes; see [Live Export destination round](#live-export-destination-round-2026-10-21) and `LIVE_EXPORT_AUDIT.md`. An automated twin would still adapt `server/test/integration/live-export-engine-equivalence.spec.ts` (recording source connector, real MySQL destination, don't mock the destination's `refreshSchemasForConnection`).
 - [ ] Logo: `mysql-logo.ts` is an inline data URI (copper precedent) because `static.scratch.md/connector-icons/mysql.svg` doesn't exist. Upload a proper icon to `gs://spv1eu-production-static/connector-icons/` (manual, prod bucket — needs approval) and switch `metadata.logo` to the URL.
 - [x] CLI help text: `MYSQL` is in the `--service` help in `scratch-git-2/src/cli/commands/connections.rs` (no `service_auth_fields` entry — no field is `required`; the flag is a free string, so `--service MYSQL` worked before too).
 - [ ] `scratch-cli-tests` coverage (needs a public MySQL that allowlists the NAT IP).
@@ -313,15 +313,16 @@ Verified against the local MySQL 8.4 / MariaDB 11.4 servers during the build (dr
 [DEV-12346](https://linear.app/whalesync/issue/DEV-12346): MySQL as a Live Export destination, run with `/test-live-export`
 against a local spinner (master + the retry fix !3412 + the egress IP change !3413) and the local MySQL 8.4 and MariaDB
 11.4 servers. Per-source details are in `library/postgres/LIVE_EXPORT_AUDIT.md` (POSTGRES → MYSQL) and
-`LIVE_EXPORT_AUDIT.md` here (MYSQL → MYSQL / POSTGRES). AIRTABLE → MYSQL wasn't run: the audit token's Airtable
-workspace is over its monthly API quota.
+`LIVE_EXPORT_AUDIT.md` here (MYSQL → MYSQL / POSTGRES). AIRTABLE → MYSQL wasn't run on 10-21 (the audit token's
+Airtable workspace was over its monthly API quota); it ran on 2026-10-29 with a new token and base and passes, see
+`library/airtable/LIVE_EXPORT_AUDIT.md`.
 
 **Data path: passes.** Every first run published every record with no failed operations (Postgres → MySQL 216,
 MySQL → MySQL 217, both again into MariaDB). CRUD passes mirrored, an out-of-band delete in MySQL came back on the next
 run, and 213–214 row tables paged fully. Values survive exactly: emoji / CJK / RTL, 4,001-character text, BIGINT and
 BIGINT UNSIGNED extremes, DECIMAL digits, timestamps with offsets stored as their UTC instant, and DATETIME(6)
 microseconds MySQL → MySQL. A MySQL → MySQL plan recreates each column's exact type (DEV-11903); see
-`LIVE_EXPORT_AUDIT.md`. Second runs write nothing, except DEV-12415 below (fixed).
+`LIVE_EXPORT_AUDIT.md`. Second runs write nothing, except DEV-12415 below (fixed, and verified in the 2026-10-29 rerun).
 
 **Retry after an interrupted create (!3412), end to end:** a local-only trigger on `"SyncDraft"` made every checkpoint
 write fail after the three MySQL tables (and their foreign keys, one of them added after the tables because of a
@@ -335,6 +336,40 @@ writes the draft again later in the same save, and that write lands the checkpoi
 inside the CREATE and one added afterward because of the cycle. The save completed and listed both under
 `fieldsNotCreated` with the connector's "isn't allowed to create foreign keys" message. The sync left the two columns out,
 and the first run published 217 records (214 invoices, 3 contacts). A second run rewrote only the DEV-12415 record.
+
+**Rerun after the fixes (2026-10-29):** the atlanta worktree at master `1a9dfe28f`, with fresh workbooks after
+`seeds/mysql/seed.mjs --wide --reset-dest` and `seeds/postgres/seed.mjs --names`.
+
+- **Main rounds:** MySQL → MySQL, → MariaDB and → Postgres, then Postgres → MySQL and → MariaDB. The run ids are in the
+  two `LIVE_EXPORT_AUDIT.md` files.
+  - Every round passes gates 6–11: full first run, second run "No changes", CRUD 1 / 2 / 1, drift exactly 1 create,
+    then "No changes" again.
+  - On the MySQL-family destinations, every source row was compared column by column. Only the accepted downgrades
+    differ.
+- **DEV-12415:** verified. MySQL and MariaDB no longer rewrite the torture row; the destination still holds
+  `12345678901234570000` (DEV-12614).
+- **DEV-12412:** the `fable_qa_norefs` save (`wkb_ZyTUBbbE7Z`) completed with `failedRefs: []` and both foreign keys in
+  `fieldsNotCreated`, each with the "Grant it CREATE, ALTER and REFERENCES" message.
+  - rrn_hCn2sh4d0G published 217 records, and rrn_OwbnuIhcKK wrote nothing.
+  - `contact_id` and `favorite_invoice_id` don't exist in MySQL. That's DEV-12615.
+- **DEV-12413:** Postgres `fable_qa_pg_names` → MySQL (`wkb_2cty0J9X2x`). The plan names the fields `Mood` (from
+  `mood 😀`) and `Trailing space` (from `Trailing space `), each noted "removed characters the destination can't use in
+  a field name", and keeps the 63-character name.
+  - The columns exist under those names, and the row's values landed (rrn_B6El3WxCIt).
+  - The second run (rrn_QY7FInMOkS) wrote nothing.
+- **DEV-12414**, the live repro the fix MR hadn't run yet:
+  - `fable_qa_my_wide` + contacts (`wkb_CLd8dq5XCY`): the plan reports `prerequisites.maxFieldsPerTable: 180` and
+    notes `c180`–`c185` `over_field_limit` ("MySQL allows at most 180 fields per table and this table has 186, so 6
+    fields were left out"). The harness leaves those fields unselected, the way dusky will once it reads the note.
+  - The table is created with 181 columns (the injected `id` + 180 fields). rrn_xRw9WBC39l published 5 records, and
+    rrn_1RE3JK1r4h wrote nothing.
+  - With `--select-over-limit-fields` (`wkb_ycSC4N3GEr`), the save fails with `Failed to create 1 of 2 tables/fields …
+    table "fable_qa_my_wide": this table has 186 fields, which exceeds the connector's maximum of 180 fields per
+    table`. The contacts table is still created.
+- **AIRTABLE → MYSQL and → MariaDB** (new token and base `appFqqAKBLkVcK469`): gates 6–11 pass on both, and
+  every Airtable record compared field by field with its MySQL row has no differences. See
+  `library/airtable/LIVE_EXPORT_AUDIT.md`.
+- **Nothing new filed.**
 
 **Findings (sub-issues of DEV-12346):**
 
