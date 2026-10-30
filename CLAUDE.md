@@ -129,6 +129,10 @@ yarn test:integration # Run integration tests across all packages
 - Files end with a newline
 - Use `assertUnreachable` in `default` cases of `switch` statements over union/enum types to ensure exhaustive handling at compile time (`client/src/utils/helpers.ts`, `server/src/utils/helpers.ts`)
 
+### Writing Style
+
+- **Always use the Oxford comma** in any list of three or more items, everywhere we write prose: docs, code comments, commit messages, MR descriptions, log/error messages, and UI copy. Write "pull, sync, and publish", not "pull, sync and publish".
+
 ### Self-documenting names
 
 **Prefer maximum self-documenting names for variables and functions.** Long, fully explicit identifiers beat concise or idiomatic short ones — even when the longer form runs ~30–40 characters or causes lines to wrap.

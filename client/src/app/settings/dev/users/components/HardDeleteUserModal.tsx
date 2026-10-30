@@ -69,7 +69,7 @@ export const HardDeleteUserModal = ({
       <Stack gap="md">
         <Text13Regular>
           This permanently deletes <strong>{user.name ?? user.email ?? user.id}</strong> and tears down all of their
-          workbooks, connection repos, jobs and tokens. If they are the sole member of their organization, the
+          workbooks, connection repos, jobs, and tokens. If they are the sole member of their organization, the
           organization is deleted too. This cannot be undone.
         </Text13Regular>
         <Stack gap="xs">

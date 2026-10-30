@@ -189,7 +189,7 @@ export default function DevComponentGalleryPage() {
           </GalleryItem>
           <GalleryItem
             label="Foreground: muted"
-            notes="Tertiary text, most toolbars or decorative icons. AKA --mantine-color-gray-7, or Figma grey/10"
+            notes="Tertiary text, most toolbars, or decorative icons. AKA --mantine-color-gray-7, or Figma grey/10"
           >
             <ColorChip cssName="--fg-muted" modeAware />
           </GalleryItem>
@@ -762,8 +762,8 @@ export default function DevComponentGalleryPage() {
           <Box ml="md" mt="xl">
             <TextTitle3 mb="md">Config Section </TextTitle3>
             <Text12Book c="dimmed" mb="sm">
-              A stacked layout with a title, description and a borderedbox containing children - either some information
-              or a form.
+              A stacked layout with a title, description, and a borderedbox containing children - either some
+              information or a form.
             </Text12Book>
             <Stack gap="md">
               <div>
