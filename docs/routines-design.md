@@ -10,7 +10,7 @@ The term "routine" is approachable for non-technical users. It conveys something
 
 ## Design Principles
 
-1. **Postgres is the source of truth; YAML is the editing format** — A routine definition is the verbatim YAML text of one `routines/<name>.yaml` file, stored as a `RoutineDefinition` row and parsed on every read (DEV-11399). The file path remains the routine's identity. `routines/*.yaml` in the workbook config git repo is only the one-time import source for workbooks that predate the table, plus a transitional one-way mirror. See [Storage and migration](#storage-and-migration).
+1. **Postgres is the source of truth; YAML is the editing format** — A routine definition is the verbatim YAML text of one `routines/<name>.yaml` file, stored as a `RoutineDefinition` row and parsed on every read (DEV-11399). The file path remains the routine's identity. `routines/*.yaml` in the workbook config git repo is only the one-time import source for workbooks that predate the table (plus a transitional one-way mirror, off by default). See [Storage and migration](#storage-and-migration).
 2. **Minimal UI** — No visual workflow builder. Users edit routine files through Scratch's existing file editor. The UI shows which routines exist and their run status.
 3. **Sequential execution** — Steps run one after another. If a step fails, the routine stops.
 4. **One at a time** — A routine can only have one active run at a time.
@@ -18,7 +18,7 @@ The term "routine" is approachable for non-technical users. It conveys something
 
 ## Routine File Format
 
-A routine file is identified by its path under `routines/` (e.g. `routines/daily-content-sync.yaml`); that path is what the API, the schedules, and the run history all key on. The text itself lives in Postgres (see [Storage and migration](#storage-and-migration)); while the transitional git mirror is on it is also written to `routines/` at the root of the workbook config repo — the same repo that already holds `syncs/` and `transformers/` — which is what `scratchmd` binaries older than DEV-12617 read. The current CLI has no routine support (DEV-12661), and its config checkout leaves `routines/` out.
+A routine file is identified by its path under `routines/` (e.g. `routines/daily-content-sync.yaml`); that path is what the API, the schedules, and the run history all key on. The text itself lives in Postgres (see [Storage and migration](#storage-and-migration)); if the transitional git mirror is turned on (it is off by default) it is also written to `routines/` at the root of the workbook config repo — the same repo that already holds `syncs/` and `transformers/` — which is what `scratchmd` binaries older than DEV-12617 read. The current CLI has no routine support (DEV-12661), and its config checkout leaves `routines/` out.
 
 ```yaml
 # routines/daily-content-sync.yaml
@@ -138,8 +138,8 @@ Future enhancement: automatically reload routines after git operations (pull, pu
 │  routines/weekly-full-publish.yaml ─► YAML text, v1 │
 └─────────────────────────────────────────────────────┘
         ▲                                   │
-        │ one-time import                   │ one-way mirror (transitional,
-        │ (routinesPendingGitImport)        │  ROUTINES_GIT_MIRROR_ENABLED)
+        │ one-time import                   │ one-way mirror (transitional, off
+        │ (routinesPendingGitImport)        │  unless ROUTINES_GIT_MIRROR_ENABLED)
         │                                   ▼
 ┌─────────────────────────────────────────────────────┐
 │  Workbook config repo (routines/*.yaml)             │
@@ -407,7 +407,7 @@ Accessible from the routine's sidebar entry or a detail panel:
 
 **Draining the long tail.** The admin code migration `routine-git-import` (`POST /code-migrations/run`) runs the same import over still-flagged workbooks in batches and reports `remainingCount`; when it holds at 0 the fallback code can be deleted.
 
-**The transitional git mirror.** While `ROUTINES_GIT_MIRROR_ENABLED` (default on) every definition change is followed by a full-state one-way mirror of `routines/` into the config repo (`RoutineGitMirrorService`), so `scratchmd routines pull|status|push` binaries older than DEV-12617 keep working. Nothing reads it back. The current CLI has no routine support (DEV-12661), and prod shows no CLI routine use, so the mirror no longer waits on old binaries aging out: flip the flag off and run the `routine-git-cleanup` code migration (refused while the mirror is on) to delete `routines/*.yaml` from git (DEV-12619); history keeps the old copies.
+**The transitional git mirror (off by default).** When `ROUTINES_GIT_MIRROR_ENABLED` is true, every definition change is followed by a full-state one-way mirror of `routines/` into the config repo (`RoutineGitMirrorService`). It existed so `scratchmd routines pull|status|push` binaries older than DEV-12617 kept working, and nothing reads it back. The current CLI has no routine support (DEV-12661) and prod showed no CLI routine use, so DEV-12619 turned the default off. With the mirror off, the `routine-git-cleanup` code migration (refused while the mirror is on) deletes `routines/*.yaml` from git; history keeps the old copies. DEV-12620 then deletes the mirror, the import, and the flag column.
 
 **Workbook export/import.** The dev-tools workbook export (`DevToolsService.exportWorkbook`) carries every definition (`filePath`, `content`, `version`, `source`; DEV-12621), and import recreates them on the new workbook. The one edit import makes to the text is rewriting `coa_`/`dfd_`/`syn_` ids to the imported workbook's new ids, since steps can reference a connection, folder or sync by id; comments and formatting are otherwise untouched. `ROUTINE` schedules already travel and need no remap because they key on the file path. `RoutineRun` history does not travel, and imported definitions are not written to the transitional git mirror.
 

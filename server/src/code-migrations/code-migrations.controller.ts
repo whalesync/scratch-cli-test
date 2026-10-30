@@ -234,8 +234,8 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'DEV-11399 final step: deletes routines/*.yaml from the config git repo of workbooks whose routine ' +
       'definitions have been imported into Postgres (routinesPendingGitImport = false), so git stops carrying ' +
       'a stale copy. REFUSES to run while ROUTINES_GIT_MIRROR_ENABLED is true — the next routine write would ' +
-      'just recreate the files. Run only after the REST-backed scratchmd CLI has shipped and the mirror is ' +
-      'off. Reversible through git history. Dry-run lists the files that would be deleted. `ids` targets ' +
+      'just recreate the files (the mirror is off by default since DEV-12619). Reversible through git ' +
+      'history. Dry-run lists the files that would be deleted. `ids` targets ' +
       'workbooks; `qty` takes that many imported workbooks that still have routine files in git, oldest first.',
   },
   {
@@ -449,7 +449,7 @@ export class CodeMigrationsController {
   /**
    * DEV-11399 final step: removes `routines/*.yaml` from the config git repo of every workbook
    * whose definitions are already in Postgres. Refused while the transitional git mirror is on —
-   * the next routine write would recreate the files, and pre-DEV-11399 CLIs still read them.
+   * the next routine write would recreate the files.
    * Never touches a still-flagged workbook (its git copy is the import source). Reversible via
    * git history; dry-run lists what would be deleted.
    */
@@ -457,7 +457,7 @@ export class CodeMigrationsController {
     if (this.scratchConfigService.isRoutinesGitMirrorEnabled()) {
       throw new BadRequestException(
         'routine-git-cleanup refused: ROUTINES_GIT_MIRROR_ENABLED is on, so the next routine write would recreate ' +
-          'the files. Disable the mirror (after the REST-backed scratchmd CLI has shipped) and retry.',
+          'the files. Unset it (the mirror is off by default since DEV-12619) and retry.',
       );
     }
     const dryRun = dto.dryRun === true;
