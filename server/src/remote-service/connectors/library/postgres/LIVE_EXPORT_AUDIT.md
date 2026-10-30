@@ -211,3 +211,10 @@ multi-value field. Not re-filed because the generic ask was canceled; leaving th
 - 2026-10-29 — Claude Opus 5.5 (atlanta worktree) — reran the MYSQL and MariaDB destination rounds on fresh workbooks
   after the DEV-12412–DEV-12415 fixes: gates 6–11 pass on both. `seed.mjs --names` now recreates `fable_qa_pg_names`,
   the DEV-12413 probe table (see MySQL STATE.md).
+- 2026-10-30 — Claude Opus 5.5 (almaty worktree, `/review-live-export MYSQL MYSQL,POSTGRES`) — re-proved the
+  MYSQL destination round's 10-29 runs on `wkb_gRTj1gfC06`, and ran a probe: an edit and a create, rrn_1JCvbZaP4y, then
+  a revert, rrn_HVfjhGAwaN, then a no-op, rrn_boLiTEAbjB. It found DEV-12660: a `jsonb` array lands in MySQL
+  `mediumtext` comma-joined (`["p", "q, r"]` → `p, q, r`, `[]` → `''`), though MySQL can create `json`. Chris
+  accepted it the same day as a known limitation: JSON fields don't carry over between different database connectors
+  yet. A Postgres → Postgres check (`wkb_DH1S7YkfRS`) keeps `jsonb` exactly, except that a string scalar is rejected
+  on create. That gap is noted on DEV-12660 too.

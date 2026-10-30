@@ -101,6 +101,7 @@ Destination-only findings (DEV-12412, DEV-12413, DEV-12414) are listed in STATE.
 | ratio | 0.30000000000000004 → 0.3 | Same 15-significant-digit behavior the Postgres audit accepted (A6). MySQL keeps all 17 digits from a literal insert; the rounding is the publish plan's Prisma `Json` storage ([DEV-12614](https://linear.app/whalesync/issue/DEV-12614)), and the canonicalizer compares at 15 |
 | meta | JSON integer above 2^53 loses digits | Known gap (STATE.md) on pull; the extra step lost on publish is [DEV-12614](https://linear.app/whalesync/issue/DEV-12614); the churn it caused is DEV-12415 (fixed) |
 | due, created_at | zero dates → NULL | Not real dates; the engine writes NULL with a warning, and runs converge |
+| meta (→ POSTGRES only) | JSON → `text`: arrays comma-joined, `[]` → `''`, string scalars unquoted | Accepted limitation (2026-10-30, [DEV-12660](https://linear.app/whalesync/issue/DEV-12660)): JSON fields don't carry over between different database connectors yet. MySQL → MySQL and MariaDB keep `json` exactly |
 
 ### Observations (not filed)
 
@@ -111,11 +112,166 @@ Destination-only findings (DEV-12412, DEV-12413, DEV-12414) are listed in STATE.
 
 ## Human remainder (not automatable — do before launch)
 
-- [ ] Full Whalesync wizard pass with a MySQL source and a MySQL destination: the connection string help text (now
-      naming 35.233.96.253), the field picker's notes, run from the UI.
+- [x] Full Whalesync wizard pass with a MySQL source and a MySQL destination: the connection string help text (now
+      naming 35.233.96.253), the field picker's notes, run from the UI. Done 2026-10-30 after
+      [DEV-12659](https://linear.app/whalesync/issue/DEV-12659) merged; see Wizard pass below.
 - [x] Airtable → MySQL: blocked on 2026-10-21 by the Airtable quota (`PUBLIC_API_BILLING_LIMIT_EXCEEDED`); ran
       2026-10-29 with a new token and base, and passes (`library/airtable/LIVE_EXPORT_AUDIT.md`, Destination: MYSQL).
-- [ ] `/review-live-export MYSQL MYSQL,POSTGRES` (the DEV-12346 "Done when" gate).
+- [x] `/review-live-export MYSQL MYSQL,POSTGRES` (the DEV-12346 "Done when" gate). Ran 2026-10-30: PASS once
+      [DEV-12660](https://linear.app/whalesync/issue/DEV-12660), its only finding, was accepted as a known limitation the
+      same day (see the Review below).
+
+## Review — 2026-10-30
+
+Verdict: **PASS**, with [DEV-12660](https://linear.app/whalesync/issue/DEV-12660) accepted as a known limitation. The
+review first returned FAIL on that one `[picker]` finding. Chris accepted it the same day: JSON fields don't carry over
+between different database connectors yet, and the fix comes later. No code or data changed in between, so the
+evidence below stands without a rerun. The finding isn't MySQL's: it reproduces from a Postgres source into MySQL, and
+the MySQL and MariaDB destinations found nothing. Every gate's evidence reproduced.
+
+Re-proved (local spinner and scratch-git from the almaty worktree at master `194edc5f7`; destinations read with mysql2
+and pg directly, never through our pull; the full-table comparisons are in the almaty worktree's `.context/review/out/`):
+
+- **Preflight**: OK for → MySQL, → MariaDB, → Postgres, and Postgres → MySQL (`/tmp/review-preflight-*.json`,
+  plan-only workbooks `wkb_2jw11r2Da4`, `wkb_6vd1zImqsK`, `wkb_rL2skgX1Eh`, and `wkb_mL6VeZ5OXK`).
+- **The author's evidence (gates 4–11)**:
+  - All 20 run ids on `wkb_F6mYRcS1G0`, `wkb_7YLSFAi2jL`, `wkb_auGDV5c6Me`, and `wkb_gRTj1gfC06` were re-read with
+    `GET /routine-runs/:id?includeJobs=true`. Statuses, per-table counts, and `failedOperations: []` match the doc.
+  - `/tmp/rerun-{A,B,C,D}-*.json` agree: `maxFieldsPerTable: 180`, three `needs_target` FKs, and `hidden_id` dropped.
+  - The gate 2 files exist.
+- **Destination read-back (gates 5, 7, and 9)**:
+  - MySQL and MariaDB: 214/3 rows; the `COLUMN_TYPE`s in "Exact types"; both `ON DELETE SET NULL` constraints by
+    name; and the `live_export:dfd_…` comments. NOT NULL and `ON UPDATE` are not copied.
+  - Every source row was compared column by column with its destination row, links mapped back to source ids. The only
+    cells that differ are `ratio`, `meta.big`, and the zero-date row's `due` and `created_at`. BIT and VARBINARY match
+    in the read side's representation (165, base64). MariaDB stores JSON compacted.
+  - Postgres: types as listed, both constraints, and `Meta` keeps `12345678901234567000`. It differs at the same cells
+    plus `Meta` for `[]` (stored `''`) and `"just a string"` (stored unquoted), which is finding 1.
+- **Fresh rerun (gate 10)**: rrn_FklF3G60BP, rrn_pynyQ25zXY, rrn_pQmsWpn0Eu, and rrn_ImDah9Hfw8 (PG → MySQL) all
+  report "No changes".
+- **Own CRUD probe (gate 8)**, on rows `crud-pass.mjs` doesn't touch (`.context/review/source-crud-probe.mjs`, tag
+  202610301500). The order below is MySQL, MariaDB, then Postgres for each step:
+  - **Phase 1**: create a contact and an invoice linked to it, re-point Filler 120 to the contact, and edit JSON
+    arrays, a JSON scalar, DATETIME(6) microseconds, BIGINT UNSIGNED max, `ratio`, and Carol's `vip`.
+    - rrn_T1IPcAL1VZ, rrn_a2RKUXCvYQ, and rrn_JUgGQfQAko each made 2 creates and 6 edits with 0 failures.
+    - The comparisons match apart from the known cells.
+    - The next runs (rrn_jsgWXK0Y8I, rrn_CmDzZgbaGw, and rrn_tjLTWit4wy) report "No changes".
+  - **Phase 2**: delete the review contact (the source FK sets its links NULL) and the review invoice, then restore
+    every edit.
+    - rrn_VnB6zcDX76, rrn_r68sZ31F0x, and rrn_LN6hFG1qoO each made 7 edits and 2 deletes.
+    - All three destinations are back to the baseline, with the links NULL.
+- **Own drift probe (gate 11)**: in each destination, tamper Filler 130's `qty` and delete Bob, which nulls the Long
+  invoice's link.
+  - rrn_ryBwUctJTo, rrn_G5AlAggp6K, and rrn_IlZo06vIiT each made 1 create and 2 edits. Bob came back, the link was
+    re-pointed, and `qty` was restored.
+  - Then rrn_bOkPmyVdOw, rrn_YioFLkPQ7t, and rrn_w036UhckPf report "No changes".
+- **PG → MySQL** (`wkb_gRTj1gfC06`): an edit to Filler 140 and a create linked to Carol.
+  - rrn_1JCvbZaP4y made 1 create and 1 edit. The `+05:30` instant is stored in UTC, `9007199254740993` is exact, and
+    the link resolves.
+  - The revert, rrn_HVfjhGAwaN, made 1 edit and 1 delete, and rrn_boLiTEAbjB reports "No changes". The destination is
+    back to 213 invoices.
+- **DEV-12614 on a second destination**: the sync's dirty write of Filler 123 holds `0.30000000000000004`.
+  `PublishPlanOperation.content` holds `0.3` for all three destinations, and so do the destination rows. The `[core]`
+  tag stands.
+- **Layers**:
+  - DEV-12412 `[core]` and DEV-12414 `[core]` hold. Notion, Supabase, Airtable, and Postgres also return `partial`
+    creates, and Airtable also declares `maxFieldsPerTable`.
+  - DEV-12413, DEV-12415, and DEV-12615 `[dest-pack]` hold. Postgres takes emoji names and didn't churn on `meta`, and
+    DEV-12615's fix is in `mysql-create-schema.ts`. DEV-12415 names its root cause, DEV-12614.
+  - No duplicates of the known generics.
+
+Findings:
+
+1. **`[picker]` The `meta` JSON → text downgrade on Postgres was never judged, and it loses data.**
+   - The plan notes Postgres `Meta` as `downgraded` ("Can't unpack this MySQL object field"). Neither Accepted
+     downgrades nor gate 4 covers it; the doc only lists "JSON → text".
+   - Postgres can create `jsonb`. Objects survive as JSON text, but arrays and string scalars don't:
+     - `["x", "y, with comma"]` becomes `x, y, with comma`;
+     - `[{"a": 1}, {"b": [2, 3]}]` becomes `{"a":1}, {"b":[2,3]}`;
+     - `[]` becomes `''`;
+     - `"just a string"` loses its quotes.
+   - Reproduced from the other direction: Postgres `jsonb` `["p", "q, r"]` lands in MySQL `mediumtext` as `p, q, r`.
+   - Cause: `inferLogicalFieldType` keeps the json kind only for schema types `object` and `array`, and both connectors
+     type JSON columns `Unknown`. The picker then comma-joins arrays.
+   - Filed as [DEV-12660](https://linear.app/whalesync/issue/DEV-12660) (Medium, related to DEV-12572 and DEV-11903).
+   - **Accepted 2026-10-30** as a known limitation, now listed under Accepted downgrades. DEV-12660 tracks the later
+     fix.
+   - DEV-12660 also notes a same-connector gap found while checking this: Postgres → Postgres rejects a `jsonb` string
+     scalar on create (`wkb_DH1S7YkfRS`). It doesn't touch this source's destinations.
+
+Observations (not filed):
+
+- **The sync step never reports deletes.** `sync-data-folders.job.ts` copies `recordsCreated` and `recordsUpdated` into
+  each table's progress, but not `recordsDeleted` / `deletedPaths`. FK-phase updates aren't counted either.
+  - Phase 2's sync read "Synced 5 records" with 0 deletes, while the publish made 7 edits and 2 deletes. The author's
+    CRUD runs show the same pattern.
+  - The web client's job indicator shows that 0; dusky reads only the publish counts.
+  - It's generic and Low.
+- **Steady-state runs always warn.** Every run, no-ops included, reads "Completed with 2 warning(s)" for the zero-date
+  row. That's truthful, since the value is still not exported.
+- **BIGINT, DECIMAL, and BIGINT UNSIGNED land as text on Postgres.** The digits are exact, and Postgres could hold
+  `numeric`. This is the same open judgment as the Postgres audit's A1, not a new finding.
+- **Linear hygiene.** DEV-12412–DEV-12415 and DEV-12615 are in project Listings & Discoverability rather than
+  `[MAJOR] Live Export`, grouped under DEV-12346. DEV-12614 has no `live-export-qa` label, which fits: it affects every
+  classic publish. Not blocking.
+
+Human remainder confirmed outstanding: the wizard pass (done the same day, see below), and, for DEV-12346's "Done
+when", MySQL in `LIVE_EXPORT_DEST_SERVICES`'s `LAUNCHED` variation (LaunchDarkly).
+
+## Wizard pass — 2026-10-30
+
+Local dusky (`localhost:3030/exports`) and bottlenose at whalesync master `7e41e7c9b`, which includes DEV-12659
+(`ee64dd3d6`). Local spinner at `194edc5f7`. Chris signed in with Google, and the rest was driven with Playwright
+over CDP. It's a MySQL → MySQL export of `fable_qa_my_src` invoices, contacts, and `fable_qa_my_wide` (185 columns)
+into a new database, `fable_qa_dest_wizard`. Workbook `wkb_HeeRSz8LgS`.
+
+Passed:
+
+- **Connect**:
+  - MySQL is offered as a destination (LaunchDarkly test env).
+  - The connection string has the placeholder `mysql://user:password@host:3306/database`, and its help text names
+    35.233.96.253.
+  - Both connections succeed, and the location picker lists the server's databases.
+- **Field picker**:
+  - Each field shows its native type (`decimal(18,6)`, `bigint unsigned`, `datetime(6)`, `json`, …).
+  - `hidden_id` is disabled with a "+ fable_qa_my_hidden" button, since that table isn't in the export.
+  - Links into a table already in the export are selected (`favorite_invoice_id`). MySQL → MySQL has no `downgraded`
+    notes, so there are no other glyphs.
+- **DEV-12659**:
+  - The wide table starts at "180 of 186". c180–c185 are unselected, each with the amber glyph. Its tooltip reads
+    "left unselected — MySQL allows at most 180 fields per table and this table has 186, so 6 fields were left out;
+    select it in place of another field to include it".
+  - Selecting c180 turns the count red (181) and shows "Too many fields selected. MySQL allows at most 180 fields per
+    table, and this table has 181 selected. Unselect 1 field." Next is disabled until c180 is unselected again.
+- **Create**: "3 tables and 212 fields are ready in MySQL" (6 + 26 + 180).
+  - The wide table has 181 columns: the injected `id` plus 180 fields, with c180–c185 absent.
+  - All three tables carry `live_export:dfd_…` comments.
+  - Both foreign keys are real `ON DELETE SET NULL` constraints.
+- **Run from the UI**:
+  - "Run first export" ran rrn_1NX8mK1d0n: "Published 219 changes" (214 + 3 + 2), 0 failed operations, and "Completed
+    with warnings" (the zero-date row).
+  - A column-by-column comparison of every row differs only at the zero-date row's `due` and `created_at`.
+  - "Rerun now" ran rrn_HpfYL5V6Xm: "No changes".
+
+Notes (only the dropped-link one is filed, as DEV-12662):
+
+- **The run-store engine was on by default.** "Use the new run-store engine (faster, experimental)" is a developer
+  option, and it came pre-checked for this account, so both runs used `liveExportEngine: run_store`. On that engine
+  `ratio` (`0.30000000000000004`) and `meta.big` (`12345678901234567000`) land exactly. DEV-12614's rounding is
+  classic-engine only, and the audit and review above cover the classic engine.
+- **Adding tables one at a time drops links.** A link field starts unselected when its target table isn't in the
+  export yet, and adding the target later doesn't select it.
+  - Invoices was added before contacts, so `contact_id` stayed unticked, with no warning, until it was ticked by hand.
+    "Add all tables" avoids this.
+  - It's the documented behavior in `usePlaceholderTables.ts` (an existing selection is never overwritten). It isn't a
+    DEV-12659 regression, and it isn't MySQL-specific.
+  - Filed as [DEV-12662](https://linear.app/whalesync/issue/DEV-12662) (Whalesync project, UI bug, Medium, S).
+- **The CA certificate field is a single-line password input.** Chrome strips the line breaks from a pasted PEM, but
+  the server normalizes newline-stripped PEMs (`pem-certificates-and-keys.ts`), so it still works. The multi-line
+  input needs a dusky bump of `@spinner/shared-types` to a version with DEV-12644's `format: 'pem'`.
+- **Not exercised:**
+  - DEV-12659's failed-table naming, since the wizard now blocks the selection that used to cause the failure.
+  - The edit-mappings flow's cap check.
 
 ## Log
 
@@ -130,3 +286,14 @@ Destination-only findings (DEV-12412, DEV-12413, DEV-12414) are listed in STATE.
   gate 10 included, so DEV-12415 is verified. The fix probes are in STATE.md's destination round. 10-21 run ids:
   first runs rrn_1csHjZixOo / rrn_6o1CE8T2gF / rrn_zjFDzf0VDg, CRUD rrn_tba1s2Y4di / rrn_VuTfEv3PF3, second runs
   rrn_i28O1s2rYr / rrn_OwZGfhAhGC / rrn_HmJy15i7M6, drift rrn_z4o6Djr6iR / rrn_tgBsPMeyfj.
+- 2026-10-30 — Claude Opus 5.5 (almaty worktree, master `194edc5f7`) — `/review-live-export MYSQL MYSQL,POSTGRES`:
+  every gate's evidence reproduced, and my own CRUD, drift, and PG → MySQL probes passed on all three destinations.
+  FAIL on one upstream finding, DEV-12660 (a JSON column crossing between MySQL and Postgres lands as text). The dusky
+  wizard pass waits on DEV-12659.
+- 2026-10-30 — Claude Opus 5.5 (almaty worktree) — Chris accepted DEV-12660 as a known limitation (JSON fields don't
+  carry over between different database connectors yet), so the review's verdict is PASS. Added `meta` (→ POSTGRES) to
+  Accepted downgrades.
+- 2026-10-30 — Claude Opus 5.5 (almaty worktree) — dusky wizard pass after DEV-12659 merged (whalesync `7e41e7c9b`):
+  MySQL → MySQL through `localhost:3030/exports` (`wkb_HeeRSz8LgS`). The over-cap fields start unselected and Next is
+  blocked over the limit. The run from the UI (rrn_1NX8mK1d0n) matches the source, and the rerun (rrn_HpfYL5V6Xm) wrote
+  nothing. Both runs used the run-store engine (pre-checked developer option).
