@@ -32,6 +32,7 @@ import { useState } from 'react';
 import { useCurrentUser } from '../../../hooks/use-current-user';
 import { credentialFieldValidationError, credentialFieldWireValue } from './credential-field-helpers';
 import { GenericApiConnectionModal } from './generic-api-connection-modal';
+import { PemCredentialField } from './pem-credential-field';
 import { StringListCredentialField } from './string-list-credential-field';
 
 interface CreateConnectionModalProps {
@@ -223,6 +224,16 @@ export function CreateConnectionModal({
   };
 
   const renderField = (field: ConnectorSettingDefinition) => {
+    if (field.format === 'pem') {
+      return (
+        <PemCredentialField
+          key={field.key}
+          field={field}
+          value={(fieldValues[field.key] as string) ?? ''}
+          onChange={(pemText) => setFieldValue(field.key, pemText)}
+        />
+      );
+    }
     if (field.type === 'boolean') {
       return (
         <Checkbox

@@ -6,6 +6,7 @@ import { AuthType, type ConnectorAccount, type ConnectorSettingDefinition } from
 import { useEffect, useState } from 'react';
 import { credentialFieldValidationError, stringListRowsFromAccountExtras } from './credential-field-helpers';
 import { GenericApiConnectionModal } from './generic-api-connection-modal';
+import { PemCredentialField } from './pem-credential-field';
 import { StringListCredentialField } from './string-list-credential-field';
 
 interface UpdateConnectionModalProps {
@@ -142,6 +143,16 @@ function StandardUpdateConnectionModal({ opened, onClose, workbookId, connectorA
   const isUserProvidedParams = connectorAccount.authType === AuthType.USER_PROVIDED_PARAMS;
 
   const renderField = (field: ConnectorSettingDefinition) => {
+    if (field.format === 'pem') {
+      return (
+        <PemCredentialField
+          key={field.key}
+          field={field}
+          value={(fieldValues[field.key] as string) ?? ''}
+          onChange={(pemText) => setFieldValue(field.key, pemText)}
+        />
+      );
+    }
     if (field.type === 'boolean') {
       return (
         <Checkbox

@@ -432,6 +432,11 @@ describe('MysqlConnector metadata', () => {
       .filter((credentialField) => credentialField.type === 'password')
       .map((credentialField) => credentialField.key);
     expect(secretFieldKeys).toEqual(['connectionString', 'sslCaCertificate']);
+    // The CA certificate is multi-line PEM, so clients that know `format` render a textarea with "Load from file".
+    const pemFieldKeys = credentialFields
+      .filter((credentialField) => credentialField.format === 'pem')
+      .map((credentialField) => credentialField.key);
+    expect(pemFieldKeys).toEqual(['sslCaCertificate']);
   });
 
   it('offers a modifiedAtField picker limited to TIMESTAMP (date-time) and DATETIME (date-time-local) columns', () => {

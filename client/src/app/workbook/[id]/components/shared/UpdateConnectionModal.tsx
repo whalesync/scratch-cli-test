@@ -8,6 +8,7 @@ import { Alert, Checkbox, ModalProps, PasswordInput, Stack, TextInput } from '@m
 import { AuthType, ConnectorAccount, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 import { GenericApiConnectionModal } from './GenericApiConnectionModal';
+import { PemCredentialField } from './PemCredentialField';
 import {
   credentialFieldValidationError,
   StringListCredentialField,
@@ -146,6 +147,16 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
   const isUserProvidedParams = connectorAccount?.authType === AuthType.USER_PROVIDED_PARAMS;
 
   const renderField = (field: ConnectorSettingDefinition) => {
+    if (field.format === 'pem') {
+      return (
+        <PemCredentialField
+          key={field.key}
+          field={field}
+          value={(fieldValues[field.key] as string) ?? ''}
+          onChange={(pemText) => setFieldValue(field.key, pemText)}
+        />
+      );
+    }
     if (field.type === 'boolean') {
       return (
         <Checkbox

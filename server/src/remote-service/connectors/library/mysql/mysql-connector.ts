@@ -273,6 +273,7 @@ export class MysqlConnector extends Connector {
         {
           key: 'sslCaCertificate',
           type: 'password',
+          format: 'pem',
           label: 'CA certificate (PEM)',
           description:
             "Optional: your provider's CA certificate bundle. Adding one turns on certificate verification (VERIFY_CA). Amazon RDS and publicly trusted certificates verify without one.",

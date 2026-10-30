@@ -30,6 +30,14 @@ export interface ConnectorSettingDefinition {
    * exactly like a `string` field.
    */
   type: 'boolean' | 'number' | 'string' | 'password' | 'field-select' | 'string-list';
+  /**
+   * `pem`: the value is one or more PEM blocks (a certificate, a CA bundle, or
+   * a private key). Clients that know it render a multi-line monospace textarea
+   * with a "Load from file" button instead of the input `type` picks; clients
+   * that don't keep rendering by `type`, so the field still works. The value
+   * travels exactly like a `string` field's.
+   */
+  format?: 'pem';
   label: string;
   description?: string;
   placeholder?: string;

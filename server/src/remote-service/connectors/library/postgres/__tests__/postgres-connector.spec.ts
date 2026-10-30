@@ -108,6 +108,25 @@ function buildTableSpec(): BaseJsonTableSpec {
   };
 }
 
+describe('PostgresConnector.metadata credential fields', () => {
+  it('masks every field and marks the certificate and key fields as multi-line PEM', () => {
+    const credentialFields = PostgresConnector.metadata.credentialFields?.user_provided_params ?? [];
+
+    expect(credentialFields.map((credentialField) => credentialField.key)).toEqual([
+      'connectionString',
+      'sslCaCertificate',
+      'sslClientCertificate',
+      'sslClientKey',
+    ]);
+    // `format: 'pem'` changes only the input; `type: 'password'` keeps older clients masking them.
+    expect(credentialFields.every((credentialField) => credentialField.type === 'password')).toBe(true);
+    const pemFieldKeys = credentialFields
+      .filter((credentialField) => credentialField.format === 'pem')
+      .map((credentialField) => credentialField.key);
+    expect(pemFieldKeys).toEqual(['sslCaCertificate', 'sslClientCertificate', 'sslClientKey']);
+  });
+});
+
 describe('PostgresConnector.listCreateDestinations', () => {
   let connector: PostgresConnector;
 

@@ -35,6 +35,7 @@ import { useState } from 'react';
 import { useConnectors } from '@/hooks/use-connectors';
 import type { ConnectorAccount } from '@spinner/shared-types';
 import { GenericApiConnectionModal } from './GenericApiConnectionModal';
+import { PemCredentialField } from './PemCredentialField';
 import {
   credentialFieldValidationError,
   credentialFieldWireValue,
@@ -226,6 +227,16 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
   };
 
   const renderField = (field: ConnectorSettingDefinition) => {
+    if (field.format === 'pem') {
+      return (
+        <PemCredentialField
+          key={field.key}
+          field={field}
+          value={(fieldValues[field.key] as string) ?? ''}
+          onChange={(pemText) => setFieldValue(field.key, pemText)}
+        />
+      );
+    }
     if (field.type === 'boolean') {
       return (
         <Checkbox

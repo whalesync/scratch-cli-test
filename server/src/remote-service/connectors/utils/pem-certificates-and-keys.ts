@@ -3,10 +3,10 @@
  * Postgres's server CA certificate, client certificate and client private key) into canonical PEM: every block
  * re-wrapped to 64-character lines, one block after another.
  *
- * Pastes arrive mangled in predictable ways — the fields are single-line (password) inputs, so newlines are
- * stripped or replaced by spaces; JSON-escaped pastes carry literal `\n`; Windows files use CRLF; exported bundles
- * carry "Bag Attributes" or comment lines between blocks; the Amazon RDS global bundle holds ~120 certificates
- * (~160 KB). All of those are accepted. What doesn't belong in a field is rejected with a specific message: a
+ * Pastes arrive mangled in predictable ways — clients that render the fields as single-line (password) inputs (any
+ * that predate `format: 'pem'`) strip newlines or replace them with spaces; JSON-escaped pastes carry literal `\n`;
+ * Windows files use CRLF; exported bundles carry "Bag Attributes" or comment lines between blocks; the Amazon RDS
+ * global bundle holds ~120 certificates (~160 KB). All of those are accepted. What doesn't belong in a field is rejected with a specific message: a
  * private key in a certificate field, a certificate (or nothing) in a key field, a passphrase-encrypted key,
  * PKCS#7 / "TRUSTED CERTIFICATE" containers, and blocks Node can't read.
  *

@@ -133,6 +133,7 @@ export class PostgresConnector extends Connector {
         {
           key: 'sslCaCertificate',
           type: 'password',
+          format: 'pem',
           label: POSTGRES_TLS_CERTIFICATE_FIELD_LABELS.sslCaCertificate,
           placeholder: '-----BEGIN CERTIFICATE-----',
           description:
@@ -141,6 +142,7 @@ export class PostgresConnector extends Connector {
         {
           key: 'sslClientCertificate',
           type: 'password',
+          format: 'pem',
           label: POSTGRES_TLS_CERTIFICATE_FIELD_LABELS.sslClientCertificate,
           placeholder: '-----BEGIN CERTIFICATE-----',
           description:
@@ -149,6 +151,7 @@ export class PostgresConnector extends Connector {
         {
           key: 'sslClientKey',
           type: 'password',
+          format: 'pem',
           label: POSTGRES_TLS_CERTIFICATE_FIELD_LABELS.sslClientKey,
           placeholder: '-----BEGIN PRIVATE KEY-----',
           description:
