@@ -514,6 +514,103 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     expect(second.status).toBe(204);
   });
 
+  // 7b — DEV-12578: deprovisioning a REAL Scratch account (adopted by email) only unlinks it. The user, org, and
+  // native workbooks stay; the Live Export, the Whalesync plan, the session tokens, and the link go. Seeds the
+  // native account directly, so it needs a local DB matching the target server (skipped in API-only mode).
+  (isApiOnlyMode ? it.skip : it)(
+    'deprovisions an adopted real Scratch user by unlinking it, keeping its org and native workbooks',
+    async () => {
+      const prisma = prismaForDbRowAssertions;
+      if (!prisma) return; // narrowing for TS; the it/it.skip guard already gates execution
+
+      const whalesyncUserId = randomUUID();
+      const email = `deprovision-adopted-${whalesyncUserId}@example.com`;
+      const nativeUserId = `usr_test_${randomUUID()}`;
+      const nativeClerkId = `user_test_${randomUUID()}`;
+      const nativeOrganizationId = `org_test_${randomUUID()}`;
+      const nativeWorkbookId = `wkb_test_${randomUUID()}`;
+
+      // A native Scratch account (real Clerk login) with its own org and a native workbook (DB row only).
+      await prisma.organization.create({
+        data: { id: nativeOrganizationId, clerkId: nativeClerkId, name: 'Native Organization' },
+      });
+      await prisma.user.create({
+        data: { id: nativeUserId, clerkId: nativeClerkId, email, organizationId: nativeOrganizationId },
+      });
+      await prisma.workbook.create({
+        data: {
+          id: nativeWorkbookId,
+          name: 'Native workbook',
+          organizationId: nativeOrganizationId,
+          userId: nativeUserId,
+        },
+      });
+
+      try {
+        // Whalesync adopts the account by email and grants the Whalesync plan.
+        const session = await createSession(whalesyncUserId, email, 'Ada Lovelace', { status: 'active' });
+        expect(session.scratchUserId).toBe(nativeUserId);
+
+        // A Live Export created through the API under the Whalesync session, so it has a real repo to tear down.
+        const liveExportResponse = await axios.post<{ id: string }>(
+          `${apiUrl}/workbook`,
+          { name: 'Deals export', managedBy: 'ws_export' },
+          { headers: { Authorization: `API-Token ${session.apiToken}` } },
+        );
+        const liveExportWorkbookId = liveExportResponse.data.id;
+        expect(liveExportWorkbookId).toBeTruthy();
+
+        const first = await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {
+          headers: adminHeaders,
+          ...anyStatus,
+        });
+        expect(first.status).toBe(204);
+
+        // The account is kept with its native login, but no longer linked to Whalesync.
+        const userRow = await prisma.user.findUnique({ where: { id: nativeUserId } });
+        expect(userRow).not.toBeNull();
+        expect(userRow?.clerkId).toBe(nativeClerkId);
+        expect(userRow?.organizationId).toBe(nativeOrganizationId);
+        expect(userRow?.whalesyncUserId).toBeNull();
+
+        // The org and the native workbook stay; only the Live Export is gone.
+        expect(await prisma.organization.findUnique({ where: { id: nativeOrganizationId } })).not.toBeNull();
+        expect(await prisma.workbook.findUnique({ where: { id: nativeWorkbookId } })).not.toBeNull();
+        expect(await prisma.workbook.findUnique({ where: { id: liveExportWorkbookId } })).toBeNull();
+
+        // The Whalesync session tokens and the Whalesync plan are gone.
+        const sessionTokenCount = await prisma.apiToken.count({
+          where: { userId: nativeUserId, type: 'WHALESYNC_SESSION' },
+        });
+        expect(sessionTokenCount).toBe(0);
+        const whalesyncPlanSubscriptionCount = await prisma.subscription.count({
+          where: { organizationId: nativeOrganizationId, planType: 'WHALESYNC_PLAN' },
+        });
+        expect(whalesyncPlanSubscriptionCount).toBe(0);
+        expect((await fetchCurrentUser(session.apiToken)).status).toBe(401);
+
+        // Idempotent: a second deprovision is a no-op and the account is still there.
+        const second = await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {
+          headers: adminHeaders,
+          ...anyStatus,
+        });
+        expect(second.status).toBe(204);
+        expect(await prisma.user.findUnique({ where: { id: nativeUserId } })).not.toBeNull();
+      } finally {
+        // Deprovision through the server first (idempotent), so a Live Export left by a failed assertion has its
+        // repo torn down rather than orphaned. Then remove the seeded rows; deleting the org cascades the rest.
+        await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {
+          headers: adminHeaders,
+          ...anyStatus,
+        });
+        await prisma.workbook.deleteMany({ where: { id: nativeWorkbookId } });
+        await prisma.apiToken.deleteMany({ where: { userId: nativeUserId } });
+        await prisma.user.deleteMany({ where: { id: nativeUserId } });
+        await prisma.organization.deleteMany({ where: { id: nativeOrganizationId } });
+      }
+    },
+  );
+
   // 8 — admin guard
   describe('ScratchAdminGuard', () => {
     const body = { whalesyncUserId: randomUUID(), email: 'guard@example.com' };

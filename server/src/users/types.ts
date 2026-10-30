@@ -51,6 +51,20 @@ export function isSystemActor(actor: Actor): boolean {
   return actor.userId === SYSTEM_ACTOR.userId;
 }
 
+/** Prefix of the synthetic `ws_<whalesyncUserId>` clerkId given to a user Whalesync provisioned with no Clerk login. */
+export const WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX = 'ws_';
+
+/**
+ * Whether the user is a pure Whalesync shadow user: an account Whalesync created, which still carries the synthetic
+ * `ws_<whalesyncUserId>` clerkId and so has never had a real Clerk login. A user adopted into either identity (a native
+ * account linked to Whalesync by email, or a shadow row that later signed in natively) has a real clerkId and is NOT
+ * a pure shadow user. A user with no clerkId at all is not one either, so callers that destroy data on this check
+ * fail safe.
+ */
+export function isPureWhalesyncShadowUser(user: Pick<UserCluster.User, 'clerkId'>): boolean {
+  return user.clerkId?.startsWith(WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX) === true;
+}
+
 export function userToActor(user: UserCluster.User): Actor {
   if (!user.organizationId) {
     WSLogger.error({

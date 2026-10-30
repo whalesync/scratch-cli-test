@@ -30,7 +30,7 @@ import {
   generateWebsocketTokenExpirationDate,
   generateWhalesyncSessionTokenExpirationDate,
 } from './tokens';
-import { UserSettings } from './types';
+import { isPureWhalesyncShadowUser, UserSettings, WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX } from './types';
 
 // When the waitlist is required, the user is blocked from using the app and will get an email until an
 // admin clicks approve.
@@ -367,7 +367,7 @@ export class UsersService {
           conflictingUserId: userOwningEmail.id,
         });
         const shadowUserWithoutEmail = await this.createUserWithOrgAndDefaultWorkbook({
-          clerkId: `ws_${whalesyncUserId}`,
+          clerkId: `${WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX}${whalesyncUserId}`,
           whalesyncUserId,
           name,
           // email omitted: the address is owned by another identity and the column is @unique.
@@ -382,7 +382,7 @@ export class UsersService {
 
     // 4. Nobody owns the email — create a fresh shadow user with the real, un-prefixed email.
     const newShadowUser = await this.createUserWithOrgAndDefaultWorkbook({
-      clerkId: `ws_${whalesyncUserId}`,
+      clerkId: `${WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX}${whalesyncUserId}`,
       whalesyncUserId,
       name,
       email: normalizedEmail,
@@ -443,7 +443,7 @@ export class UsersService {
     existingUser: UserCluster.User,
     clerkUserId: string,
   ): Promise<UserCluster.User> {
-    const replacingRealClerkIdentity = !!existingUser.clerkId && !existingUser.clerkId.startsWith('ws_');
+    const replacingRealClerkIdentity = !!existingUser.clerkId && !isPureWhalesyncShadowUser(existingUser);
     const logContext = {
       source: 'UsersService',
       userId: existingUser.id,
@@ -550,6 +550,21 @@ export class UsersService {
       where: { userId, type: TokenType.WHALESYNC_SESSION },
     });
     return count;
+  }
+
+  /**
+   * Removes a user's link to their Whalesync identity: revokes their WHALESYNC_SESSION tokens and clears
+   * `whalesyncUserId`, in one transaction so the user is never left linked with no sessions or unlinked with live
+   * ones. The inverse of {@link adoptExistingUserIntoWhalesyncIdentity}, used when Whalesync deprovisions a real
+   * Scratch account (DEV-12578). Deliberately touches nothing else: the user's clerkId (their native login), email,
+   * organization, workspace permissions, and CLI/desktop (USER/WEBSOCKET) tokens all stay.
+   */
+  public async unlinkUserFromWhalesyncIdentity(userId: string): Promise<{ revokedWhalesyncSessionTokenCount: number }> {
+    const [revokedWhalesyncSessionTokens] = await this.db.client.$transaction([
+      this.db.client.apiToken.deleteMany({ where: { userId, type: TokenType.WHALESYNC_SESSION } }),
+      this.db.client.user.update({ where: { id: userId }, data: { whalesyncUserId: null } }),
+    ]);
+    return { revokedWhalesyncSessionTokenCount: revokedWhalesyncSessionTokens.count };
   }
 
   /**

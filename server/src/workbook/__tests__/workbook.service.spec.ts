@@ -319,6 +319,20 @@ describe('WorkbookService', () => {
     });
   });
 
+  describe('findIdsOfLiveExportWorkbooksCreatedByUser', () => {
+    it('selects only the ws_export workbooks the user created, not ones they can reach by membership', async () => {
+      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue([{ id: 'wkb_live_export' }]);
+
+      const result = await service.findIdsOfLiveExportWorkbooksCreatedByUser('usr_test');
+
+      expect(dbService.client.workbook.findMany).toHaveBeenCalledWith({
+        where: { userId: 'usr_test', managedBy: WorkbookManager.WS_EXPORT },
+        select: { id: true },
+      });
+      expect(result).toEqual(['wkb_live_export']);
+    });
+  });
+
   describe('delete', () => {
     it('deletes a V2 workbook with per-connection repos', async () => {
       (dbService.client.workbook.findFirst as jest.Mock).mockResolvedValue(createMockWorkbook(2));

@@ -103,7 +103,11 @@ export class WhalesyncController {
     return this.whalesyncInternalService.clearWhalesyncSubscriptionForWhalesyncUser(whalesyncUserId);
   }
 
-  /** Deprovision a shadow user (workbooks, org, user, tokens). Idempotent if the user does not exist. */
+  /**
+   * Deprovision the Scratch user linked to a Whalesync user. A pure shadow user is deleted (workbooks, org, user,
+   * tokens). A real Scratch account is only unlinked: its Live Exports, Whalesync plan, and session tokens go, and the
+   * user, org, and native workbooks stay. Idempotent if the user does not exist or is already unlinked.
+   */
   @Delete('users/:whalesyncUserId')
   @HttpCode(204)
   async deprovisionUser(@Param('whalesyncUserId') whalesyncUserId: string): Promise<void> {

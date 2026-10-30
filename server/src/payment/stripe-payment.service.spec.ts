@@ -536,6 +536,41 @@ describe('StripePaymentService', () => {
       expect(mockDbService.client.subscription.deleteMany).not.toHaveBeenCalled();
     });
 
+    it('removes only the Whalesync-plan row beside a real subscription when told not to throw', async () => {
+      const user = createMockUser({
+        id: 'usr_paid_and_linked',
+        organizationId: 'org_paid_and_linked',
+        organization: {
+          id: 'org_paid_and_linked',
+          subscriptions: [
+            {
+              id: 'sub_pro',
+              userId: 'usr_paid_and_linked',
+              planType: ScratchPlanType.PRO_PLAN,
+              expiration: new Date(Date.now() + 86400000),
+              stripeStatus: 'active',
+            },
+            {
+              id: 'sub_whalesync',
+              userId: 'usr_paid_and_linked',
+              planType: ScratchPlanType.WHALESYNC_PLAN,
+              expiration: new Date(Date.now() + 86400000),
+              stripeStatus: 'active',
+            },
+          ],
+        },
+      });
+
+      const result = await service.clearWhalesyncPlanSubscription(user, { throwOnRealSubscriptionConflict: false });
+
+      expect(result).toEqual({ cleared: true });
+      // Scoped to WHALESYNC_PLAN, so the real Pro subscription is untouched.
+      expect(mockDbService.client.subscription.deleteMany).toHaveBeenCalledTimes(1);
+      expect(mockDbService.client.subscription.deleteMany).toHaveBeenCalledWith({
+        where: { organizationId: 'org_paid_and_linked', planType: ScratchPlanType.WHALESYNC_PLAN },
+      });
+    });
+
     it('is an idempotent no-op when there is no Whalesync-plan subscription to clear', async () => {
       const user = createMockUser({
         id: 'usr_free',

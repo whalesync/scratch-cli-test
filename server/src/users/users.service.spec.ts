@@ -90,6 +90,8 @@ describe('UsersService — Whalesync shadow users', () => {
         workspaceInvites: {
           findMany: jest.fn().mockResolvedValue([]),
         },
+        // Array form: resolves the already-built operations, the way Prisma runs them in one transaction.
+        $transaction: jest.fn((operations: Promise<unknown>[]) => Promise.all(operations)),
       },
     } as unknown as jest.Mocked<DbService>;
 
@@ -416,6 +418,27 @@ describe('UsersService — Whalesync shadow users', () => {
       expect(dbService.client.apiToken.deleteMany).toHaveBeenCalledWith({
         where: { userId: 'usr_shadow_1', type: 'WHALESYNC_SESSION' },
       });
+    });
+  });
+
+  describe('unlinkUserFromWhalesyncIdentity', () => {
+    it('revokes only WHALESYNC_SESSION tokens and clears whalesyncUserId in one transaction', async () => {
+      (dbService.client.apiToken.deleteMany as jest.Mock).mockResolvedValue({ count: 2 });
+      (dbService.client.user.update as jest.Mock).mockResolvedValue({ id: 'usr_real_1', whalesyncUserId: null });
+
+      const result = await service.unlinkUserFromWhalesyncIdentity('usr_real_1');
+
+      expect(result).toEqual({ revokedWhalesyncSessionTokenCount: 2 });
+      expect(dbService.client.$transaction).toHaveBeenCalledTimes(1);
+      expect(dbService.client.apiToken.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'usr_real_1', type: 'WHALESYNC_SESSION' },
+      });
+      // Only the Whalesync link is cleared: clerkId, email, and organizationId are left alone.
+      expect(dbService.client.user.update).toHaveBeenCalledWith({
+        where: { id: 'usr_real_1' },
+        data: { whalesyncUserId: null },
+      });
+      expect(dbService.client.user.delete).not.toHaveBeenCalled();
     });
   });
 

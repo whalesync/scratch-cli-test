@@ -455,21 +455,28 @@ export class StripePaymentService {
    * Refuses (throws {@link ConflictException} → 409) if the organization has a real, active Scratch
    * Stripe subscription: `WHALESYNC_PLAN` is the only synthetic, non-Stripe plan, so a "real Scratch
    * Stripe subscription" is exactly an active subscription whose `planType` is not `WHALESYNC_PLAN`
-   * (a paid `PRO_PLAN`/`MAX_PLAN`). Those are genuine paying customers we must never downgrade.
+   * (a paid `PRO_PLAN`/`MAX_PLAN`). Those are genuine paying customers we must never downgrade. Pass
+   * `throwOnRealSubscriptionConflict: false` to skip that refusal and remove just the `WHALESYNC_PLAN` rows: the
+   * delete is scoped to that plan type, so the real subscription is untouched either way. Deprovisioning a real
+   * Scratch account does this (DEV-12578), since the Whalesync grant must go even when the user also pays.
    *
    * The Whalesync row is deleted (not soft-canceled) so its deterministic `whalesync_<orgId>`
    * `stripeSubscriptionId` is freed and `ensureWhalesyncPlanSubscription` can cleanly re-grant it if the
    * user later re-subscribes to Whalesync. Idempotent: an organization with no Whalesync row returns
    * `{ cleared: false }` rather than failing, so retried Bottlenose lifecycle hooks are safe.
    */
-  async clearWhalesyncPlanSubscription(user: UserCluster.User): Promise<{ cleared: boolean }> {
+  async clearWhalesyncPlanSubscription(
+    user: UserCluster.User,
+    opts: { throwOnRealSubscriptionConflict?: boolean } = {},
+  ): Promise<{ cleared: boolean }> {
+    const throwOnRealSubscriptionConflict = opts.throwOnRealSubscriptionConflict ?? true;
     const subscriptions = user.organization?.subscriptions ?? [];
 
     // A real, active Scratch Stripe subscription (paid Pro/Max) must never be touched — refuse loudly.
     const activeRealStripeSubscriptions = getActiveSubscriptions(subscriptions).filter(
       (subscription) => getPlanTypeFromString(subscription.planType) !== ScratchPlanType.WHALESYNC_PLAN,
     );
-    if (activeRealStripeSubscriptions.length > 0) {
+    if (throwOnRealSubscriptionConflict && activeRealStripeSubscriptions.length > 0) {
       throw new ConflictException('User has an active Scratch subscription; refusing to clear the Whalesync plan.');
     }
 

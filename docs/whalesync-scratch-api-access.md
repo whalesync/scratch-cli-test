@@ -204,6 +204,11 @@ POST /internal/whalesync/users
 DELETE /internal/whalesync/users/:whalesyncUserId
   Deprovision a shadow user. Must route through WorkbookService.delete so the
   user's repos/jobs/tables are cleaned up (per the deletion rule in CLAUDE.md).
+  204, idempotent. Only a pure shadow user (synthetic ws_ clerkId) is deleted.
+  A real Scratch account linked to Whalesync (adopted by email, or signed in
+  natively) is unlinked instead: its Live Export workbooks, WHALESYNC_PLAN
+  subscription, and session tokens go; the user, org, and native workbooks
+  stay (DEV-12578).
 
 GET /internal/whalesync/users/:whalesyncUserId/live-exports
   200:    { liveExports: [{ id, name, createdAt, updatedAt }] }   // newest first

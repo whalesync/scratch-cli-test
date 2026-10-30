@@ -6,9 +6,10 @@ import {
   WorkbookId,
   WorkbookManager,
 } from '@spinner/shared-types';
+import { UserCluster } from 'src/db/cluster-types';
 import { WSLogger } from 'src/logger';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
-import { userToActor } from 'src/users/types';
+import { isPureWhalesyncShadowUser, userToActor } from 'src/users/types';
 import { UsersService } from 'src/users/users.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 
@@ -17,7 +18,7 @@ const LOG_SOURCE = 'WhalesyncInternalService';
 /**
  * Orchestrates the server-to-server operations Bottlenose drives over the admin channel: provisioning
  * shadow users, minting/revoking their short-lived browser session tokens, listing their Live Exports, and
- * deprovisioning them.
+ * deprovisioning them (deleting a pure shadow user, or unlinking a real Scratch account from Whalesync).
  *
  * This service (rather than {@link UsersService}) owns deprovisioning because tearing a shadow user down
  * must route through {@link WorkbookService.executeHardDeleteWorkbook} (the CLAUDE.md cleanup rule), and
@@ -150,7 +151,36 @@ export class WhalesyncInternalService {
   }
 
   /**
-   * Deprovision a shadow user, following the same rules as `DevToolsService.hardDeleteUser`:
+   * Deprovision the Scratch user linked to a Whalesync user, when Whalesync deletes or archives that account. What
+   * happens depends on whether the Scratch user is a pure shadow user or a real Scratch account (DEV-12578):
+   *
+   *   - **Pure shadow user** (synthetic `ws_` clerkId, see {@link isPureWhalesyncShadowUser}): Whalesync created the
+   *     account and it has never had a native login, so it is deleted outright. See
+   *     {@link deleteShadowUserWithItsOrganizationAndOwnedWorkbooks}.
+   *   - **Real Scratch account** (a native account adopted by email, or a shadow row that later signed in natively):
+   *     the person still uses Scratch, so only the Whalesync link and what belongs to the Whalesync account go. The
+   *     user, their organization, and their native workbooks are kept. See
+   *     {@link unlinkRealScratchUserFromWhalesyncIdentity}.
+   *
+   * Idempotent: a user that doesn't exist (or is no longer linked) is a no-op, so the endpoint keeps returning 204 to
+   * Bottlenose's retries.
+   */
+  public async deprovisionWhalesyncUser(whalesyncUserId: string): Promise<void> {
+    const linkedUser = await this.usersService.findByWhalesyncUserId(whalesyncUserId);
+    if (!linkedUser) {
+      // Already gone or unlinked (or never provisioned) — idempotent success.
+      return;
+    }
+
+    if (isPureWhalesyncShadowUser(linkedUser)) {
+      await this.deleteShadowUserWithItsOrganizationAndOwnedWorkbooks(linkedUser, whalesyncUserId);
+    } else {
+      await this.unlinkRealScratchUserFromWhalesyncIdentity(linkedUser, whalesyncUserId);
+    }
+  }
+
+  /**
+   * Delete a pure shadow user, following the same rules as `DevToolsService.hardDeleteUser`:
    *   1. Only when the user is the SOLE member of their organization, delete every workbook OWNED by that
    *      organization through {@link WorkbookService.executeHardDeleteWorkbook} (so repos/jobs/tables are
    *      cleaned up), then delete the user (cascading its tokens and workspace permissions) and the
@@ -159,15 +189,12 @@ export class WhalesyncInternalService {
    *
    * Workbooks are picked by `Workbook.organizationId`, never by membership: a workbook another organization
    * shared with this user is not theirs to delete, and their permission on it goes away with the user row
-   * (DEV-12427). Idempotent: a user that doesn't exist is a no-op.
+   * (DEV-12427).
    */
-  public async deprovisionWhalesyncUser(whalesyncUserId: string): Promise<void> {
-    const shadowUser = await this.usersService.findByWhalesyncUserId(whalesyncUserId);
-    if (!shadowUser) {
-      // Already gone (or never provisioned) — idempotent success.
-      return;
-    }
-
+  private async deleteShadowUserWithItsOrganizationAndOwnedWorkbooks(
+    shadowUser: UserCluster.User,
+    whalesyncUserId: string,
+  ): Promise<void> {
     const shadowUserOrganizationId = shadowUser.organizationId ?? undefined;
     const isSoleMemberOfOrganization = await this.usersService.isSoleMemberOfOrganization(shadowUser);
 
@@ -179,7 +206,9 @@ export class WhalesyncInternalService {
 
     WSLogger.info({
       source: LOG_SOURCE,
-      message: `Deprovisioning shadow user ${shadowUser.id}: deleting ${workbookIdsOwnedByShadowUserOrganization.length} workbook(s), organizationDeleted=${isSoleMemberOfOrganization}`,
+      message: `Deprovisioning shadow user ${shadowUser.id} by deleting it: deleting ${workbookIdsOwnedByShadowUserOrganization.length} workbook(s), organizationDeleted=${isSoleMemberOfOrganization}`,
+      deprovisionBranch: 'delete',
+      scratchUserId: shadowUser.id,
       whalesyncUserId,
       organizationId: shadowUserOrganizationId,
     });
@@ -195,5 +224,49 @@ export class WhalesyncInternalService {
       shadowUser.id,
       isSoleMemberOfOrganization ? shadowUserOrganizationId : undefined,
     );
+  }
+
+  /**
+   * Detach a real Scratch account from the Whalesync identity being deprovisioned, keeping the account itself: the
+   * user row, their organization, their workspace permissions, and every workbook that isn't a Live Export stay.
+   *   1. Hard-delete the Live Export (`ws_export`) workbooks the user created. They belong to the Whalesync account,
+   *      and their scheduled runs would otherwise keep exporting with no Whalesync owner.
+   *   2. Remove the internal `WHALESYNC_PLAN` subscription. A real Scratch Stripe subscription is never touched, and
+   *      having one does not block the unlink.
+   *   3. Revoke the WHALESYNC_SESSION tokens and clear `whalesyncUserId`, together.
+   *
+   * The unlink runs last on purpose: until it commits, the user is still found by `whalesyncUserId`, so if an
+   * earlier step throws, Bottlenose's retry re-runs every (idempotent) step. Once it commits, a retry is a no-op.
+   */
+  private async unlinkRealScratchUserFromWhalesyncIdentity(
+    realScratchUser: UserCluster.User,
+    whalesyncUserId: string,
+  ): Promise<void> {
+    const liveExportWorkbookIdsCreatedByUser = await this.workbookService.findIdsOfLiveExportWorkbooksCreatedByUser(
+      realScratchUser.id,
+    );
+
+    const actor = userToActor(realScratchUser);
+    for (const workbookId of liveExportWorkbookIdsCreatedByUser) {
+      await this.workbookService.executeHardDeleteWorkbook(workbookId, { actor });
+    }
+
+    const { cleared: whalesyncPlanSubscriptionCleared } =
+      await this.stripePaymentService.clearWhalesyncPlanSubscription(realScratchUser, {
+        throwOnRealSubscriptionConflict: false,
+      });
+
+    const { revokedWhalesyncSessionTokenCount } = await this.usersService.unlinkUserFromWhalesyncIdentity(
+      realScratchUser.id,
+    );
+
+    WSLogger.info({
+      source: LOG_SOURCE,
+      message: `Deprovisioned Whalesync identity from real Scratch user ${realScratchUser.id} by unlinking it: kept the user and organization, deleted ${liveExportWorkbookIdsCreatedByUser.length} Live Export workbook(s), whalesyncPlanSubscriptionCleared=${whalesyncPlanSubscriptionCleared}, revoked ${revokedWhalesyncSessionTokenCount} session token(s)`,
+      deprovisionBranch: 'unlink',
+      scratchUserId: realScratchUser.id,
+      whalesyncUserId,
+      organizationId: realScratchUser.organizationId ?? undefined,
+    });
   }
 }
