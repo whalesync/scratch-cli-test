@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { assertUnreachable } from 'src/utils/asserts';
+import { ConnectorAuthTokenOrProvider, toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 import {
   SQUARE_ALL_ORDER_STATES,
@@ -74,16 +75,22 @@ export function toSquareError(error: unknown): unknown {
   return new SquareError(message, error.response.status, squareErrors, error.response.data);
 }
 
-function buildSquareHttpClient(accessToken: string, environment: SquareEnvironment): AxiosInstance {
-  return createApiClient({
-    baseURL: SQUARE_API_BASE_URL_BY_ENVIRONMENT[environment],
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      'Square-Version': SQUARE_CONNECTOR_API_VERSION,
+function buildSquareHttpClient(
+  accessTokenOrProvider: ConnectorAuthTokenOrProvider,
+  environment: SquareEnvironment,
+): AxiosInstance {
+  const accessTokenProvider = toConnectorAuthTokenProvider(accessTokenOrProvider);
+  return createApiClient(
+    {
+      baseURL: SQUARE_API_BASE_URL_BY_ENVIRONMENT[environment],
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'Square-Version': SQUARE_CONNECTOR_API_VERSION,
+      },
     },
-  });
+    { authorizationHeaderValueProvider: async () => `Bearer ${await accessTokenProvider()}` },
+  );
 }
 
 /** One page of records from a list/search endpoint, plus where a resumed pull should continue. */

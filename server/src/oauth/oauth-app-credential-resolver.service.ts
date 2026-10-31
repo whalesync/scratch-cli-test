@@ -52,6 +52,7 @@ type OAuthAppServiceKey =
   | typeof Service.PIPEDRIVE
   | typeof Service.QUICKBOOKS
   | typeof Service.SALESFORCE
+  | typeof Service.SQUARE
   | typeof Service.STRIPE
   | typeof Service.SUPABASE
   | typeof Service.WEBFLOW
@@ -178,6 +179,16 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientIdEnvVar: 'SALESFORCE_CLIENT_ID',
       clientSecretEnvVar: 'SALESFORCE_CLIENT_SECRET',
       redirectUri: (config) => whalesyncRedirectUri(config, 'salesforce'),
+    },
+  },
+  // Whalesync's Square app. Square gives an app one set of credentials per environment, and test runs the sandbox set
+  // (a `sandbox-sq0idb-…` id, which also sends the sign-in to the sandbox host) while production runs the production
+  // set. Each environment registers its own single redirect URL, the `square` callback on that environment's Whalesync.
+  [Service.SQUARE]: {
+    1: {
+      clientIdEnvVar: 'SQUARE_CLIENT_ID',
+      clientSecretEnvVar: 'SQUARE_CLIENT_SECRET',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'square'),
     },
   },
   // Shares Whalesync's Stripe app (whalesync/extensions/stripe). Its env vars carry the `_OAUTH_` infix because

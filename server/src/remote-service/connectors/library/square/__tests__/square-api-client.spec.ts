@@ -74,6 +74,26 @@ describe('SquareApiClient', () => {
     });
   });
 
+  describe('authentication', () => {
+    it('sends a pasted access token as the Bearer token, outside the fixed headers', async () => {
+      const [config, options] = jest.mocked(createApiClient).mock.calls[0];
+      expect(config?.headers).not.toHaveProperty('Authorization');
+      await expect(options?.authorizationHeaderValueProvider?.()).resolves.toBe('Bearer EAAA-token');
+    });
+
+    it("re-reads an OAuth connection's access token on every request, so a refresh mid-pull is picked up", async () => {
+      const oauthAccessTokenProvider = jest
+        .fn()
+        .mockResolvedValueOnce('oauth-access-1')
+        .mockResolvedValueOnce('oauth-access-2');
+      new SquareApiClient({ accessToken: oauthAccessTokenProvider, environment: 'sandbox' });
+      const [, options] = jest.mocked(createApiClient).mock.calls[1];
+
+      await expect(options?.authorizationHeaderValueProvider?.()).resolves.toBe('Bearer oauth-access-1');
+      await expect(options?.authorizationHeaderValueProvider?.()).resolves.toBe('Bearer oauth-access-2');
+    });
+  });
+
   describe('single-request listing (locations)', () => {
     it('returns every location from one call', async () => {
       mockGet.mockResolvedValue({ data: { locations: [{ id: 'L1' }, { id: 'L2', status: 'INACTIVE' }] } });

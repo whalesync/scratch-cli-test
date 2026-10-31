@@ -8,15 +8,26 @@
  *
  * API reference: https://developer.squareup.com/reference/square
  */
+import type { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
 import { SquareObjectName } from './square-entity-schemas.generated';
 
 /** Which Square environment an access token belongs to. Sandbox tokens are rejected by production and vice versa. */
 export type SquareEnvironment = 'production' | 'sandbox';
 
+/** The API host of each environment. OAuth sign-in and token requests go to the same host. */
 export const SQUARE_API_BASE_URL_BY_ENVIRONMENT: Record<SquareEnvironment, string> = {
   production: 'https://connect.squareup.com',
   sandbox: 'https://connect.squareupsandbox.com',
 };
+
+/**
+ * Which environment a Square application id belongs to. Square gives an application one id per environment, and
+ * the sandbox one always starts with `sandbox-` (`sandbox-sq0idb-…`), so an OAuth app's id is enough to tell where
+ * its sign-in, its tokens, and the connections made with it live.
+ */
+export function squareEnvironmentForOAuthApplicationId(oauthApplicationId: string): SquareEnvironment {
+  return oauthApplicationId.startsWith('sandbox-') ? 'sandbox' : 'production';
+}
 
 export const SQUARE_DASHBOARD_BASE_URL_BY_ENVIRONMENT: Record<SquareEnvironment, string> = {
   production: 'https://app.squareup.com/dashboard',
@@ -29,10 +40,30 @@ export function normalizeSquareEnvironment(storedEnvironmentValue: string | unde
 }
 
 export interface SquareCredentials {
-  /** A Square access token (a personal access token from the Developer Dashboard, or an OAuth token). */
-  accessToken: string;
+  /**
+   * What every request sends as its Bearer token: either a pasted personal access token from the Developer
+   * Dashboard, or the OAuth access token of Whalesync's Square app. The OAuth token comes as a provider, re-read on
+   * each request, so a refresh during a long pull is picked up.
+   */
+  accessToken: ConnectorAuthTokenOrProvider;
   environment: SquareEnvironment;
 }
+
+/**
+ * The OAuth permissions the connector reads with. Each table declares the one its endpoints need
+ * ({@link SquareEntityConfig.oauthReadScope}).
+ *
+ * https://developer.squareup.com/docs/oauth-api/square-permissions
+ */
+export type SquareOAuthReadScope =
+  | 'MERCHANT_PROFILE_READ'
+  | 'CUSTOMERS_READ'
+  | 'ITEMS_READ'
+  | 'ORDERS_READ'
+  | 'PAYMENTS_READ'
+  | 'INVOICES_READ'
+  | 'EMPLOYEES_READ'
+  | 'PAYOUTS_READ';
 
 /** The tables the Square connector exposes. Values are the Scratch table ids (`EntityId.wsId`). */
 export type SquareEntityType =
@@ -75,6 +106,8 @@ export interface SquareEntityConfig {
   description: string;
   /** Square's name for the object, which keys its schema in the generated schema file. */
   squareObjectName: SquareObjectName;
+  /** The OAuth permission this table's list and retrieve endpoints need. */
+  oauthReadScope: SquareOAuthReadScope;
   /** For catalog tables: the CatalogObject `type` this table holds, e.g. `ITEM`. */
   catalogObjectType?: string;
   /** For catalog tables: the one `<type>_data` property a CatalogObject of this type carries. */
@@ -125,6 +158,7 @@ function catalogEntityConfig(params: {
     displayName: params.displayName,
     description: params.description,
     squareObjectName: 'CatalogObject',
+    oauthReadScope: 'ITEMS_READ',
     catalogObjectType: params.catalogObjectType,
     catalogTypeDataPropertyName: params.catalogTypeDataPropertyName,
     listingStrategy: 'cursor',
@@ -144,6 +178,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     displayName: 'Locations',
     description: 'Business locations, including inactive ones',
     squareObjectName: 'Location',
+    oauthReadScope: 'MERCHANT_PROFILE_READ',
     listingStrategy: 'single-request',
     listEndpointPath: '/v2/locations',
     listResponseRecordsKey: 'locations',
@@ -156,6 +191,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     displayName: 'Customers',
     description: 'Customer profiles in the customer directory',
     squareObjectName: 'Customer',
+    oauthReadScope: 'CUSTOMERS_READ',
     listingStrategy: 'cursor',
     listEndpointPath: '/v2/customers',
     listResponseRecordsKey: 'customers',
@@ -208,6 +244,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     displayName: 'Orders',
     description: 'Orders from every channel (Point of Sale, online, invoices), in every state',
     squareObjectName: 'Order',
+    oauthReadScope: 'ORDERS_READ',
     listingStrategy: 'orders-search',
     listEndpointPath: '/v2/orders/search',
     listResponseRecordsKey: 'orders',
@@ -221,6 +258,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     displayName: 'Payments',
     description: 'Payments taken at every location, across the full history',
     squareObjectName: 'Payment',
+    oauthReadScope: 'PAYMENTS_READ',
     listingStrategy: 'cursor-per-location',
     listEndpointPath: '/v2/payments',
     listResponseRecordsKey: 'payments',
@@ -235,6 +273,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     displayName: 'Refunds',
     description: 'Refunds of payments, across the full history',
     squareObjectName: 'PaymentRefund',
+    oauthReadScope: 'PAYMENTS_READ',
     // Unlike payments, ListRefunds already covers every location by default.
     listingStrategy: 'cursor',
     listEndpointPath: '/v2/refunds',
@@ -249,6 +288,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     displayName: 'Invoices',
     description: 'Invoices sent from every location',
     squareObjectName: 'Invoice',
+    oauthReadScope: 'INVOICES_READ',
     listingStrategy: 'cursor-per-location',
     listEndpointPath: '/v2/invoices',
     listResponseRecordsKey: 'invoices',
@@ -263,6 +303,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     displayName: 'Team Members',
     description: 'Team members of every status',
     squareObjectName: 'TeamMember',
+    oauthReadScope: 'EMPLOYEES_READ',
     listingStrategy: 'team-members-search',
     listEndpointPath: '/v2/team-members/search',
     listResponseRecordsKey: 'team_members',
@@ -275,6 +316,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     displayName: 'Payouts',
     description: 'Payouts (deposits) to the seller’s bank account from every location, across the full history',
     squareObjectName: 'Payout',
+    oauthReadScope: 'PAYOUTS_READ',
     listingStrategy: 'cursor-per-location',
     listEndpointPath: '/v2/payouts',
     listResponseRecordsKey: 'payouts',
@@ -287,6 +329,18 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
 };
 
 export const SQUARE_ENTITY_TYPES = Object.keys(SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE) as SquareEntityType[];
+
+/**
+ * Every permission an OAuth sign-in asks for: each table's read scope, plus MERCHANT_PROFILE_READ, which the
+ * connection check (RetrieveMerchant) and the per-location tables' location walk (ListLocations) need whichever
+ * tables are pulled.
+ */
+export const SQUARE_OAUTH_READ_SCOPES: SquareOAuthReadScope[] = [
+  ...new Set<SquareOAuthReadScope>([
+    'MERCHANT_PROFILE_READ',
+    ...SQUARE_ENTITY_TYPES.map((entityType) => SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE[entityType].oauthReadScope),
+  ]),
+];
 
 export function isSquareEntityType(value: string): value is SquareEntityType {
   return Object.prototype.hasOwnProperty.call(SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE, value);

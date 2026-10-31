@@ -12,7 +12,7 @@
 - **Trial:** No trial — the Square sandbox is free and does not expire.
 - **API key / credentials:** _omitted here._ Shared secret `square` in GCP project `whalesync-test-credentials` (`~/src/whalesync/whalesync/tools/scripts/test_credentials.sh get square`): `SQUARE_SANDBOX_ACCESS_TOKEN`, `SQUARE_SANDBOX_APPLICATION_ID`. Regenerate at Developer Console → Whalesync Testing → Credentials → Sandbox → Access token.
 - **Scratch side:** connected 2026-10-26 through the local server (sandbox detected) · Live Export audit workbook `wkb_FjsiU2LHTb`, Square connection `coa_O43Ni2WJ6U`
-- **Auth method:** `user_provided_params` (one access-token field; the AuthParser detects production vs sandbox) — CLI-connectable.
+- **Auth method:** `oauth` (default; Whalesync's Square app, see [OAuth](#oauth-final-milestone)) **+** `user_provided_params` (one access-token field; the AuthParser detects production vs sandbox) — the pasted token is CLI-connectable.
 - **Provenance:** account created by Curtis 2026-10-26; token captured + stored by the agent the same day.
 
 ## Metadata
@@ -35,7 +35,7 @@ Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 | 6   | **Foreign keys tested**                                   |   ➖   | Read-only; FK _reads_ verified 2026-10-26 (17 FK constraints on Postgres, joins resolve)        |
 | 7   | **Edge cases & quirks tested**                            |   ⬜   |                                                                                                 |
 | 8   | **View(s) built**                                         |   🔄   | Default view drove the 2026-10-26 SQUARE → POSTGRES Live Export on live sandbox data (551 records, 17 FKs); Supabase/Notion audit still to do |
-| 9   | **OAuth**                                                 |   ⬜   | Requirements documented below                                                                   |
+| 9   | **OAuth**                                                 |   🟠   | Implemented 2026-10-31 (`SquareOAuthProvider`); not yet signed in live                          |
 | 10  | **Integration test**                                      |   ⬜   |                                                                                                 |
 
 ## TODOs — known pending tasks
@@ -49,7 +49,7 @@ Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 - [ ] Full `/test-live-export SQUARE SUPABASE,NOTION` → `LIVE_EXPORT_AUDIT.md`.
 - [x] Upload the logo: `gs://spv1eu-production-static/connector-icons/square.svg` (Simple Icons `square`; serving 200 as of 2026-10-27).
 - [ ] Flip `visible` to true once a live account has been pulled end to end.
-- [ ] OAuth (Whalesync-owned Square app) so customers don't have to create a Developer app.
+- [ ] OAuth (Whalesync-owned Square app) so customers don't have to create a Developer app. Code done and redirect URLs registered 2026-10-31; remaining: `terraform apply` both envs, then a live sign-in on test (sandbox seller) and on production.
 - [ ] Incremental pull (every table has `updated_at`; Payments/Refunds list endpoints take `updated_at_begin_time`, Orders/Customers search take an `updated_at` filter). Live Export source pulls are always FULL today, so this only matters for Scratch-side scheduled pulls.
 
 ## Objects / entity types — what the connector exposes
@@ -172,10 +172,13 @@ Hosts: `connect.squareup.com` (production), `connect.squareupsandbox.com` (sandb
 
 ## OAuth (final milestone)
 
-- **Requires:** a Whalesync-owned application in the Square Developer Dashboard (free); production OAuth needs no review for read scopes.
-- **Endpoints:** authorize `https://connect.squareup.com/oauth2/authorize` · token `https://connect.squareup.com/oauth2/token` · redirect URI = Scratch OAuth callback.
-- **Scopes (read-only):** `MERCHANT_PROFILE_READ CUSTOMERS_READ ITEMS_READ ORDERS_READ PAYMENTS_READ INVOICES_READ EMPLOYEES_READ PAYOUTS_READ`.
-- **Status:** not started (requirements only). Access tokens last 30 days; refresh tokens don't expire for the code flow.
+- **App:** Whalesync's Square application (created by Curtis; credentials in 1Password). Its Sandbox id/secret are `SQUARE_CLIENT_ID` / `SQUARE_CLIENT_SECRET` in spv1eu-test, its Production ones in spv1eu-production. Production OAuth needs no review for read scopes.
+- **Redirect URLs** (one per environment on the app's OAuth page; registered 2026-10-31): Sandbox `https://test.whalesync.com/oauth-callback/connector/square`, Production `https://app.whalesync.com/oauth-callback/connector/square` (`REDIRECT_URI_WHALESYNC` + `/oauth-callback/connector/square`).
+- **How it works** (`server/src/oauth/providers/square-oauth.provider.ts`): the code flow (client secret, no PKCE). The app id picks the host: a `sandbox-` id signs in, exchanges, and refreshes at `connect.squareupsandbox.com`, any other at `connect.squareup.com` (with `session=false`, which Square requires in production). That environment is stored in `oauthWorkspaceId` and the connector sends API calls to the matching host. Square returns `expires_at` (ISO), not `expires_in`; tokens last 30 days but are recorded as expiring after at most 7, the refresh interval Square asks for. The code flow's refresh token never expires and comes back unchanged from a refresh. The connector re-reads the access token on every request.
+- **Scopes (read-only):** each table declares its `oauthReadScope` in `square-types.ts`; the sign-in asks for their union plus `MERCHANT_PROFILE_READ`: `MERCHANT_PROFILE_READ CUSTOMERS_READ ITEMS_READ ORDERS_READ PAYMENTS_READ INVOICES_READ EMPLOYEES_READ PAYOUTS_READ`.
+- **Sandbox sign-in:** open the sandbox seller's dashboard from the Developer Console (Sandbox test accounts → Open in Square Dashboard) in the same browser first; the sandbox authorize page signs in through that session.
+- **Not handled:** the `oauth.authorization.revoked` webhook. A revoked connection fails its next refresh and has to be reconnected.
+- **Status:** implemented 2026-10-31, not yet signed in live.
 
 ## UI quick-links
 

@@ -58,7 +58,10 @@ export class SquareConnector extends Connector<string, SquarePullProgress> {
     // Hidden in Scratch's own connector pickers until a live Square account has been pulled end to
     // end. Live Export doesn't read this flag — it offers sources from LIVE_EXPORT_SOURCE_SERVICES.
     visible: false,
-    defaultAuthMethod: 'user_provided_params',
+    // Signing in authorizes Whalesync's Square app on the seller's account: its sandbox app on test, its production
+    // app in production. A pasted personal access token is the alternative, and the only way to connect a sandbox
+    // account in production (or a production one on test).
+    oauth: { label: 'Connect with Square' },
     userProvidedParamsLabel: 'Access Token',
     credentialFields: {
       user_provided_params: [
@@ -206,7 +209,7 @@ connectorRegistry.register({
   service: Service.SQUARE,
   metadata: SquareConnector.metadata,
   advancedSettings: [],
-  supportedAuthMethods: ['user_provided_params'],
+  supportedAuthMethods: ['oauth', 'user_provided_params'],
   // Square publishes no fixed request quota (it throttles adaptively and answers 429), so stay
   // well under what a single seller's integrations typically sustain and back off on 429.
   rateLimiterSpec: {
@@ -216,10 +219,25 @@ connectorRegistry.register({
   createAuthParser() {
     return new SquareAuthParser();
   },
-  // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Square', Service.SQUARE);
+    }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const oauthAccessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await oauthAccessTokenProvider();
+      return new SquareConnector(
+        {
+          accessToken: oauthAccessTokenProvider,
+          // The environment of the app the seller signed in through, persisted at connect time (see
+          // SquareOAuthProvider).
+          environment: normalizeSquareEnvironment(ctx.decryptedCredentials?.oauthWorkspaceId),
+        },
+        { rateLimiter },
+      );
     }
     const accessToken = ctx.decryptedCredentials?.apiKey;
     if (!accessToken) {
@@ -227,7 +245,7 @@ connectorRegistry.register({
     }
     return new SquareConnector(
       { accessToken, environment: normalizeSquareEnvironment(ctx.decryptedCredentials?.squareEnvironment) },
-      { rateLimiter: ctx.createRateLimiter(ctx.connectorAccount.id) },
+      { rateLimiter },
     );
   },
 });

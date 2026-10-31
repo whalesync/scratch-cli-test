@@ -114,6 +114,20 @@ describe('OAuthAppCredentialResolver', () => {
       );
     });
 
+    it("resolves Square from SQUARE_CLIENT_*, with Whalesync's square callback", () => {
+      const resolver = makeResolver({
+        SQUARE_CLIENT_ID: 'sandbox-sq0idb-app',
+        SQUARE_CLIENT_SECRET: 'sandbox-sq0csb-secret',
+        ...REDIRECTS,
+      });
+      expect(resolver.resolveSystemAppCredentials(Service.SQUARE, DEFAULT_OAUTH_APP_VERSION)).toEqual({
+        clientId: 'sandbox-sq0idb-app',
+        clientSecret: 'sandbox-sq0csb-secret',
+        redirectUri: 'https://app.whalesync.com/oauth-callback/connector/square',
+      });
+      expect(resolver.getCurrentVersionForNewConnections(Service.SQUARE)).toBe(DEFAULT_OAUTH_APP_VERSION);
+    });
+
     it('accepts a lowercase service key (normalizes to the registry key)', () => {
       const resolver = makeResolver({ NOTION_CLIENT_ID: 'id', NOTION_CLIENT_SECRET: 'secret', ...REDIRECTS });
       expect(resolver.resolveSystemAppCredentials('notion', DEFAULT_OAUTH_APP_VERSION).clientId).toBe('id');

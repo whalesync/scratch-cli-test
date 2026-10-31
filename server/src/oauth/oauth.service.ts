@@ -48,6 +48,7 @@ import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { PipedriveOAuthProvider } from './providers/pipedrive-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
 import { SalesforceOAuthProvider } from './providers/salesforce-oauth.provider';
+import { SquareOAuthProvider } from './providers/square-oauth.provider';
 import { StripeOAuthProvider } from './providers/stripe-oauth.provider';
 import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
 import { WebflowOAuthProvider } from './providers/webflow-oauth.provider';
@@ -219,6 +220,7 @@ export class OAuthService {
     private readonly pipedriveProvider: PipedriveOAuthProvider,
     private readonly salesforceProvider: SalesforceOAuthProvider,
     private readonly stripeProvider: StripeOAuthProvider,
+    private readonly squareProvider: SquareOAuthProvider,
     private readonly posthogService: PostHogService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
@@ -241,6 +243,7 @@ export class OAuthService {
     this.providers.set('PIPEDRIVE', this.pipedriveProvider);
     this.providers.set('SALESFORCE', this.salesforceProvider);
     this.providers.set('STRIPE', this.stripeProvider);
+    this.providers.set('SQUARE', this.squareProvider);
   }
 
   /**

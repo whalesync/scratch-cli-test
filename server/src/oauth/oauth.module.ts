@@ -18,6 +18,7 @@ import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { PipedriveOAuthProvider } from './providers/pipedrive-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
 import { SalesforceOAuthProvider } from './providers/salesforce-oauth.provider';
+import { SquareOAuthProvider } from './providers/square-oauth.provider';
 import { StripeOAuthProvider } from './providers/stripe-oauth.provider';
 import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
 import { WebflowOAuthProvider } from './providers/webflow-oauth.provider';
@@ -54,6 +55,7 @@ import { ZohoOAuthProvider } from './providers/zoho-oauth.provider';
     PipedriveOAuthProvider,
     SalesforceOAuthProvider,
     StripeOAuthProvider,
+    SquareOAuthProvider,
   ],
   exports: [OAuthService],
 })

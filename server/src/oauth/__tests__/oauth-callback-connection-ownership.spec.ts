@@ -254,10 +254,10 @@ function buildOAuthServiceUnderTest() {
     }),
   };
 
-  // Positional, matching the constructor: db, the fourteen providers (AIRTABLE first, NOTION
-  // fourth, SALESFORCE thirteenth, STRIPE last), then posthog, credential encryption, scratch-git,
-  // config, credential resolver and the pending-authorization store.
-  const providerPlaceholders: unknown[] = Array.from({ length: 14 }, () => ({}));
+  // Positional, matching the constructor: db, the fifteen providers (AIRTABLE first, NOTION
+  // fourth, SALESFORCE thirteenth, STRIPE fourteenth, SQUARE last), then posthog, credential
+  // encryption, scratch-git, config, credential resolver and the pending-authorization store.
+  const providerPlaceholders: unknown[] = Array.from({ length: 15 }, () => ({}));
   providerPlaceholders[0] = airtable.provider;
   providerPlaceholders[3] = notion.provider;
   providerPlaceholders[12] = salesforce.provider;

@@ -1,5 +1,13 @@
 import { TSchema } from '@sinclair/typebox';
+import {
+  connectorRegistry,
+  type ConnectorFactoryContext,
+  type ConnectorRegistration,
+} from '../../../connector-registry';
+import { ConnectorInstantiationError } from '../../../error';
+import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
+import { SquareApiClient } from '../square-api-client';
 import { SquareConnector } from '../square-connector';
 import { SQUARE_ENTITY_TYPES, SquarePullProgress } from '../square-types';
 
@@ -39,6 +47,79 @@ function tableSpecFor(entityType: string): BaseJsonTableSpec {
 async function* pagesOf(pages: { records: Record<string, unknown>[]; progressAfterPage: SquarePullProgress }[]) {
   for (const page of pages) yield page;
 }
+
+function getSquareRegistration(): ConnectorRegistration {
+  const squareRegistration = connectorRegistry.get(Service.SQUARE);
+  if (!squareRegistration) throw new Error('Square connector did not register itself');
+  return squareRegistration;
+}
+
+function buildConnectorFactoryContext(overrides: Partial<ConnectorFactoryContext>): ConnectorFactoryContext {
+  return {
+    connectorAccount: { id: 'coa_square_unit', authType: 'user_provided_params', extras: null, version: 1 },
+    decryptedCredentials: { apiKey: 'EAAA-pasted', squareEnvironment: 'sandbox' },
+    createOAuthAccessTokenProvider: jest.fn(),
+    createRateLimiter: jest.fn(),
+    getFolderOptionsByTableId: jest.fn(),
+    listFolderTableIds: jest.fn(),
+    isFeatureEnabled: jest.fn(),
+    ...overrides,
+  };
+}
+
+describe('Square connector registration', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('offers the sign-in first and the pasted access token as the alternative', () => {
+    expect(getSquareRegistration().supportedAuthMethods).toEqual(['oauth', 'user_provided_params']);
+    expect(SquareConnector.metadata.defaultAuthMethod).toBe('oauth');
+    expect(SquareConnector.metadata.oauth).toEqual({ label: 'Connect with Square' });
+  });
+
+  it.each(['sandbox', 'production'] as const)(
+    "sends an OAuth connection's current access token, re-resolved per request, to its %s host",
+    async (environmentRecordedAtSignIn) => {
+      const oauthAccessTokenProvider = jest.fn().mockResolvedValue('square-oauth-access');
+      const createOAuthAccessTokenProvider = jest.fn().mockReturnValue(oauthAccessTokenProvider);
+
+      const connector = await getSquareRegistration().createConnector(
+        buildConnectorFactoryContext({
+          connectorAccount: { id: 'coa_square_oauth', authType: 'OAUTH', extras: null, version: 1 },
+          decryptedCredentials: {
+            oauthAccessToken: 'square-oauth-access',
+            oauthWorkspaceId: environmentRecordedAtSignIn,
+          },
+          createOAuthAccessTokenProvider,
+        }),
+      );
+
+      expect(connector).toBeInstanceOf(SquareConnector);
+      expect(createOAuthAccessTokenProvider).toHaveBeenCalledWith('coa_square_oauth');
+      expect(oauthAccessTokenProvider).toHaveBeenCalledTimes(1);
+      expect(jest.mocked(SquareApiClient).mock.calls[0][0]).toEqual({
+        accessToken: oauthAccessTokenProvider,
+        environment: environmentRecordedAtSignIn,
+      });
+    },
+  );
+
+  it('sends the pasted access token to the environment detected when it was pasted', async () => {
+    await getSquareRegistration().createConnector(buildConnectorFactoryContext({}));
+
+    expect(jest.mocked(SquareApiClient).mock.calls[0][0]).toEqual({
+      accessToken: 'EAAA-pasted',
+      environment: 'sandbox',
+    });
+  });
+
+  it('refuses a pasted-token connection with no stored token', async () => {
+    const creation = getSquareRegistration().createConnector(
+      buildConnectorFactoryContext({ decryptedCredentials: {} }),
+    );
+
+    await expect(creation).rejects.toBeInstanceOf(ConnectorInstantiationError);
+  });
+});
 
 describe('SquareConnector', () => {
   let connector: SquareConnector;
