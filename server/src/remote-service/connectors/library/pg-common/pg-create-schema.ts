@@ -79,6 +79,29 @@ export function isInsufficientPrivilegeError(error: unknown): boolean {
 }
 
 /**
+ * The schema segment of the pseudo create-destination that means "create a
+ * brand-new schema for this export" (DEV-11396) — the Postgres-family analogue of
+ * Google Sheets' "new spreadsheet". Postgres advertises it as the whole
+ * destination id; Supabase as `"<projectRef>/<NEW_SCHEMA_DESTINATION_SEGMENT>"`.
+ * Either way it is marked `created: false`, so a UI can render "will be created"
+ * — and default to it — without knowing this sentinel exists.
+ *
+ * Deliberately longer than Postgres' 63-byte identifier limit, so no schema a
+ * user actually has can collide with the sentinel and be shadowed by it.
+ */
+export const NEW_SCHEMA_DESTINATION_SEGMENT = 'scratch-new-schema-sentinel-longer-than-any-postgres-schema-name-can-be';
+
+/** Label of the "New schema" create destination. */
+export const NEW_SCHEMA_DESTINATION_NAME = 'New schema';
+
+/**
+ * Schema name used for a brand-new destination when the create request carries no
+ * `newParentName` — i.e. the user never typed one and the draft had no source
+ * service to suggest one after.
+ */
+export const NEW_SCHEMA_DEFAULT_NAME = 'scratch_export';
+
+/**
  * Fold a human-chosen container name ("Airtable export") into a Postgres schema
  * identifier we can create and then address unquoted (`airtable_export`).
  *

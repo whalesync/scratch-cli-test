@@ -51,15 +51,21 @@ import {
   describePostgresTlsFailure,
   describeRefusedPostgresHost,
   duplicateTableCreateErrorMessage,
+  foldNameToPostgresSchemaIdentifier,
   isDuplicateTableError,
   isGeneratedColumn,
+  isInsufficientPrivilegeError,
   isKnexQueryCompilationError,
   KnexPGClient,
   KnexPGClientError,
   knexQueryCompilationErrorDetails,
   mapPgType,
+  NEW_SCHEMA_DEFAULT_NAME,
+  NEW_SCHEMA_DESTINATION_NAME,
+  NEW_SCHEMA_DESTINATION_SEGMENT,
   pgIncrementalPullSupport,
   pickTitleColumnPath,
+  pickUnusedPostgresSchemaName,
   POSTGRES_HOST_NOT_REACHABLE_MESSAGE,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
@@ -175,6 +181,12 @@ export class PostgresConnector extends Connector {
 
   private readonly connectionString: string;
   private readonly tlsCertificates: PostgresTlsCertificates;
+  /**
+   * The schema each "New schema" create chose, keyed by the folded name it was
+   * asked for — so every table in a batch lands in the schema the first one made.
+   * See {@link chooseUnusedSchemaNameForNewSchemaDestination}.
+   */
+  private readonly unusedSchemaNameChosenForNewSchemaDestinationByFoldedName = new Map<string, string>();
 
   constructor(credentials: PostgresCredentials) {
     super();
@@ -231,15 +243,24 @@ export class PostgresConnector extends Connector {
    * A new Postgres table is created inside a schema, so the create destinations
    * are the database's non-system schemas. Mirrors the schema exclusions used by
    * {@link listTables} (the fixed system schemas plus the `pg_*` pattern).
+   *
+   * A "New schema" destination comes first (DEV-11396): loading another
+   * service's data usually means one schema per source (`stripe`, `hubspot`, …),
+   * and on a fresh database the only existing schema is `public`. It is the only
+   * destination here that does not exist yet — `created: false` is what tells a
+   * UI to default to it and ask for its name without knowing the sentinel id.
    */
   override async listCreateDestinations(): Promise<CreateDestination[]> {
     return this.withPgClient(async (client) => {
       const schemas = await client.findAllSchemas();
-      return schemas
-        .filter(
-          (schema) => !POSTGRES_SYSTEM_SCHEMAS.includes(schema.schema_name) && !schema.schema_name.startsWith('pg_'),
-        )
-        .map((schema) => ({ id: schema.schema_name, name: schema.schema_name, created: true }));
+      return [
+        { id: NEW_SCHEMA_DESTINATION_SEGMENT, name: NEW_SCHEMA_DESTINATION_NAME, created: false },
+        ...schemas
+          .filter(
+            (schema) => !POSTGRES_SYSTEM_SCHEMAS.includes(schema.schema_name) && !schema.schema_name.startsWith('pg_'),
+          )
+          .map((schema) => ({ id: schema.schema_name, name: schema.schema_name, created: true })),
+      ];
     });
   }
 
@@ -247,6 +268,54 @@ export class PostgresConnector extends Connector {
   // connection string and has no web UI to deep-link into. (Supabase is a
   // Postgres too, but it has a dashboard — that's why its connector implements
   // the hook and this one doesn't.)
+  //
+  // No `createDestinationIdForParent` either: a destination id is the bare
+  // schema name, and the parent `createTable` pins for a "New schema" is the
+  // one segment `[schema]` — exactly what the base rule ("a single segment IS
+  // the id") already turns back into that schema's destination id.
+
+  /**
+   * The "New schema" sentinel lands in `[<the unused schema name createTable
+   * will provision>]` — the same name createTable picks, so a plan sees the
+   * brand-new (empty) schema the export will really get. Any other parent is
+   * returned unchanged.
+   */
+  override async resolveRemoteParentIdTheCreateWillLandIn(
+    remoteParentId: string[],
+    newParentName: string | undefined,
+  ): Promise<string[]> {
+    if (remoteParentId[0] !== NEW_SCHEMA_DESTINATION_SEGMENT) return remoteParentId;
+    const unusedSchemaName = await this.withPgClient((client) =>
+      this.chooseUnusedSchemaNameForNewSchemaDestination(newParentName, () =>
+        client.findEverySchemaNameIncludingInaccessible(),
+      ),
+    );
+    return [unusedSchemaName];
+  }
+
+  /**
+   * The schema a "New schema" destination provisions: `newParentName` folded into
+   * an identifier ("Stripe" → `stripe`), suffixed `_2`, `_3`, … when a schema of
+   * that name already exists. "New" means new — reusing the existing schema would
+   * drop this export beside another export's tables. Memoized per instance so
+   * every table in a batch lands in the one schema the first table made;
+   * materialize then pins that schema for any retry.
+   */
+  private async chooseUnusedSchemaNameForNewSchemaDestination(
+    newParentName: string | undefined,
+    listEverySchemaNameInDatabase: () => Promise<string[]>,
+  ): Promise<string> {
+    const foldedSchemaName = foldNameToPostgresSchemaIdentifier(newParentName, NEW_SCHEMA_DEFAULT_NAME);
+    const alreadyChosenSchemaName =
+      this.unusedSchemaNameChosenForNewSchemaDestinationByFoldedName.get(foldedSchemaName);
+    if (alreadyChosenSchemaName) return alreadyChosenSchemaName;
+    const unusedSchemaName = pickUnusedPostgresSchemaName(
+      foldedSchemaName,
+      new Set(await listEverySchemaNameInDatabase()),
+    );
+    this.unusedSchemaNameChosenForNewSchemaDestinationByFoldedName.set(foldedSchemaName, unusedSchemaName);
+    return unusedSchemaName;
+  }
 
   private parseTable(t: TableName, tablesWithUnique: Set<string>, tablesWithAutoGenPK: Set<string>): TablePreview {
     const tableKey = `${t.table_schema}.${t.table_name}`;
@@ -382,6 +451,11 @@ export class PostgresConnector extends Connector {
         titlePath: pickTitleColumnPath(columns),
         slugPath,
         basePath: [schema],
+        // The schema the table lives in, in the create-destination id form (the bare
+        // schema name). A client reads where an export writes from its tables' containers,
+        // because the destination it saved for a "New schema" export is still the sentinel:
+        // without this, a table added to that export later would provision another schema.
+        remoteContainer: { id: schema, name: schema, remoteWebUrl: null },
         generatedAt: new Date().toISOString(),
       };
     });
@@ -563,13 +637,30 @@ export class PostgresConnector extends Connector {
    * target's primary-key column so the FK references it with a matching type.
    * Creates are NOT idempotent — re-running creates a second table (or fails with
    * "already exists").
+   *
+   * When the parent is the "New schema" sentinel, a schema is PROVISIONED here
+   * first, named from `plan.newParentName` and suffixed when that name is taken
+   * (see {@link chooseUnusedSchemaNameForNewSchemaDestination}), and reported back
+   * as `remoteParentId` so the caller pins the rest of the batch — and any retry,
+   * and any table added to the export later — to the schema this table actually
+   * landed in. The chosen name is memoized per instance, so the second table in a
+   * batch reuses it, and `CREATE SCHEMA IF NOT EXISTS` then finds the schema the
+   * first one made.
    */
   override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
-    const schema = plan.remoteParentId?.[0] ?? DEFAULT_POSTGRES_SCHEMA;
+    const requestedSchema = plan.remoteParentId?.[0] ?? DEFAULT_POSTGRES_SCHEMA;
+    const targetsNewSchema = requestedSchema === NEW_SCHEMA_DESTINATION_SEGMENT;
     const tableName = plan.name;
     try {
       return await this.withPgClient(async (client) => {
-        if (schema !== DEFAULT_POSTGRES_SCHEMA) {
+        const schema = targetsNewSchema
+          ? await this.chooseUnusedSchemaNameForNewSchemaDestination(plan.newParentName, () =>
+              client.findEverySchemaNameIncludingInaccessible(),
+            )
+          : requestedSchema;
+        if (targetsNewSchema) {
+          await this.provisionNewExportSchema(client, schema);
+        } else if (schema !== DEFAULT_POSTGRES_SCHEMA) {
           await client.createSchemaIfNotExists(schema);
         }
         const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields);
@@ -580,6 +671,10 @@ export class PostgresConnector extends Connector {
           name: tableName,
           status: skippedFields.size > 0 ? 'partial' : 'created',
           remoteTableId: [schema, tableName],
+          // Only when we provisioned the parent: the caller pins this onto the rest
+          // of the batch so nothing re-resolves the sentinel and splits the export
+          // across two schemas.
+          ...(targetsNewSchema ? { remoteParentId: [schema] } : {}),
           fields,
         };
       });
@@ -594,6 +689,32 @@ export class PostgresConnector extends Connector {
         fields: plan.fields.map((field) => ({ name: field.name, status: 'failed' as const })),
         error: message,
       };
+    }
+  }
+
+  /**
+   * Create the schema behind a "New schema" destination, if it isn't there
+   * already. `IF NOT EXISTS` is what makes the batch converge: every table in a
+   * create-tables run reuses the name the first one chose (memoized on this
+   * instance), so the first table makes the schema and the rest find it. The
+   * schema is owned by the connecting role, like everything else this connector
+   * creates — no extra grants.
+   *
+   * Creating a schema needs CREATE on the *database*. A role without it gets a
+   * bare "permission denied for database <db>" from Postgres, which names neither
+   * the missing privilege nor the way out, so that one is reworded.
+   */
+  private async provisionNewExportSchema(client: KnexPGClient, schema: string): Promise<void> {
+    try {
+      await client.createSchemaIfNotExists(schema);
+    } catch (error) {
+      if (isInsufficientPrivilegeError(error)) {
+        throw new Error(
+          `this connection is not allowed to create the schema "${schema}". ` +
+            'Grant CREATE on the database to the role in your connection string, or export into an existing schema instead.',
+        );
+      }
+      throw error;
     }
   }
 

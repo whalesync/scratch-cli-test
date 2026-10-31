@@ -72,6 +72,9 @@ import {
   KnexPGClientError,
   knexQueryCompilationErrorDetails,
   mapPgType,
+  NEW_SCHEMA_DEFAULT_NAME,
+  NEW_SCHEMA_DESTINATION_NAME,
+  NEW_SCHEMA_DESTINATION_SEGMENT,
   pgIncrementalPullSupport,
   pickTitleColumnPath,
   pickUnusedPostgresSchemaName,
@@ -109,28 +112,9 @@ const READ_BATCH_SIZE = 500;
 /** Schema used when a create-schema request's `remoteParentId` names a project but no schema. */
 const DEFAULT_SUPABASE_SCHEMA = 'public';
 
-/**
- * The pseudo create-destination that means "create a brand-new schema for this
- * export" (DEV-11396) — the Supabase analogue of Google Sheets' "new
- * spreadsheet". Advertised per project as
- * `"<projectRef>/<NEW_SCHEMA_DESTINATION_SEGMENT>"` so it reads like every other
- * Supabase destination id and resolves through the same parser, and marked
- * `created: false` so a UI can render "will be created" — and default to it —
- * without knowing this sentinel exists.
- *
- * The segment is deliberately longer than Postgres' 63-byte identifier limit, so
- * no schema a user actually has can collide with the sentinel and be shadowed by
- * it.
- */
-const NEW_SCHEMA_DESTINATION_SEGMENT = 'scratch-new-schema-sentinel-longer-than-any-postgres-schema-name-can-be';
-const NEW_SCHEMA_DESTINATION_NAME = 'New schema';
-
-/**
- * Schema name used for a brand-new destination when the create request carries no
- * `newParentName` — i.e. the user never typed one and the draft had no source
- * service to suggest one after.
- */
-const NEW_SCHEMA_DEFAULT_NAME = 'scratch_export';
+// The "New schema" create destination (DEV-11396) is advertised per project as
+// `"<projectRef>/<NEW_SCHEMA_DESTINATION_SEGMENT>"`, so it reads like every other
+// Supabase destination id and resolves through the same parser.
 
 // ---------------------------------------------------------------------------
 // Connector
