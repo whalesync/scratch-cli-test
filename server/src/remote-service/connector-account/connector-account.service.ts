@@ -153,6 +153,27 @@ function buildFieldsToStoreFromEditOtherThanCredentialsAndExtras(
   };
 }
 
+const CONNECTOR_ACCOUNT_COLUMN_NAMES: ReadonlySet<string> = new Set(
+  Object.values(Prisma.ConnectorAccountScalarFieldEnum),
+);
+
+/**
+ * Refuse user-provided credential params with a key that names a `ConnectorAccount` column (`id`, `workbookId`,
+ * `repoPath`, …), before anything is parsed, sent to a service, or stored. No connector's credential key is a column
+ * name, so only a crafted request is refused. Such a key would otherwise sit in the stored credentials beside the
+ * row's own value of the same name (DEV-12580).
+ */
+function assertNoUserProvidedCredentialKeyNamesAConnectorAccountColumn(userProvidedParams: object | undefined): void {
+  const credentialKeysNamingAConnectorAccountColumn = Object.keys(userProvidedParams ?? {}).filter((key) =>
+    CONNECTOR_ACCOUNT_COLUMN_NAMES.has(key),
+  );
+  if (credentialKeysNamingAConnectorAccountColumn.length > 0) {
+    throw new BadRequestException(
+      `Connection credentials can't use these reserved keys: ${credentialKeysNamingAConnectorAccountColumn.join(', ')}`,
+    );
+  }
+}
+
 @Injectable()
 export class ConnectorAccountService {
   constructor(
@@ -221,13 +242,18 @@ export class ConnectorAccountService {
     return workbook;
   }
 
+  /**
+   * The row with its decrypted credentials merged in. The row's columns are spread LAST, so a stored credential key can
+   * never replace the `id`, `workbookId`, `repoPath`, or any other column that consumers trust to say which connection
+   * they act on (DEV-12580).
+   */
   private async getDecryptedAccount(account: ConnectorAccount): Promise<ConnectorAccount & DecryptedCredentials> {
     const decryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
       account.encryptedCredentials as unknown as EncryptedData,
     );
     return {
-      ...account,
       ...decryptedCredentials,
+      ...account,
     };
   }
 
@@ -242,6 +268,8 @@ export class ConnectorAccountService {
     checkWorkspacePermissions(actor, workbookId);
 
     await this.assertGenericConnectorEnabled(createDto.service, actor);
+
+    assertNoUserProvidedCredentialKeyNamesAConnectorAccountColumn(createDto.userProvidedParams);
 
     if (!canCreateDataSource(actor.subscriptionStatus, await this.countForType(createDto.service, workbookId, actor))) {
       throw new ForbiddenException(
@@ -473,6 +501,8 @@ export class ConnectorAccountService {
       }
     }
 
+    assertNoUserProvidedCredentialKeyNamesAConnectorAccountColumn(updateDto.userProvidedParams);
+
     // A PATCH that doesn't edit credentials (a rename, an extras edit) never writes them, so it can't put back a copy
     // that a concurrent token refresh or Supabase role write has since replaced (DEV-12337).
     const userProvidedParamsFromEdit = updateDto.userProvidedParams;
@@ -560,7 +590,11 @@ export class ConnectorAccountService {
   }
 
   async remove(workbookId: WorkbookId, id: string, actor: Actor): Promise<void> {
-    const account = await this.findOne(workbookId, id, actor);
+    // Workbook ownership verified in controller; workbookId provides scoping. Removing a connection never needs its
+    // credentials, so the row is read without decrypting them.
+    const account = await this.db.client.connectorAccount.findUnique({
+      where: { id, workbookId },
+    });
     if (!account) {
       throw new NotFoundException('ConnectorAccount not found');
     }
@@ -569,7 +603,7 @@ export class ConnectorAccountService {
 
     const workbook = await this.loadWorkbook(workbookId);
 
-    await this.removeConnectionData(account, actor);
+    await this.removeConnectionData({ workbookId, connectorAccountId: id, repoPath: account.repoPath }, actor);
 
     this.workbookEventService.sendWorkbookEvent(workbookId, {
       type: 'workbook-updated',
@@ -595,8 +629,13 @@ export class ConnectorAccountService {
    */
   async removeBySystem(workbookId: WorkbookId, id: string): Promise<void> {
     const workbook = await this.loadWorkbook(workbookId);
-    const account = await this.findOneByIdAdmin(id);
-    await this.removeConnectionData(account, SYSTEM_ACTOR);
+    const account = await this.db.client.connectorAccount.findUnique({
+      where: { id, workbookId },
+    });
+    if (!account) {
+      throw new NotFoundException('ConnectorAccount not found');
+    }
+    await this.removeConnectionData({ workbookId, connectorAccountId: id, repoPath: account.repoPath }, SYSTEM_ACTOR);
 
     this.workbookEventService.sendWorkbookEvent(workbookId, {
       type: 'workbook-updated',
@@ -615,13 +654,20 @@ export class ConnectorAccountService {
   /**
    * Core cleanup logic shared by remove() and removeBySystem().
    * Deletes schedules, publish plans, DataFolders, git data, and the ConnectorAccount record.
+   *
+   * The caller passes the `{ workbookId, connectorAccountId }` it authorized and the `repoPath` from that same row, never
+   * an account object with decrypted credentials merged in, so nothing stored in the credentials can choose what gets
+   * deleted (DEV-12580).
    */
-  private async removeConnectionData(account: ConnectorAccount, actor: Actor): Promise<void> {
-    const { id, workbookId } = account;
+  private async removeConnectionData(
+    connectionToRemove: { workbookId: WorkbookId; connectorAccountId: string; repoPath: string | null },
+    actor: Actor,
+  ): Promise<void> {
+    const { workbookId, connectorAccountId, repoPath } = connectionToRemove;
 
     // Fetch all DataFolders for this connection (needed for schedule cleanup)
     const dataFolders = await this.db.client.dataFolder.findMany({
-      where: { workbookId, connectorAccountId: id },
+      where: { workbookId, connectorAccountId },
       select: { id: true, path: true },
     });
 
@@ -631,12 +677,12 @@ export class ConnectorAccountService {
     // per-table pull/publish schedules key off a folder id, while connection-wide pull
     // schedules (CONNECTION_FULL_PULL / CONNECTION_INCREMENTAL_PULL) key off the account id.
     await this.db.client.schedule.deleteMany({
-      where: { entityId: { in: [...folderIds, id] } },
+      where: { entityId: { in: [...folderIds, connectorAccountId] } },
     });
 
     // Delete publish plans for this connection (no FK cascade to ConnectorAccount)
     await this.db.client.publishPlan.deleteMany({
-      where: { workbookId, connectorAccountId: id },
+      where: { workbookId, connectorAccountId },
     });
 
     // Per-(workbook, account) auxiliary tables with no FK cascade — must be
@@ -647,35 +693,35 @@ export class ConnectorAccountService {
     //   - RecreatedIdMap: (priorRemoteId → newRemoteId) mappings written
     //     by past recreate publishes against this account's connector.
     await this.db.client.uploadPatchMeta.deleteMany({
-      where: { workbookId, connectorAccountId: id },
+      where: { workbookId, connectorAccountId },
     });
     await this.db.client.recreatedIdMap.deleteMany({
-      where: { workbookId, connectorAccountId: id },
+      where: { workbookId, connectorAccountId },
     });
 
     // Delete all DataFolders (cascades to SyncTablePair, SyncForeignKeyRecord, SyncRemoteIdMapping)
     await this.db.client.dataFolder.deleteMany({
-      where: { workbookId, connectorAccountId: id },
+      where: { workbookId, connectorAccountId },
     });
 
     // Clean up git data — delete the connection's dedicated repo
-    if (account.repoPath) {
+    if (repoPath) {
       try {
-        await this.scratchGitService.deleteRepo(account.repoPath);
+        await this.scratchGitService.deleteRepo(repoPath);
       } catch (err) {
         WSLogger.error({
           source: 'ConnectorAccountService.removeConnectionData',
           message: 'Failed to delete git repo during connection removal',
           error: err,
           workbookId,
-          connectorAccountId: id,
+          connectorAccountId,
         });
       }
     }
 
     // Delete the ConnectorAccount record
     await this.db.client.connectorAccount.delete({
-      where: { id, workbookId },
+      where: { id: connectorAccountId, workbookId },
     });
 
     // Orphan cleanup (DEV-10885): FileIndex/FileReference have no FK to DataFolder,
@@ -694,8 +740,8 @@ export class ConnectorAccountService {
     try {
       await this.bullEnqueuerService.enqueueCleanupConnectionIndexRowsJob(
         {
-          workbookId: workbookId as WorkbookId,
-          connectorAccountId: id,
+          workbookId,
+          connectorAccountId,
           connectionFolderPaths: dataFolders.map((folder) => folder.path).filter((path): path is string => !!path),
         },
         actor,
@@ -706,7 +752,7 @@ export class ConnectorAccountService {
         message: 'Failed to enqueue FileIndex/FileReference cleanup job after connection removal',
         error: err,
         workbookId,
-        connectorAccountId: id,
+        connectorAccountId,
       });
     }
   }

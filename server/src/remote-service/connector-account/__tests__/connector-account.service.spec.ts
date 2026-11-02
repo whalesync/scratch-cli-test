@@ -74,6 +74,7 @@ describe('ConnectorAccountService', () => {
         connectorAccount: {
           findUnique: jest.fn(),
           findFirst: jest.fn(),
+          create: jest.fn(),
           update: jest.fn(),
           delete: jest.fn().mockResolvedValue({}),
         },
@@ -854,6 +855,131 @@ describe('ConnectorAccountService', () => {
       await expect(
         service.lookupCreateDestination(WORKBOOK_ID, ACCOUNT_ID, ['ref', 'my_schema'], ACTOR),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  // DEV-12580: the decrypted credentials are merged into the row on the account object most consumers receive. A stored
+  // credential key with a column's name (`id`, `workbookId`, `repoPath`) used to replace the row's own value there, so
+  // it could pick another tenant's connection to delete or build a connector for. Each case below stores, or tries to
+  // store, such keys and asserts that only the row's own values are ever used.
+  describe('credential keys that name a ConnectorAccount column (DEV-12580)', () => {
+    const OTHER_TENANT_CONNECTOR_ACCOUNT_ID = 'ca_belonging_to_another_tenant';
+    const OTHER_TENANT_WORKBOOK_ID = 'wkb_belonging_to_another_tenant';
+    const OTHER_TENANT_REPO_PATH = 'org_other--wkb_other--ca_other';
+    const STORED_CREDENTIALS_WITH_COLUMN_NAMED_KEYS = {
+      apiKey: 'own-api-key',
+      id: OTHER_TENANT_CONNECTOR_ACCOUNT_ID,
+      workbookId: OTHER_TENANT_WORKBOOK_ID,
+      repoPath: OTHER_TENANT_REPO_PATH,
+    } as unknown as DecryptedCredentials;
+
+    beforeEach(() => {
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(createMockAccount());
+      (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({ organizationId: 'org_test' });
+      credentialEncryptionService.decryptCredentials.mockResolvedValue({
+        ...STORED_CREDENTIALS_WITH_COLUMN_NAMED_KEYS,
+      });
+    });
+
+    it('findOne keeps the row id, workbookId, and repoPath, and still exposes the credentials', async () => {
+      const decryptedAccount = await service.findOne(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(decryptedAccount).toMatchObject({
+        id: ACCOUNT_ID,
+        workbookId: WORKBOOK_ID,
+        repoPath: 'org_test--wkb_test--ca_test',
+        apiKey: 'own-api-key',
+      });
+    });
+
+    it('listTables builds the connector for the row id, which keys its OAuth token lookup and credential writes', async () => {
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue({
+        tableDiscoveryMode: TableDiscoveryMode.LIST,
+        supportsFilters: () => false,
+        supportsFieldSelection: () => false,
+        listTables: jest.fn().mockResolvedValue([]),
+      });
+
+      await service.listTables(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(connectorsService.getConnector).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connectorAccount: expect.objectContaining({ id: ACCOUNT_ID, workbookId: WORKBOOK_ID }) as unknown,
+        }),
+      );
+    });
+
+    it('remove deletes only the authorized connection and its own repo', async () => {
+      await service.remove(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(dbService.client.schedule.deleteMany).toHaveBeenCalledWith({
+        where: { entityId: { in: [ACCOUNT_ID] } },
+      });
+      for (const deleteManyScopedToConnection of [
+        dbService.client.publishPlan.deleteMany,
+        dbService.client.uploadPatchMeta.deleteMany,
+        dbService.client.recreatedIdMap.deleteMany,
+        dbService.client.dataFolder.deleteMany,
+      ]) {
+        expect(deleteManyScopedToConnection).toHaveBeenCalledWith({
+          where: { workbookId: WORKBOOK_ID, connectorAccountId: ACCOUNT_ID },
+        });
+      }
+      expect(scratchGitService.deleteRepo).toHaveBeenCalledWith('org_test--wkb_test--ca_test');
+      expect(scratchGitService.deleteRepo).not.toHaveBeenCalledWith(OTHER_TENANT_REPO_PATH);
+      expect(dbService.client.connectorAccount.delete).toHaveBeenCalledWith({
+        where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+      });
+      expect(bullEnqueuerService.enqueueCleanupConnectionIndexRowsJob).toHaveBeenCalledWith(
+        expect.objectContaining({ workbookId: WORKBOOK_ID, connectorAccountId: ACCOUNT_ID }),
+        ACTOR,
+      );
+    });
+
+    it('removeBySystem looks the connection up in the given workbook and deletes only it', async () => {
+      await service.removeBySystem(WORKBOOK_ID, ACCOUNT_ID);
+
+      expect(dbService.client.connectorAccount.findUnique).toHaveBeenCalledWith({
+        where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+      });
+      expect(scratchGitService.deleteRepo).toHaveBeenCalledWith('org_test--wkb_test--ca_test');
+      expect(dbService.client.connectorAccount.delete).toHaveBeenCalledWith({
+        where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+      });
+    });
+
+    it.each(['id', 'workbookId', 'repoPath', 'service'])(
+      'a credential edit with a "%s" key is rejected, and nothing is stored',
+      async (columnName) => {
+        await expect(
+          service.update(
+            WORKBOOK_ID,
+            ACCOUNT_ID,
+            { userProvidedParams: { apiKey: 'new-api-key', [columnName]: OTHER_TENANT_CONNECTOR_ACCOUNT_ID } },
+            ACTOR,
+          ),
+        ).rejects.toThrow(BadRequestException);
+
+        expect(oauthService.runWhileHoldingConnectionCredentialsLock).not.toHaveBeenCalled();
+        expect(credentialEncryptionService.encryptCredentials).not.toHaveBeenCalled();
+        expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it('a create with a column-named credential key is rejected, and nothing is stored', async () => {
+      await expect(
+        service.create(
+          WORKBOOK_ID,
+          {
+            service: 'AIRTABLE',
+            userProvidedParams: { apiKey: 'new-api-key', workbookId: OTHER_TENANT_WORKBOOK_ID },
+          },
+          { ...ACTOR, isAdmin: true },
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(credentialEncryptionService.encryptCredentials).not.toHaveBeenCalled();
+      expect(dbService.client.connectorAccount.create).not.toHaveBeenCalled();
     });
   });
 

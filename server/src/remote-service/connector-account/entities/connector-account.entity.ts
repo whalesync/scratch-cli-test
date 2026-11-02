@@ -37,7 +37,7 @@ function normalizeExtras(value: Prisma.JsonValue | null | undefined): Record<str
  * Security-critical (DEV-11011 / SCR-016): this deliberately (a) DROPS the `encryptedCredentials`
  * envelope and (b) NEVER copies any decrypted `DecryptedCredentials` field that may be spread onto
  * the input object — e.g. by `ConnectorAccountService.getDecryptedAccount`, which returns
- * `{ ...account, ...decryptedCredentials }`. Credentials — encrypted OR plaintext — must never
+ * `{ ...decryptedCredentials, ...account }`. Credentials — encrypted OR plaintext — must never
  * cross the HTTP boundary through the connections API. The only sanctioned outbound path for
  * decrypted credentials is the admin-gated, audited `…/credentials/reveal` endpoint.
  *
