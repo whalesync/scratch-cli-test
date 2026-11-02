@@ -1264,6 +1264,26 @@ describe('PublishPlanRunService', () => {
     });
   });
 
+  describe('connector resolution (DEV-12337)', () => {
+    it("loads the plan's connector account scoped to the plan's own workbook", async () => {
+      setupEditPhaseEntries([
+        {
+          id: 'op_1',
+          filePath: 'articles/a1.json',
+          content: { id: 'rec_1', title: 'New' },
+          changedFields: { title: 'New' },
+          remoteRecordId: 'rec_1',
+        },
+      ]);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(db.client.connectorAccount.findUnique).toHaveBeenCalledWith({
+        where: { id: CONNECTOR_ACCOUNT_ID, workbookId: WORKBOOK_ID },
+      });
+    });
+  });
+
   describe('a pipeline interrupted by the worker shutting down (DEV-12428)', () => {
     const CONNECTION_CLOSED_BY_SHUTDOWN_ERROR_MESSAGE = 'Connection is closed.';
 

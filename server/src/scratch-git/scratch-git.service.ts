@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   DirtyFileCountResponse,
   FileDiffStatus,
@@ -129,6 +129,12 @@ export class ScratchGitService {
    * Resolves the repo ID for a workbook connection.
    * Returns the composite `{orgId}--{workbookId}--{connAccountId}` ID from the connector account's repoPath.
    * Throws if connectorAccountId is missing or has no repoPath.
+   *
+   * Performs NO authorization: it resolves any connection by id alone. A `connectorAccountId` that
+   * came from a request (body, query, or route param) must go through
+   * {@link resolveConnectionRepoPathScopedToWorkbook} instead, or a caller can pair their own
+   * workbook with another tenant's connection and act on that tenant's repo. Several HTTP routes
+   * still call this one directly; moving them over is DEV-12670.
    */
   async resolveConnectionRepoPath(connectorAccountId?: string | null): Promise<RepoId> {
     if (!connectorAccountId) {
@@ -136,6 +142,32 @@ export class ScratchGitService {
     }
     const account = await this.db.client.connectorAccount.findUnique({ where: { id: connectorAccountId } });
     if (!account?.repoPath) {
+      throw new BadRequestException(`Connector account ${connectorAccountId} has no repoPath`);
+    }
+    return account.repoPath as RepoId;
+  }
+
+  /**
+   * {@link resolveConnectionRepoPath}, but only for a connection that belongs to `workbookId`
+   * (DEV-12337). The lookup is scoped in the query itself (the DEV-11167 pattern), so a foreign
+   * connection's row is never loaded; it surfaces as a `NotFoundException`, which also avoids
+   * confirming that the id exists in some other workbook.
+   */
+  async resolveConnectionRepoPathScopedToWorkbook(
+    workbookId: string,
+    connectorAccountId?: string | null,
+  ): Promise<RepoId> {
+    if (!connectorAccountId) {
+      throw new BadRequestException('Connector account ID is required');
+    }
+    const account = await this.db.client.connectorAccount.findUnique({
+      where: { id: connectorAccountId, workbookId },
+      select: { repoPath: true },
+    });
+    if (!account) {
+      throw new NotFoundException(`Connector account ${connectorAccountId} not found in workbook ${workbookId}`);
+    }
+    if (!account.repoPath) {
       throw new BadRequestException(`Connector account ${connectorAccountId} has no repoPath`);
     }
     return account.repoPath as RepoId;

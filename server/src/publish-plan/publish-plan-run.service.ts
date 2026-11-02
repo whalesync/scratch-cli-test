@@ -217,7 +217,7 @@ export class PublishPlanRunService {
     // ENABLE_AFFINITY_WRITE via the connector factory's isFeatureEnabled
     // capability). plan.userId is always set — for scheduled/automated publishes
     // it's the schedule's run-as user resolved by SchedulerService.buildActor.
-    const connector = await this.resolveConnector(plan.connectorAccountId, plan.userId);
+    const connector = await this.resolveConnector(plan.workbookId, plan.connectorAccountId, plan.userId);
 
     // Cache tableSpecs per folder to avoid repeated DB lookups
     const tableSpecCache = new Map<string, BaseJsonTableSpec>();
@@ -815,13 +815,21 @@ export class PublishPlanRunService {
     return out;
   }
 
-  private async resolveConnector(connectorAccountId: string | null, userId?: string): Promise<Connector> {
+  /**
+   * Scoped to the plan's own workbook (DEV-12337), so a plan only ever publishes through a connection
+   * that belongs to the workbook it was built in.
+   */
+  private async resolveConnector(
+    workbookId: string,
+    connectorAccountId: string | null,
+    userId?: string,
+  ): Promise<Connector> {
     if (!connectorAccountId) {
       throw new Error('No connectorAccountId on plan — cannot resolve connector');
     }
 
     const account = await this.db.client.connectorAccount.findUnique({
-      where: { id: connectorAccountId },
+      where: { id: connectorAccountId, workbookId },
     });
     if (!account) {
       throw new Error(`ConnectorAccount not found: ${connectorAccountId}`);

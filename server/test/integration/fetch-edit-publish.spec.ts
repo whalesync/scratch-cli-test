@@ -410,6 +410,10 @@ describe('Fetch → Edit → Publish Integration', () => {
       initRepo: jest.fn().mockResolvedValue(undefined),
       resolveRepoId: jest.fn().mockImplementation(async (wkbId: WorkbookId) => wkbId),
       resolveConnectionRepoPath: jest.fn().mockImplementation(async (connectorAccountId: string) => connectorAccountId),
+      // The publish plan resolves its connection's repo scoped to the workbook (DEV-12337); same repo as above.
+      resolveConnectionRepoPathScopedToWorkbook: jest
+        .fn()
+        .mockImplementation(async (_workbookId: WorkbookId, connectorAccountId: string) => connectorAccountId),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation(async (_repoId: string, branch: string, files: { path: string; content: string }[]) => {

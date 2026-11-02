@@ -62,6 +62,10 @@ export interface ConnectorFactoryContext {
    * lost a race adopts the winner's value). It must be cheap: do the external
    * work before calling. Resolves to the credentials now in storage.
    *
+   * `connectorAccountId` must be this connector's own `connectorAccount.id`: the
+   * host only ever writes the connection the connector was built for, and rejects
+   * a call naming any other one (DEV-12337).
+   *
    * Optional because a host that has no credential store (tests, one-off
    * scripts) can still build most connectors; a connector that needs it should
    * fail its instantiation when it is absent.

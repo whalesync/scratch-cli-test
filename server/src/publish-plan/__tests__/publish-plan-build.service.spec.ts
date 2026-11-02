@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method */
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AssetIndexService } from '../../asset/asset-index.service';
 import { CredentialEncryptionService } from '../../credential-encryption/credential-encryption.service';
@@ -58,12 +59,18 @@ describe('PublishPlanService', () => {
   let fileReferenceService: jest.Mocked<FileReferenceService>;
   let refCleanerService: jest.Mocked<RefCleanerService>;
   let schemaService: jest.Mocked<SchemaHelperService>;
+  let connectorsService: jest.Mocked<ConnectorsService>;
+  let credentialEncryptionService: jest.Mocked<CredentialEncryptionService>;
 
   beforeEach(async () => {
     db = makeDbMock();
 
     scratchGitService = {
-      resolveConnectionRepoPath: jest.fn().mockImplementation((wkbId: string) => Promise.resolve(wkbId)),
+      // Only the workbook-scoped resolver is mocked: a regression to the unscoped
+      // `resolveConnectionRepoPath` fails these tests outright (DEV-12337).
+      resolveConnectionRepoPathScopedToWorkbook: jest
+        .fn()
+        .mockImplementation((_workbookId: string, connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       getRepoStatus: jest.fn().mockResolvedValue([]),
       readRepoFilesByFolder: jest.fn().mockResolvedValue([]),
       rebaseDirty: jest.fn().mockResolvedValue(undefined),
@@ -107,11 +114,11 @@ describe('PublishPlanService', () => {
       findUnuploadedDestinationAssets: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<AssetIndexService>;
 
-    const connectorsService = {
+    connectorsService = {
       getConnector: jest.fn().mockReturnValue({ supportsFileUpload: false }),
     } as unknown as jest.Mocked<ConnectorsService>;
 
-    const credentialEncryptionService = {
+    credentialEncryptionService = {
       decryptCredentials: jest.fn().mockResolvedValue({}),
     } as unknown as jest.Mocked<CredentialEncryptionService>;
 
@@ -215,6 +222,58 @@ describe('PublishPlanService', () => {
 
       expect(scratchGitService.getBranchHead).not.toHaveBeenCalled();
       expect(scratchGitService.rebaseDirty).toHaveBeenCalledWith(CONN);
+    });
+  });
+
+  // DEV-12337: both plan-job endpoints take `connectorAccountId` from the request body, and their
+  // permission check only proves the caller may access the workbook they NAMED. Each case asserts both
+  // halves of the fix (the DEV-11167 pattern): the lookup was scoped to the requested workbook, and the
+  // foreign connection was never acted on — its repo never read or rebased, no connector built on its
+  // credentials (which can refresh an OAuth token or provision a Supabase role), and no plan row created.
+  describe('cross-workbook connection scoping (DEV-12337)', () => {
+    const CONNECTOR_ACCOUNT_ID_IN_ANOTHER_WORKBOOK = 'ca_belonging_to_another_workbook';
+
+    it('hasDiffs rejects a connection from another workbook without reading its repo', async () => {
+      scratchGitService.resolveConnectionRepoPathScopedToWorkbook.mockRejectedValue(new NotFoundException());
+
+      await expect(service.hasDiffs(WORKBOOK_ID, CONNECTOR_ACCOUNT_ID_IN_ANOTHER_WORKBOOK)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(scratchGitService.resolveConnectionRepoPathScopedToWorkbook).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        CONNECTOR_ACCOUNT_ID_IN_ANOTHER_WORKBOOK,
+      );
+      expect(scratchGitService.getRepoStatus).not.toHaveBeenCalled();
+    });
+
+    it('buildPipeline rejects a connection from another workbook before touching its repo or credentials', async () => {
+      scratchGitService.resolveConnectionRepoPathScopedToWorkbook.mockRejectedValue(new NotFoundException());
+
+      // No existing pipeline id: the inline-create flow, so this also proves no plan row is created.
+      await expect(
+        service.buildPipeline(WORKBOOK_ID, USER_ID, CONNECTOR_ACCOUNT_ID_IN_ANOTHER_WORKBOOK),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(scratchGitService.resolveConnectionRepoPathScopedToWorkbook).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        CONNECTOR_ACCOUNT_ID_IN_ANOTHER_WORKBOOK,
+      );
+      expect(db.client.publishPlan.create).not.toHaveBeenCalled();
+      expect(scratchGitService.rebaseDirty).not.toHaveBeenCalled();
+      expect(schemaService.refreshSchemasForConnection).not.toHaveBeenCalled();
+      expect(db.client.connectorAccount.findUnique).not.toHaveBeenCalled();
+      expect(credentialEncryptionService.decryptCredentials).not.toHaveBeenCalled();
+      expect(connectorsService.getConnector).not.toHaveBeenCalled();
+    });
+
+    it('buildPipeline loads the connector account scoped to the workbook', async () => {
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, 'ca_test', PIPELINE_ID);
+
+      expect(scratchGitService.resolveConnectionRepoPathScopedToWorkbook).toHaveBeenCalledWith(WORKBOOK_ID, 'ca_test');
+      expect(db.client.connectorAccount.findUnique).toHaveBeenCalledWith({
+        where: { id: 'ca_test', workbookId: WORKBOOK_ID },
+      });
     });
   });
 

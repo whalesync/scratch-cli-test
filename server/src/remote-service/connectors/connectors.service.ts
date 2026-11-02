@@ -73,7 +73,12 @@ export class ConnectorsService {
       decryptedCredentials,
       userId,
       createOAuthAccessTokenProvider: (id) => this.createOAuthAccessTokenProvider(id),
-      updateStoredCredentials: (id, mutate) => this.oauthService.updateStoredCredentialsUnderConnectionLock(id, mutate),
+      updateStoredCredentials: (requestedConnectorAccountId, mutate) =>
+        this.updateStoredCredentialsPinnedToBuiltConnectorAccount(
+          connectorAccount?.id ?? null,
+          requestedConnectorAccountId,
+          mutate,
+        ),
       createRateLimiter: (id) => this.rateLimiterFactory.createLimiter({ service, connectorAccountId: id }),
       getFolderOptionsByTableId: (id, tableId) => this.lookupFolderOptions(id, tableId),
       listFolderTableIds: (id) => this.listFolderTableIds(id),
@@ -148,6 +153,30 @@ export class ConnectorsService {
     });
     this.inFlightAccessTokenResolutionByConnectorAccountId.set(connectorAccountId, accessTokenResolution);
     return accessTokenResolution;
+  }
+
+  /**
+   * Implementation of `ConnectorFactoryContext.updateStoredCredentials`. Binds a
+   * connector's credential writes to the one connection it was built for: the
+   * write always targets `builtForConnectorAccountId`, and a call naming any
+   * other connection (or made by a connector built without one) is rejected
+   * rather than forwarded. The id a connector passes is an assertion, never the
+   * target — so a connector bug can't rewrite another connection's credentials
+   * (DEV-12337).
+   */
+  private async updateStoredCredentialsPinnedToBuiltConnectorAccount(
+    builtForConnectorAccountId: string | null,
+    requestedConnectorAccountId: string,
+    mutate: (
+      currentCredentials: DecryptedCredentials,
+    ) => DecryptedCredentials | null | Promise<DecryptedCredentials | null>,
+  ): Promise<DecryptedCredentials> {
+    if (builtForConnectorAccountId === null || requestedConnectorAccountId !== builtForConnectorAccountId) {
+      throw new Error(
+        `Connector built for connection ${builtForConnectorAccountId ?? '<none>'} tried to update the stored credentials of connection ${requestedConnectorAccountId}`,
+      );
+    }
+    return this.oauthService.updateStoredCredentialsUnderConnectionLock(builtForConnectorAccountId, mutate);
   }
 
   /**

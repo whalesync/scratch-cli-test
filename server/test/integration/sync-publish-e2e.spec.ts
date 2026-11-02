@@ -125,6 +125,12 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       resolveConnectionRepoPath: jest
         .fn()
         .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      // The publish plan resolves its connection's repo scoped to the workbook (DEV-12337); same repo as above.
+      resolveConnectionRepoPathScopedToWorkbook: jest
+        .fn()
+        .mockImplementation((_workbookId: WorkbookId, connectorAccountId: string) =>
+          Promise.resolve(connectorAccountId),
+        ),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-tags': { idPath: 'id' },
@@ -1281,6 +1287,11 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         const [connAcctId] = args;
         return Promise.resolve(connAcctId);
       }),
+      // The publish plan resolves its connection's repo scoped to the workbook (DEV-12337). It must name
+      // the same repo the single-argument call above does, since both resolve one connection.
+      resolveConnectionRepoPathScopedToWorkbook: jest
+        .fn()
+        .mockImplementation((_workbookId: WorkbookId, connAcctId: string) => Promise.resolve(connAcctId)),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-tags': { idPath: 'id' },
@@ -1723,9 +1734,13 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     const buildResult = await publishPlanService.buildPipeline(workbookId, userId, connectorAccountId);
     expect(buildResult.status).toBe('planned');
 
-    // Verify the per-connection repo path resolver was used for the V2 connector account
+    // Verify the per-connection repo path resolver was used for the V2 connector account, scoped to
+    // the workbook the plan is built in (DEV-12337)
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(scratchGitService.resolveConnectionRepoPath).toHaveBeenCalledWith(connectorAccountId);
+    expect(scratchGitService.resolveConnectionRepoPathScopedToWorkbook).toHaveBeenCalledWith(
+      workbookId,
+      connectorAccountId,
+    );
 
     // Verify the composite repo ID was computed correctly
     const expectedRepoId = getDefaultRepoPath(orgId, workbookId, connectorAccountId);

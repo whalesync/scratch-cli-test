@@ -445,6 +445,10 @@ describe('Live Export engines: classic vs run store produce the same publish', (
     const scratchGitService = {
       resolveRepoId: jest.fn((id: string) => Promise.resolve(id)),
       resolveConnectionRepoPath: jest.fn((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      // The publish plan resolves its connection's repo scoped to the workbook (DEV-12337); same repo as above.
+      resolveConnectionRepoPathScopedToWorkbook: jest.fn((_workbookId: string, connectorAccountId: string) =>
+        Promise.resolve(connectorAccountId),
+      ),
       resolveRepoPathForFolder: jest.fn((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       readSchemaFromGit: jest.fn((_repoId: string, folderPath: string) =>
         Promise.resolve(specs[folderPath.replace(/^\//, '')] ?? null),

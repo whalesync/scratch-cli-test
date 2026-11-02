@@ -176,10 +176,17 @@ export class PublishPlanBuildService {
     return foreignKeyPathsInFolderSchemas;
   }
 
-  /** Returns all relevant repo IDs for a workbook. When connectorAccountId is provided, returns just that one. */
+  /**
+   * Returns all relevant repo IDs for a workbook. When connectorAccountId is provided, returns just that one —
+   * and only if it belongs to the workbook (DEV-12337): both plan-job endpoints call `hasDiffs` first, so this is
+   * where a caller-supplied connection id from another workbook is rejected, before any plan row is created.
+   */
   private async resolveAllRepoIds(workbookId: WorkbookId, connectorAccountId?: string): Promise<string[]> {
     if (connectorAccountId) {
-      const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+      const repoId = await this.scratchGitService.resolveConnectionRepoPathScopedToWorkbook(
+        workbookId,
+        connectorAccountId,
+      );
       return [repoId];
     }
     const connAccounts = await this.db.client.connectorAccount.findMany({
@@ -398,6 +405,12 @@ export class PublishPlanBuildService {
       step?: string;
     }) => Promise<void>,
   ): Promise<PublishPlanInfo> {
+    const wkbId = workbookId as WorkbookId;
+    // Resolved first, and scoped to the workbook (DEV-12337): a connection from another workbook is
+    // rejected before this plan touches its repo, builds a connector on its credentials, or creates a
+    // plan row for it.
+    const repoId = await this.scratchGitService.resolveConnectionRepoPathScopedToWorkbook(wkbId, connectorAccountId);
+
     let pipelineId: string;
     let branchName: string;
 
@@ -413,9 +426,6 @@ export class PublishPlanBuildService {
       pipelineId = created.pipelineId;
       branchName = created.branchName;
     }
-
-    const wkbId = workbookId as WorkbookId;
-    const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
 
     // DEV-10316 publish-time TOCTOU re-check. The desktop captured the dirty HEAD
     // right after its upload landed (`expectedBaseDirtyHead`). If the connection's
@@ -629,7 +639,7 @@ export class PublishPlanBuildService {
     // Create asset-upload operations for destination assets that need uploading
     if (connectorAccountId) {
       await reportProgress('Checking for assets to upload');
-      const connector = await this.resolveConnector(connectorAccountId);
+      const connector = await this.resolveConnector(wkbId, connectorAccountId);
       if (connector.supportsFileUpload) {
         const destFolders = await this.db.client.dataFolder.findMany({
           where: { workbookId: wkbId, connectorAccountId },
@@ -907,9 +917,13 @@ export class PublishPlanBuildService {
     };
   }
 
-  private async resolveConnector(connectorAccountId: string): Promise<Connector> {
+  /**
+   * Scoped to `{ id, workbookId }` (DEV-12337): building a connector can refresh the connection's
+   * OAuth token or provision a Supabase role, so it must never run for another workbook's connection.
+   */
+  private async resolveConnector(workbookId: WorkbookId, connectorAccountId: string): Promise<Connector> {
     const account = await this.db.client.connectorAccount.findUnique({
-      where: { id: connectorAccountId },
+      where: { id: connectorAccountId, workbookId },
     });
     if (!account) {
       throw new Error(`ConnectorAccount not found: ${connectorAccountId}`);

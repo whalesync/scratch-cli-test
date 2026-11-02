@@ -466,6 +466,12 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL through the real pull and
       resolveConnectionRepoPath: jest
         .fn()
         .mockImplementation((repoConnectorAccountId: string) => Promise.resolve(repoConnectorAccountId)),
+      // The publish plan resolves its connection's repo scoped to the workbook (DEV-12337); same repo as above.
+      resolveConnectionRepoPathScopedToWorkbook: jest
+        .fn()
+        .mockImplementation((_repoWorkbookId: WorkbookId, repoConnectorAccountId: string) =>
+          Promise.resolve(repoConnectorAccountId),
+        ),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_repoId: string, branch: string, filesToCommit: { path: string; content: string }[]) => {
