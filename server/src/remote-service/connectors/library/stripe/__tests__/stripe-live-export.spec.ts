@@ -156,7 +156,30 @@ describe('fields that used to be dropped are now offered for export', () => {
 
     expect(paths).not.toContain('object');
     expect(paths).not.toContain('livemode');
-    expect(paths).not.toContain('metadata');
+  });
+
+  it.each<StripeEntityType>([
+    'customers',
+    'products',
+    'prices',
+    'subscriptions',
+    'invoices',
+    'payment_intents',
+    'charges',
+  ])('exports %s metadata as one downgraded-text column', (entityType) => {
+    const spec = specFor(entityType);
+    const { schemaFields, viewTypeByPath } = selectPlanFieldsFromTableView({
+      schema: spec.schema,
+      view: viewFor(entityType),
+      titlePath: spec.titlePath,
+      idPath: spec.idPath,
+    });
+    const metadata = schemaFields.find((field) => field.path === 'metadata');
+    if (!metadata) throw new Error(`${entityType}.metadata is not offered for export`);
+    const inferred = inferLogicalFieldType(metadata, viewTypeByPath['metadata'], 'Stripe');
+
+    expect(inferred.status).toBe('downgraded');
+    expect(inferred.fieldType).toEqual({ kind: 'text' });
   });
 });
 

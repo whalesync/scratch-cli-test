@@ -88,8 +88,7 @@
       "path": "metadata",
       "name": "Metadata",
       "type": "object",
-      "readonly": true,
-      "hidden": true
+      "readonly": true
     },
     {
       "kind": "col",

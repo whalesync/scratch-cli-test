@@ -150,7 +150,7 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - **Stripe caps every free-text string at 350 chars**, so `text` (not `longText`) is the honest declaration for a description — the multi-line data loss seen on Airtable was the destination pack choosing `singleLineText`, not a Stripe-side problem (DEV-11147).
 
 ## Gotchas
-- **Hidden ≠ collapsed.** A column marked `hidden` in the default view is dropped from Live Export field selection entirely, so the user is never offered it. Keep `HIDDEN_FIELDS` to genuine plumbing (`object`, `livemode`, `metadata`, `invoice_prefix`); anything hidden beyond that is silently unexportable (DEV-11148).
+- **Hidden ≠ collapsed.** A column marked `hidden` in the default view is dropped from Live Export field selection entirely, so the user is never offered it. Keep `HIDDEN_FIELDS` to genuine plumbing (`object`, `livemode`, `invoice_prefix`); anything hidden beyond that is silently unexportable (DEV-11148). `metadata` is NOT plumbing: it holds the account's own keys (CRM ids, internal user ids), so it exports whole as one downgraded-text column. Its keys are open-ended and Stripe has no endpoint that lists them, so one column per key would mean scanning pulled records.
 - **The default view must read the serialized JSON-Schema `type` keyword, never TypeBox's `Kind` symbol.** The view is regenerated from a schema that may have been JSON-parsed off disk, where symbols are gone — a `Kind`-based mapping silently types every column `undefined` there (this was live until the DEV-11145 pass; the `stripe-products` view-codec golden shows the before/after).
 
 ## Integration tests

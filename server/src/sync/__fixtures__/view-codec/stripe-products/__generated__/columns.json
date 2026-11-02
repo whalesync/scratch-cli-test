@@ -86,6 +86,15 @@
     "fromCore": null
   },
   {
+    "column": "Metadata",
+    "columnId": "metadata",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "object",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
     "column": "Updated",
     "columnId": "updated",
     "cardinality": "single",

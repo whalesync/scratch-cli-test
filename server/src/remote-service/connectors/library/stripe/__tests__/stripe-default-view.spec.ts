@@ -108,12 +108,12 @@ describe('buildStripeDefaultView', () => {
   it('should hide only genuine plumbing', () => {
     expect(col(view, 'object')?.hidden).toBe(true);
     expect(col(view, 'livemode')?.hidden).toBe(true);
-    expect(col(view, 'metadata')?.hidden).toBe(true);
   });
 
   it('should not hide business fields', () => {
     expect(col(view, 'name')?.hidden).toBeUndefined();
     expect(col(view, 'email')?.hidden).toBeUndefined();
+    expect(col(view, 'metadata')?.hidden).toBeUndefined();
   });
 
   it('should format snake_case field names as Title Case', () => {
@@ -258,7 +258,7 @@ describe('buildStripeDefaultView', () => {
         .filter((c) => c.kind === 'col' && c.hidden && !(c.name ?? '').endsWith('(raw)'))
         .map((c) => (c as TableViewCol).path);
 
-      expect(hiddenPaths.sort()).toEqual(['invoice_prefix', 'livemode', 'metadata', 'object']);
+      expect(hiddenPaths.sort()).toEqual(['invoice_prefix', 'livemode', 'object']);
     });
 
     it('does not collide names between an address and a shipping address', () => {

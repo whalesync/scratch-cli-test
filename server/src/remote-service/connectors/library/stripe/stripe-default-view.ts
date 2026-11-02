@@ -37,17 +37,19 @@ const PRIORITY_FIELDS: Record<StripeEntityType, string[]> = {
 
 /**
  * Fields hidden by default — genuine plumbing present on every Stripe object, whose value is a
- * constant or an open-ended bag.
+ * constant or carries no user data.
  *
  * Kept deliberately SHORT. A hidden column is not merely collapsed in the grid: it is dropped from
  * Live Export field selection entirely, so the user is never even offered it. This set used to also
- * hold `address`, `shipping`, `billing_details`, `images` and `items` — real, populated customer
- * data that could therefore never reach a destination (DEV-11148). Those are now exported: the
- * address-shaped objects expand into one column per subfield (see COMPOSITE_OBJECT_FIELDS) and the
- * list-shaped ones ride through as downgraded text, which is honest rather than silently absent.
- * `metadata` stays hidden because it is an open-ended `Record` with no declared keys.
+ * hold `address`, `shipping`, `billing_details`, `images`, `items`, and `metadata` — real, populated
+ * customer data that could therefore never reach a destination (DEV-11148). Those are now exported:
+ * the address-shaped objects expand into one column per subfield (see COMPOSITE_OBJECT_FIELDS) and
+ * the list-shaped ones ride through as downgraded text, which is honest rather than silently absent.
+ * `metadata` is where a Stripe account keeps its own keys (CRM ids, internal user ids, plan tags);
+ * its keys are open-ended and Stripe has no endpoint that lists them, so it rides through whole as
+ * one downgraded-text column rather than one column per key.
  */
-const HIDDEN_FIELDS = new Set(['object', 'livemode', 'metadata', 'invoice_prefix']);
+const HIDDEN_FIELDS = new Set(['object', 'livemode', 'invoice_prefix']);
 
 /**
  * Nested objects flattened into one column per leaf — `address.city` as `Address (City)` — plus the
