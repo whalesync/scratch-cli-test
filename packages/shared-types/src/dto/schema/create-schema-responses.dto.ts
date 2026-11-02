@@ -51,6 +51,20 @@ export interface NameCharacterRules {
 }
 
 /**
+ * How the plan generator styles the table and field names it generates (`SchemaCreationCapabilities.nameStyle`).
+ *
+ * - `'asGiven'` keeps the source's names, display labels and all ("Payment Intents", "Address (City)").
+ * - `'lowercaseSqlIdentifier'` converts them to names hand-written SQL can use without quotes: lower case,
+ *   accents dropped, every run of other characters outside `a-z0-9` turned into one `_`, and a `_` prefix
+ *   on a leading digit ("Payment Intents" → `payment_intents`, "Address (City)" → `address_city`).
+ *   A name shortened to fit a length limit is joined with `_` rather than `…`, and a duplicate gets a
+ *   `_2` suffix rather than ` 2`, so neither forces quoting either. SQL keywords (`order`, `user`) are
+ *   left alone: they are valid names that only need quoting. A name in a script the conversion can't keep
+ *   ("名前", "Имя") keeps its original name; one that is only emoji or punctuation becomes `field` / `table`.
+ */
+export type NameStyle = 'asGiven' | 'lowercaseSqlIdentifier';
+
+/**
  * Declarative, connector-agnostic description of what a connector can create.
  * The generic validator consumes this to fail fast (without hardcoding connector
  * rules in the server or any frontend); a connector with a mandatory title field
@@ -76,6 +90,16 @@ export interface SchemaCreationCapabilities {
    * Absent ⇒ any character is allowed. (DEV-12413)
    */
   nameCharacterRules?: NameCharacterRules;
+  /**
+   * The style the plan generator gives the NEW table and field names it generates, applied before
+   * `nameCharacterRules`, shortening, and deduplication, with a note. Postgres and Supabase use
+   * `'lowercaseSqlIdentifier'`, because people and agents write SQL against the tables a Live Export
+   * creates. Only new names are styled: an existing table or column is never renamed, and a source field
+   * already on the destination is matched by its full name before its styled one, so an older
+   * `"Address (City)"` column is still adopted rather than duplicated as `address_city`. A source in the
+   * same `nativeTypeSystem` keeps its own table and column names. Absent ⇒ `'asGiven'`.
+   */
+  nameStyle?: NameStyle;
   /**
    * The maximum number of fields a single table may contain, when the connector enforces one — e.g.
    * Airtable rejects a table with more than 500 fields. Counts the plan's FINAL field list (including
@@ -288,12 +312,12 @@ export interface FieldMappingNote {
    */
   existingDestinationColumnId?: string;
   /**
-   * Set when the field's name changed from the source's — because characters the
-   * destination can't hold were removed (`nameCharacterRules`), because it was
-   * middle-elided to fit the destination's `maxFieldNameLength`, and/or because a
-   * numeric suffix was appended to keep names unique within the table: the original,
-   * pre-change name. `fieldName` holds the final name actually used in the plan, and
-   * `message` explains why it changed.
+   * Set when the field's name changed from the source's — because it was converted to
+   * the destination's `nameStyle`, because characters the destination can't hold were
+   * removed (`nameCharacterRules`), because it was middle-elided to fit the destination's
+   * `maxFieldNameLength`, and/or because a numeric suffix was appended to keep names
+   * unique within the table: the original, pre-change name. `fieldName` holds the final
+   * name actually used in the plan, and `message` explains why it changed.
    */
   renamedFromName?: string;
 }
@@ -302,8 +326,9 @@ export interface FieldMappingNote {
  * Outcome of resolving a generated table's name. Emitted ONLY when a new table's
  * name had to change — because a numeric suffix was appended to avoid a collision
  * (with another new table in the same plan, or a table already on the destination),
- * because characters the destination can't hold were removed, and/or because it was
- * middle-elided to fit the destination's identifier limit.
+ * because it was converted to the destination's `nameStyle`, because characters the
+ * destination can't hold were removed, and/or because it was middle-elided to fit the
+ * destination's identifier limit.
  * `tableName` is the final name used in the plan; nothing is renamed silently.
  */
 export interface TableMappingNote {
@@ -320,15 +345,19 @@ export interface TableMappingNote {
    * `conflicts_with_existing_table` — collided with a table already on the destination;
    * `unsupported_characters` — characters the destination can't hold were removed
    * (`nameCharacterRules`, no collision);
-   * `truncated_to_length_limit` — the name was only shortened to fit the destination's
-   * `maxTableNameLength`. When more than one applies, a collision wins, then
-   * `unsupported_characters`; `message` names every change.
+   * `truncated_to_length_limit` — the name was shortened to fit the destination's
+   * `maxTableNameLength` (no collision, no characters removed);
+   * `converted_to_name_style` — the name was only converted to the destination's
+   * `nameStyle` (e.g. "Payment Intents" → `payment_intents`). When more than one
+   * applies, a collision wins, then `unsupported_characters`, then
+   * `truncated_to_length_limit`; `message` names every change.
    */
   reason:
     | 'duplicate_in_plan'
     | 'conflicts_with_existing_table'
     | 'unsupported_characters'
-    | 'truncated_to_length_limit';
+    | 'truncated_to_length_limit'
+    | 'converted_to_name_style';
   message: string;
 }
 

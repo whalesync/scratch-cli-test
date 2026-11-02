@@ -841,6 +841,8 @@ describe('PostgresConnector schema creation', () => {
     expect(capabilities.primaryField).toBeNull();
     expect(capabilities.maxTableNameLength).toBe(63);
     expect(capabilities.maxFieldNameLength).toBe(63);
+    // Postgres and Supabase give new tables and columns the same lowercase SQL names.
+    expect(capabilities.nameStyle).toBe('lowercaseSqlIdentifier');
   });
 
   describe('createTable', () => {

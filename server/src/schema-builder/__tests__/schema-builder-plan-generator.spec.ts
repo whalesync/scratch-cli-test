@@ -1,5 +1,6 @@
 import { CREATE_FIELD_KINDS, TransformerTypes, type CreateFieldType } from '@spinner/shared-types';
 import { MYSQL_SCHEMA_CREATION_CAPABILITIES } from 'src/remote-service/connectors/library/mysql/mysql-create-schema';
+import { POSTGRES_SCHEMA_CREATION_CAPABILITIES } from 'src/remote-service/connectors/library/pg-common/pg-create-schema';
 import type { SchemaField } from 'src/utils/schema-helpers';
 import { linkedTableIdIndexKeysForRemoteTableId } from '../foreign-key-linked-table-id';
 import {
@@ -819,6 +820,7 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
       schemaFields: [
         field({ path: 'b', type: 'string', displayLabel: 'Color' }),
         field({ path: 'c', type: 'string', displayLabel: 'Color' }),
+        field({ path: 'd', type: 'string', displayLabel: 'Color' }),
       ],
       existingDestination: {
         dataFolderId: 'destContacts',
@@ -826,11 +828,16 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
         existingFields: [{ name: 'Color 2', columnPath: 'Color 2', kind: 'text' }],
       },
     };
-    const { fieldPlans } = generateCreatePlanFromSources({
+    const { fieldPlans, notes } = generateCreatePlanFromSources({
       sources: [source],
       destinationConnectorAccountId: 'destConn',
     });
-    // 'Color' is free; the duplicate skips the existing 'Color 2' and becomes 'Color 3'.
+    // The second 'Color' was named 'Color 2' when the table was created, so it adopts that column.
+    expect(notes.find((note) => note.sourceFieldPath === 'c')).toMatchObject({
+      status: 'adopted',
+      existingDestinationColumnId: 'Color 2',
+    });
+    // 'Color' is free; the third duplicate skips the existing 'Color 2' and becomes 'Color 3'.
     expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['Color', 'Color 3']);
   });
 });
@@ -1371,6 +1378,587 @@ describe('generateCreatePlanFromSources — name character rules (DEV-12413)', (
 
       expect(notes.filter((note) => note.status === 'adopted').map((note) => note.sourceFieldPath)).toEqual(['happy']);
       expect(fieldPlans[0].fields.map((createdField) => createdField.name)).toEqual(['Mood 2']);
+    });
+  });
+});
+
+describe('generateCreatePlanFromSources — lowercase SQL names (Postgres and Supabase)', () => {
+  // Exactly what the service passes for a Postgres or Supabase destination.
+  const POSTGRES_NAME_RULES = {
+    destinationNameStyle: POSTGRES_SCHEMA_CREATION_CAPABILITIES.nameStyle,
+    destinationReservedFieldNames: POSTGRES_SCHEMA_CREATION_CAPABILITIES.reservedFieldNames,
+    destinationMaxTableNameLength: POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxTableNameLength,
+    destinationMaxFieldNameLength: POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxFieldNameLength,
+    destinationNameLengthUnit: POSTGRES_SCHEMA_CREATION_CAPABILITIES.nameLengthUnit,
+    destinationFieldTypeSupport: {
+      supportedFieldKinds: POSTGRES_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds,
+      supportedArrayElementKinds: POSTGRES_SCHEMA_CREATION_CAPABILITIES.supportedArrayElementKinds,
+      nativeTypeSystem: POSTGRES_SCHEMA_CREATION_CAPABILITIES.nativeTypeSystem,
+    },
+  };
+  const UNQUOTED_SQL_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+
+  const stripeSource = (schemaFields: SchemaField[], tableName = 'Payment Intents'): PlanGeneratorSource => ({
+    ref: 'payment_intents',
+    dataFolderId: 'payment_intents',
+    tableName,
+    remoteTableIds: ['payment_intents'],
+    idFieldPath: 'id',
+    connectorService: 'STRIPE',
+    serviceDisplayName: 'Stripe',
+    schemaFields: [field({ path: 'id' }), ...schemaFields],
+  });
+
+  const noteFor = <Note extends { sourceFieldPath: string }>(notes: Note[], sourceFieldPath: string) =>
+    notes.find((note) => note.sourceFieldPath === sourceFieldPath);
+
+  it('converts display-label table and field names to lowercase SQL names, and notes each rename', () => {
+    const { tables, notes, tableNotes } = generateCreatePlanFromSources({
+      sources: [
+        stripeSource([
+          field({ path: 'address.city', displayLabel: 'Address (City)' }),
+          field({
+            path: 'invoice_settings.default_payment_method',
+            displayLabel: 'Invoice Settings (Default Payment Method)',
+          }),
+          field({ path: 'notes', displayLabel: 'Café Notes' }),
+          field({ path: 'two_factor', type: 'boolean', displayLabel: '2FA Enabled' }),
+          field({ path: 'order', displayLabel: 'Order' }),
+          field({ path: 'email', displayLabel: 'email' }),
+        ]),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      ...POSTGRES_NAME_RULES,
+    });
+
+    expect(tables[0].name).toBe('payment_intents');
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual([
+      'address_city',
+      'invoice_settings_default_payment_method',
+      'cafe_notes',
+      // A leading digit can't start an unquoted identifier.
+      '_2fa_enabled',
+      // A SQL keyword is a valid name; it is left alone.
+      'order',
+      'email',
+      'stripe_record_id',
+    ]);
+    expect(noteFor(notes, 'address.city')).toEqual({
+      sourceDataFolderId: 'payment_intents',
+      sourceFieldPath: 'address.city',
+      fieldName: 'address_city',
+      status: 'mapped',
+      mappedKind: 'text',
+      renamedFromName: 'Address (City)',
+      message: 'converted to a lowercase, SQL-friendly name',
+    });
+    // A name that is already in the style is not a rename.
+    expect(notes.find((note) => note.sourceFieldPath === 'email')?.renamedFromName).toBeUndefined();
+    expect(tableNotes).toEqual([
+      {
+        sourceDataFolderId: 'payment_intents',
+        ref: 'payment_intents',
+        tableName: 'payment_intents',
+        renamedFromName: 'Payment Intents',
+        reason: 'converted_to_name_style',
+        message: 'the name was converted to a lowercase, SQL-friendly name; renamed to "payment_intents"',
+      },
+    ]);
+  });
+
+  it('deduplicates on the final names: "Address (Line1)" and "Address Line1" both convert to address_line1', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [
+        stripeSource([
+          field({ path: 'address.line1', displayLabel: 'Address (Line1)' }),
+          field({ path: 'address_line1', displayLabel: 'Address Line1' }),
+        ]),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      ...POSTGRES_NAME_RULES,
+    });
+
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual([
+      'address_line1',
+      'address_line1_2',
+      'stripe_record_id',
+    ]);
+    expect(noteFor(notes, 'address_line1')).toMatchObject({
+      fieldName: 'address_line1_2',
+      renamedFromName: 'Address Line1',
+      message: 'converted to a lowercase, SQL-friendly name; renamed from "Address Line1" to keep field names unique',
+    });
+  });
+
+  it('converts, then shortens with "_" (never "…"), then deduplicates within the 63-byte limit', () => {
+    const longLabel = (charge: string) =>
+      `Invoice Settings (Rendering Options (Amount ${charge} Display Preference For The Customer Portal))`;
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [
+        stripeSource([
+          field({ path: 'a', displayLabel: longLabel('Tax') }),
+          // Differs only in the middle, so it shortens to the same 63-byte name as the first.
+          field({ path: 'b', displayLabel: longLabel('Fee') }),
+        ]),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      ...POSTGRES_NAME_RULES,
+    });
+
+    const [firstName, secondName] = tables[0].fields.map((createdField) => createdField.name);
+    for (const createdName of [firstName, secondName]) {
+      expect(createdName).toMatch(UNQUOTED_SQL_IDENTIFIER);
+      expect(Buffer.byteLength(createdName, 'utf8')).toBeLessThanOrEqual(63);
+      expect(createdName).not.toContain('__');
+    }
+    // Shortened from the middle, so both ends of the name survive.
+    expect(firstName.startsWith('invoice_settings_rendering_')).toBe(true);
+    expect(firstName.endsWith('for_the_customer_portal')).toBe(true);
+    // The suffixed name is shortened from the middle too, leaving room for `_2`.
+    expect(secondName).toMatch(/^invoice_settings_rendering_.*_customer_portal_2$/);
+    expect(noteFor(notes, 'b')?.message).toBe(
+      'converted to a lowercase, SQL-friendly name; ' +
+        "shortened to fit the destination's 63-byte field-name limit; " +
+        `renamed from "${longLabel('Fee')}" to keep field names unique`,
+    );
+  });
+
+  it('keeps "id" reserved after conversion: a source "ID" becomes id_2', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [stripeSource([field({ path: 'customer_id', displayLabel: 'ID' })])],
+      destinationConnectorAccountId: 'destConn',
+      ...POSTGRES_NAME_RULES,
+    });
+
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual(['id_2', 'stripe_record_id']);
+    expect(noteFor(notes, 'customer_id')).toMatchObject({
+      fieldName: 'id_2',
+      renamedFromName: 'ID',
+      message: 'converted to a lowercase, SQL-friendly name; renamed from "ID" — "id" is reserved by the destination',
+    });
+  });
+
+  it('falls back to field / table for a name of only emoji or punctuation', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [
+        stripeSource(
+          [
+            field({ path: 'rocket', displayLabel: '\u{1F680}' }),
+            field({ path: 'dashes', displayLabel: '---' }),
+            field({ path: 'sparkles', displayLabel: '\u2728 !!' }),
+          ],
+          '\u{1F680}\u{1F680}',
+        ),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      ...POSTGRES_NAME_RULES,
+    });
+
+    expect(tables[0].name).toBe('table');
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual([
+      'field',
+      'field_2',
+      'field_3',
+      'stripe_record_id',
+    ]);
+  });
+
+  it('keeps table and field names in other scripts as they are, with no rename note', () => {
+    const { tables, notes, tableNotes } = generateCreatePlanFromSources({
+      sources: [
+        stripeSource(
+          [
+            field({ path: 'name', displayLabel: '名前' }),
+            field({ path: 'address', displayLabel: '住所' }),
+            field({ path: 'full_name', displayLabel: 'Имя (полное)' }),
+            field({ path: 'customer_id', displayLabel: '顧客 ID' }),
+            field({ path: 'street', displayLabel: 'Straße' }),
+            // Accented Latin still converts.
+            field({ path: 'notes', displayLabel: 'Café Notes' }),
+          ],
+          '顧客',
+        ),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      ...POSTGRES_NAME_RULES,
+    });
+
+    expect(tables[0].name).toBe('顧客');
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual([
+      '名前',
+      '住所',
+      'Имя (полное)',
+      '顧客 ID',
+      'Straße',
+      'cafe_notes',
+      'stripe_record_id',
+    ]);
+    expect(tableNotes).toEqual([]);
+    expect(notes.filter((note) => note.renamedFromName !== undefined).map((note) => note.sourceFieldPath)).toEqual([
+      'notes',
+    ]);
+  });
+
+  it('counts the tables already in the destination schema as taken', () => {
+    const { tables, tableNotes } = generateCreatePlanFromSources({
+      sources: [stripeSource([field({ path: 'amount', type: 'number', displayLabel: 'Amount' })])],
+      destinationConnectorAccountId: 'destConn',
+      existingDestinationTableNames: ['payment_intents'],
+      ...POSTGRES_NAME_RULES,
+    });
+
+    expect(tables[0].name).toBe('payment_intents_2');
+    expect(tableNotes[0]).toMatchObject({
+      renamedFromName: 'Payment Intents',
+      reason: 'conflicts_with_existing_table',
+      message:
+        'the name was converted to a lowercase, SQL-friendly name; ' +
+        'a table named "payment_intents" already exists on the destination; renamed to "payment_intents_2"',
+    });
+  });
+
+  it('keeps the injected source-record-id name, renaming a source field that only converts to it', () => {
+    const airtableSource: PlanGeneratorSource = {
+      ref: 'deals',
+      dataFolderId: 'deals',
+      tableName: 'Deals',
+      remoteTableIds: ['tblDeals'],
+      idFieldPath: 'id',
+      connectorService: 'AIRTABLE',
+      // A formula field people add to Airtable bases; it converts to the injected column's name.
+      schemaFields: [
+        field({ path: 'id' }),
+        field({ path: 'fields.Airtable Record ID', displayLabel: 'Airtable Record ID' }),
+      ],
+    };
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [airtableSource],
+      destinationConnectorAccountId: 'destConn',
+      ...POSTGRES_NAME_RULES,
+    });
+
+    expect(tables[0].fields.map((createdField) => [createdField.name, createdField.isSourceRecordId])).toEqual([
+      ['airtable_record_id_2', undefined],
+      ['airtable_record_id', true],
+    ]);
+    expect(noteFor(notes, 'fields.Airtable Record ID')?.renamedFromName).toBe('Airtable Record ID');
+  });
+
+  it('keeps a Postgres or Supabase source table and its columns under their own names', () => {
+    const postgresNativeColumnType = { typeSystem: 'postgres', type: 'text', isRecreatableVerbatim: true };
+    const supabaseSource: PlanGeneratorSource = {
+      ref: 'orders',
+      dataFolderId: 'orders',
+      tableName: 'Customer Orders',
+      remoteTableIds: ['public.Customer Orders'],
+      idFieldPath: 'id',
+      connectorService: 'SUPABASE',
+      schemaFields: [
+        field({ path: 'id', nativeColumnType: postgresNativeColumnType }),
+        field({ path: 'Signup Date', nativeColumnType: postgresNativeColumnType }),
+        field({ path: 'shipping_city', displayLabel: 'Shipping City', nativeColumnType: postgresNativeColumnType }),
+      ],
+    };
+    const { tables, notes, tableNotes } = generateCreatePlanFromSources({
+      sources: [supabaseSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationConnectorService: 'POSTGRES',
+      ...POSTGRES_NAME_RULES,
+    });
+
+    expect(tables[0].name).toBe('Customer Orders');
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual([
+      'Signup Date',
+      'shipping_city',
+      'supabase_record_id',
+    ]);
+    expect(tableNotes).toEqual([]);
+    expect(notes.some((note) => note.renamedFromName !== undefined)).toBe(false);
+  });
+
+  it('leaves names as given on a destination with no name style', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [stripeSource([field({ path: 'address.city', displayLabel: 'Address (City)' })])],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    expect(tables[0].name).toBe('Payment Intents');
+    expect(tables[0].fields.map((createdField) => createdField.name)).toEqual(['Address (City)', 'stripe_record_id']);
+  });
+
+  describe('adding fields to a table created before the name style', () => {
+    const intoExistingPaymentIntents = (
+      schemaFields: SchemaField[],
+      existingFields: ExistingDestinationField[],
+    ): PlanGeneratorSource => ({
+      ...stripeSource(schemaFields),
+      existingDestination: {
+        dataFolderId: 'destPaymentIntents',
+        remoteTableId: ['stripe', 'Payment Intents'],
+        existingFields,
+      },
+    });
+    const existingTextColumn = (name: string): ExistingDestinationField => ({ name, columnPath: name, kind: 'text' });
+
+    it('adopts the old "Address (City)" column and adds only the new field, under a lowercase name', () => {
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          intoExistingPaymentIntents(
+            [
+              field({ path: 'address.city', displayLabel: 'Address (City)' }),
+              field({ path: 'address.country', displayLabel: 'Address (Country)' }),
+            ],
+            [existingTextColumn('Address (City)'), existingTextColumn('stripe_record_id')],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+
+      expect(fieldPlans[0].fields.map((addedField) => addedField.name)).toEqual(['address_country']);
+      expect(noteFor(notes, 'address.city')).toEqual({
+        sourceDataFolderId: 'payment_intents',
+        sourceFieldPath: 'address.city',
+        fieldName: 'Address (City)',
+        status: 'adopted',
+        mappedKind: 'text',
+        existingDestinationColumnId: 'Address (City)',
+        message: 'a "text" field named "Address (City)" already exists on the destination; mapping to it',
+      });
+    });
+
+    it('adopts a column already created under its lowercase name', () => {
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          intoExistingPaymentIntents(
+            [field({ path: 'address.city', displayLabel: 'Address (City)' })],
+            [existingTextColumn('address_city')],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+
+      expect(fieldPlans[0].fields).toEqual([]);
+      expect(noteFor(notes, 'address.city')).toMatchObject({
+        fieldName: 'address_city',
+        status: 'adopted',
+        existingDestinationColumnId: 'address_city',
+        renamedFromName: 'Address (City)',
+      });
+    });
+
+    it('prefers the old full-name column when both "Address (City)" and address_city exist', () => {
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          intoExistingPaymentIntents(
+            [field({ path: 'address.city', displayLabel: 'Address (City)' })],
+            [existingTextColumn('address_city'), existingTextColumn('Address (City)')],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+
+      expect(fieldPlans[0].fields).toEqual([]);
+      expect(noteFor(notes, 'address.city')).toMatchObject({ existingDestinationColumnId: 'Address (City)' });
+    });
+
+    it('adopts an old column created under its "…"-shortened display label', () => {
+      const longLabel = 'Invoice Settings (Rendering Options (Amount Tax Display Preference For The Customer Portal))';
+      const oldShortenedColumnName = elideNameToMaxLength(longLabel, 63, 'utf8Bytes');
+      expect(oldShortenedColumnName).toContain('…');
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          intoExistingPaymentIntents(
+            [field({ path: 'rendering', displayLabel: longLabel })],
+            [existingTextColumn(oldShortenedColumnName)],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+
+      expect(fieldPlans[0].fields).toEqual([]);
+      expect(noteFor(notes, 'rendering')).toMatchObject({
+        status: 'adopted',
+        existingDestinationColumnId: oldShortenedColumnName,
+      });
+    });
+
+    it('never names a new column after an existing one: a second source field converting to it is suffixed', () => {
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          intoExistingPaymentIntents(
+            [
+              field({ path: 'address.line1', displayLabel: 'Address (Line1)' }),
+              field({ path: 'address_line1', displayLabel: 'Address Line1' }),
+            ],
+            [existingTextColumn('address_line1')],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+
+      expect(notes.filter((note) => note.status === 'adopted').map((note) => note.sourceFieldPath)).toEqual([
+        'address.line1',
+      ]);
+      expect(fieldPlans[0].fields.map((addedField) => addedField.name)).toEqual(['address_line1_2']);
+    });
+  });
+
+  describe('re-planning into a table created with lowercase names', () => {
+    const existingTextColumn = (name: string): ExistingDestinationField => ({ name, columnPath: name, kind: 'text' });
+    const intoExisting = (source: PlanGeneratorSource, existingColumnNames: string[]): PlanGeneratorSource => ({
+      ...source,
+      existingDestination: {
+        dataFolderId: 'destination',
+        remoteTableId: ['airtable_export', source.ref],
+        existingFields: existingColumnNames.map(existingTextColumn),
+      },
+    });
+
+    it.each([
+      [
+        ['\u{1F680}', '---'],
+        ['field', 'field_2'],
+      ],
+      [
+        ['Address (Line1)', 'Address Line1'],
+        ['address_line1', 'address_line1_2'],
+      ],
+      // A converted name that equals a later field's own name.
+      [
+        ['Phone #', 'Phone'],
+        ['phone', 'phone_2'],
+      ],
+      [
+        ['Amount ($)', 'amount'],
+        ['amount', 'amount_2'],
+      ],
+    ])('adopts each column a converted name was suffixed into at create: %j', (labels, createdColumnNames) => {
+      const source = stripeSource(labels.map((label, index) => field({ path: `f${index}`, displayLabel: label })));
+      const { tables } = generateCreatePlanFromSources({
+        sources: [source],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+      expect(tables[0].fields.map((createdField) => createdField.name)).toEqual([
+        ...createdColumnNames,
+        'stripe_record_id',
+      ]);
+
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [intoExisting(source, ['id', ...createdColumnNames, 'stripe_record_id'])],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+
+      expect(fieldPlans[0].fields).toEqual([]);
+      expect(notes.map((note) => [note.sourceFieldPath, note.status, note.existingDestinationColumnId])).toEqual([
+        ['f0', 'adopted', createdColumnNames[0]],
+        ['f1', 'adopted', createdColumnNames[1]],
+      ]);
+    });
+
+    it.each([
+      [['Phone #', 'Phone'], ['phone_2'], { f1: 'phone_2' }, ['phone']],
+      [['\u{1F680}', '---', '***'], ['field_2', 'field_3'], { f1: 'field_2', f2: 'field_3' }, ['field']],
+    ])(
+      'steps past the name an earlier field left unselected at create took: %j',
+      (labels, createdColumnNames, expectedAdoptedColumnByPath, expectedNewFieldNames) => {
+        const source = stripeSource(labels.map((label, index) => field({ path: `f${index}`, displayLabel: label })));
+        const { fieldPlans, notes } = generateCreatePlanFromSources({
+          sources: [intoExisting(source, ['id', ...createdColumnNames, 'stripe_record_id'])],
+          destinationConnectorAccountId: 'destConn',
+          ...POSTGRES_NAME_RULES,
+        });
+
+        expect(
+          Object.fromEntries(
+            notes
+              .filter((note) => note.status === 'adopted')
+              .map((note) => [note.sourceFieldPath, note.existingDestinationColumnId]),
+          ),
+        ).toEqual(expectedAdoptedColumnByPath);
+        expect(fieldPlans[0].fields.map((addedField) => addedField.name)).toEqual(expectedNewFieldNames);
+      },
+    );
+
+    it("never lets a later field take a column an earlier field matched but couldn't adopt", () => {
+      // "Owner #" is a link, so it is skipped rather than adopted; its `owner` column is still its own.
+      const source = stripeSource([
+        field({ path: 'owner_link', displayLabel: 'Owner #', foreignKey: { linkedTableId: 'customers' } }),
+        field({ path: 'owner', displayLabel: 'Owner' }),
+      ]);
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [intoExisting(source, ['id', 'owner', 'owner_2', 'stripe_record_id'])],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+
+      expect(notes.map((note) => [note.sourceFieldPath, note.status, note.existingDestinationColumnId])).toEqual([
+        ['owner_link', 'exists', undefined],
+        ['owner', 'adopted', 'owner_2'],
+      ]);
+      expect(fieldPlans[0].fields).toEqual([]);
+    });
+
+    it('never lets a converted name take an old display-label column that only matches it ignoring case', () => {
+      // Created before the name style, with "Phone #" left unselected: only "Phone" is there.
+      const source = stripeSource([
+        field({ path: 'phone_hash', displayLabel: 'Phone #' }),
+        field({ path: 'phone', displayLabel: 'Phone' }),
+      ]);
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [intoExisting(source, ['id', 'Phone', 'stripe_record_id'])],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+
+      expect(notes.map((note) => [note.sourceFieldPath, note.status, note.existingDestinationColumnId])).toEqual([
+        ['phone_hash', 'mapped', undefined],
+        ['phone', 'adopted', 'Phone'],
+      ]);
+      expect(fieldPlans[0].fields.map((addedField) => addedField.name)).toEqual(['phone_2']);
+    });
+
+    it('never maps a source field that converts to the injected source-record-id name into that column', () => {
+      const airtableSource: PlanGeneratorSource = {
+        ref: 'deals',
+        dataFolderId: 'deals',
+        tableName: 'Deals',
+        remoteTableIds: ['tblDeals'],
+        idFieldPath: 'id',
+        connectorService: 'AIRTABLE',
+        schemaFields: [
+          field({ path: 'id' }),
+          field({ path: 'fields.Airtable Record ID', displayLabel: 'Airtable Record ID' }),
+        ],
+      };
+
+      // Created as `airtable_record_id_2` beside the injected `airtable_record_id`: adopt that one.
+      const createdWithBoth = generateCreatePlanFromSources({
+        sources: [intoExisting(airtableSource, ['id', 'airtable_record_id_2', 'airtable_record_id'])],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+      expect(createdWithBoth.fieldPlans[0].fields).toEqual([]);
+      expect(createdWithBoth.notes).toEqual([
+        expect.objectContaining({ status: 'adopted', existingDestinationColumnId: 'airtable_record_id_2' }),
+      ]);
+
+      // Left out at create: add it beside the injected column rather than map into it.
+      const createdWithoutIt = generateCreatePlanFromSources({
+        sources: [intoExisting(airtableSource, ['id', 'airtable_record_id'])],
+        destinationConnectorAccountId: 'destConn',
+        ...POSTGRES_NAME_RULES,
+      });
+      expect(createdWithoutIt.fieldPlans[0].fields.map((addedField) => addedField.name)).toEqual([
+        'airtable_record_id_2',
+      ]);
+      expect(createdWithoutIt.notes.some((note) => note.status === 'adopted')).toBe(false);
     });
   });
 });

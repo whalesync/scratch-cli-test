@@ -1,8 +1,10 @@
 import type { NameCharacterRules } from '@spinner/shared-types';
 import {
   allocateUniqueName,
+  convertNameToNameStyle,
   elideNameToMaxLength,
   fitNameToCharacterRules,
+  foldNameToLowercaseSqlIdentifier,
   normalizeNameForUniqueness,
 } from '../schema-builder-unique-names';
 
@@ -148,5 +150,88 @@ describe('fitNameToCharacterRules (DEV-12413)', () => {
       'First Name \u{1F600}',
     );
     expect(fitNameToCharacterRules('Mood \u{1F600} ', { basicMultilingualPlaneOnly: true }, 'Field')).toBe('Mood');
+  });
+});
+
+describe('foldNameToLowercaseSqlIdentifier', () => {
+  it.each([
+    ['Payment Intents', 'payment_intents'],
+    ['Address (City)', 'address_city'],
+    ['Invoice Settings (Default Payment Method)', 'invoice_settings_default_payment_method'],
+    ['Café Notes', 'cafe_notes'],
+    ['  --HubSpot & Notion--  ', 'hubspot_notion'],
+    ['already_snake_case', 'already_snake_case'],
+    ['Order', 'order'],
+  ])('folds %j to %j', (name, expected) => {
+    expect(foldNameToLowercaseSqlIdentifier(name, '_')).toBe(expected);
+  });
+
+  it('prefixes a leading digit with the given prefix', () => {
+    expect(foldNameToLowercaseSqlIdentifier('2FA Enabled', '_')).toBe('_2fa_enabled');
+    expect(foldNameToLowercaseSqlIdentifier('2026 export', 's_')).toBe('s_2026_export');
+  });
+
+  it('returns an empty string when nothing usable is left', () => {
+    expect(foldNameToLowercaseSqlIdentifier('\u{1F680}', '_')).toBe('');
+    expect(foldNameToLowercaseSqlIdentifier('...', '_')).toBe('');
+    expect(foldNameToLowercaseSqlIdentifier('顧客', '_')).toBe('');
+  });
+});
+
+describe('convertNameToNameStyle', () => {
+  it("leaves an 'asGiven' name unchanged", () => {
+    expect(convertNameToNameStyle('Address (City)', 'asGiven', 'Field')).toBe('Address (City)');
+  });
+
+  it("converts a 'lowercaseSqlIdentifier' name, falling back to the converted fallback when nothing is left", () => {
+    expect(convertNameToNameStyle('Address (City)', 'lowercaseSqlIdentifier', 'Field')).toBe('address_city');
+    expect(convertNameToNameStyle('Café Notes', 'lowercaseSqlIdentifier', 'Field')).toBe('cafe_notes');
+    expect(convertNameToNameStyle('\u{1F680}', 'lowercaseSqlIdentifier', 'Field')).toBe('field');
+    expect(convertNameToNameStyle('--- !!', 'lowercaseSqlIdentifier', 'Field')).toBe('field');
+  });
+
+  it.each(['名前', 'Имя (полное)', '顧客 ID', 'שם', '이름', 'Straße'])(
+    "keeps %j as it is: a 'lowercaseSqlIdentifier' conversion would drop its letters",
+    (name) => {
+      expect(convertNameToNameStyle(name, 'lowercaseSqlIdentifier', 'Field')).toBe(name);
+    },
+  );
+});
+
+describe("name style 'lowercaseSqlIdentifier' in shortening and dedup", () => {
+  const LONG_SQL_NAME = 'invoice_settings_rendering_options_amount_tax_display_preference_for_the_customer_portal';
+
+  it('suffixes a duplicate with _2, _3, …', () => {
+    const taken = new Set<string>();
+    expect(allocateUniqueName('address_line1', taken, 63, 'utf8Bytes', 'lowercaseSqlIdentifier')).toBe('address_line1');
+    expect(allocateUniqueName('address_line1', taken, 63, 'utf8Bytes', 'lowercaseSqlIdentifier')).toBe(
+      'address_line1_2',
+    );
+    expect(allocateUniqueName('address_line1', taken, 63, 'utf8Bytes', 'lowercaseSqlIdentifier')).toBe(
+      'address_line1_3',
+    );
+  });
+
+  it('shortens from the middle with a single "_", never "…" or a doubled or trailing "_"', () => {
+    const shortenedName = elideNameToMaxLength(LONG_SQL_NAME, 63, 'utf8Bytes', 'lowercaseSqlIdentifier');
+    expect(Buffer.byteLength(shortenedName, 'utf8')).toBeLessThanOrEqual(63);
+    expect(shortenedName).toMatch(/^[a-z0-9_]+$/);
+    expect(shortenedName).not.toMatch(/__|_$/);
+    expect(shortenedName.startsWith('invoice_settings_')).toBe(true);
+    expect(shortenedName.endsWith('_customer_portal')).toBe(true);
+  });
+
+  it('collapses the "_" the cut leaves beside an existing separator', () => {
+    // A 9-character budget keeps "abcd" + "_" + "_ghi"; the joined "__" collapses to one.
+    expect(elideNameToMaxLength('abcd_efgh_ghi', 9, 'characters', 'lowercaseSqlIdentifier')).toBe('abcd_ghi');
+  });
+
+  it('keeps a shortened, suffixed name within the limit', () => {
+    const taken = new Set<string>();
+    const first = allocateUniqueName(LONG_SQL_NAME, taken, 63, 'utf8Bytes', 'lowercaseSqlIdentifier');
+    const second = allocateUniqueName(LONG_SQL_NAME, taken, 63, 'utf8Bytes', 'lowercaseSqlIdentifier');
+    expect(second).not.toBe(first);
+    expect(Buffer.byteLength(second, 'utf8')).toBeLessThanOrEqual(63);
+    expect(second).toMatch(/^[a-z0-9_]+_2$/);
   });
 });

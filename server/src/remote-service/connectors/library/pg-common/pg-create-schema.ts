@@ -16,6 +16,7 @@
 import { CREATE_FIELD_KINDS, type SchemaCreationCapabilities } from '@spinner/shared-types';
 import { createHash } from 'crypto';
 import { type Knex } from 'knex';
+import { foldNameToLowercaseSqlIdentifier } from 'src/schema-builder/schema-builder-unique-names';
 import { assertUnreachable } from 'src/utils/asserts';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
 import { escapeKnexColumnIdentifierSpecialCharacters } from './knex-column-identifier-dot-encoding';
@@ -125,21 +126,15 @@ export function foldNameToPostgresSchemaIdentifier(
   requestedName: string | undefined,
   fallbackSchemaName: string,
 ): string {
-  const foldedName = (requestedName ?? '')
-    .normalize('NFKD')
-    // Drop combining marks so "Café" folds to "cafe" rather than losing the é entirely.
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+  // The same fold the plan generator gives new table and column names (`nameStyle: 'lowercaseSqlIdentifier'`),
+  // so a schema and the tables in it follow one rule. A leading digit makes the identifier unusable unquoted
+  // (`2026_export` is a syntax error), so it is prefixed rather than dropped — BEFORE truncating, so the
+  // length limit is respected either way.
+  const foldedName = foldNameToLowercaseSqlIdentifier(requestedName ?? '', 's_');
   if (foldedName === '') return fallbackSchemaName;
-  // A leading digit makes the identifier unusable unquoted (`2026_export` is a
-  // syntax error), so prefix rather than drop the digits. Prefix BEFORE truncating
-  // so the length limit is respected either way.
-  const prefixedName = /^[0-9]/.test(foldedName) ? `s_${foldedName}` : foldedName;
   // Postgres silently truncates over-long identifiers, so truncate deliberately
   // here — and re-trim, since the cut can land on a separator.
-  return prefixedName.slice(0, POSTGRES_MAX_IDENTIFIER_LENGTH).replace(/_+$/, '') || fallbackSchemaName;
+  return foldedName.slice(0, POSTGRES_MAX_IDENTIFIER_LENGTH).replace(/_+$/, '') || fallbackSchemaName;
 }
 
 /**
@@ -177,6 +172,11 @@ export const POSTGRES_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities =
   maxTableNameLength: POSTGRES_MAX_IDENTIFIER_LENGTH,
   maxFieldNameLength: POSTGRES_MAX_IDENTIFIER_LENGTH,
   nameLengthUnit: 'utf8Bytes',
+  // People and agents write SQL against the tables a Live Export creates, so new table and column names are
+  // lowercase identifiers that need no quotes ("Payment Intents" → `payment_intents`), the way loaders like
+  // Fivetran and Airbyte name them. Existing tables and columns are never renamed, and a Postgres or Supabase
+  // source keeps its own names (see `NameStyle`).
+  nameStyle: 'lowercaseSqlIdentifier',
   // The auto-injected primary key (`addAutoPrimaryKey`) owns this name; a source field that folds to it
   // is renamed by the plan generator so it isn't silently dropped at create (see `validateCreateField`).
   reservedFieldNames: [AUTO_PK_COLUMN],

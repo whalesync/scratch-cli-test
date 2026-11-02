@@ -364,6 +364,8 @@ describe('POSTGRES_SCHEMA_CREATION_CAPABILITIES', () => {
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxFieldNameLength).toBe(63);
     // Postgres's 63 is a byte limit: a character-counted elided name (its `…` is 3 bytes) would overflow it.
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.nameLengthUnit).toBe('utf8Bytes');
+    // New tables and columns get lowercase names hand-written SQL can use without quotes.
+    expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.nameStyle).toBe('lowercaseSqlIdentifier');
   });
 
   it('declares the postgres native type system and list columns of text/number/boolean (DEV-11903)', () => {

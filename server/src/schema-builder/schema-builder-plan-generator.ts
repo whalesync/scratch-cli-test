@@ -8,6 +8,7 @@ import type {
   ForeignKeyTarget,
   NameCharacterRules,
   NameLengthUnit,
+  NameStyle,
   NativeFieldType,
   Service,
   TableMappingNote,
@@ -24,14 +25,19 @@ import {
 } from './foreign-key-linked-table-id';
 import {
   allocateUniqueName,
+  buildSuffixedCandidate,
+  convertNameToNameStyle,
   elideNameToMaxLength,
   fitNameToCharacterRules,
   normalizeNameForUniqueness,
 } from './schema-builder-unique-names';
 
-/** The name a field gets when removing the characters its destination can't hold leaves nothing. */
+/**
+ * The name a field gets when converting it to its destination's name style, or removing the characters its
+ * destination can't hold, leaves nothing (`field` in the `'lowercaseSqlIdentifier'` style).
+ */
 const FALLBACK_FIELD_NAME = 'Field';
-/** The name a table gets when removing the characters its destination can't hold leaves nothing. */
+/** The table equivalent of {@link FALLBACK_FIELD_NAME} (`table` in the `'lowercaseSqlIdentifier'` style). */
 const FALLBACK_TABLE_NAME = 'Table';
 
 /**
@@ -232,6 +238,14 @@ export function generateCreatePlanFromSources(args: {
    */
   destinationNameCharacterRules?: NameCharacterRules;
   /**
+   * The style the destination gives new table and field names (`SchemaCreationCapabilities.nameStyle`), e.g.
+   * Postgres's lowercase SQL identifiers ("Address (City)" → `address_city`). Generated names are converted to
+   * it FIRST — before `destinationNameCharacterRules`, shortening, and deduplication — with a note, so the
+   * duplicate check runs on the final names. A source that shares the destination's native type system keeps
+   * its own table and column names. Absent ⇒ `'asGiven'`.
+   */
+  destinationNameStyle?: NameStyle;
+  /**
    * The destination connector's maximum number of fields per table, if it caps one
    * (`SchemaCreationCapabilities.maxFieldsPerTable`). A new table whose final field list
    * is longer keeps every field in the plan, but the ones past the cap get an
@@ -254,6 +268,7 @@ export function generateCreatePlanFromSources(args: {
   destinationFieldTypeSupport?: DestinationFieldTypeSupport;
 }): GeneratedPlan {
   const destinationNameLengthUnit = args.destinationNameLengthUnit ?? 'characters';
+  const destinationNameStyle = args.destinationNameStyle ?? 'asGiven';
   // linkedTableId → in-plan table ref (for resolving sibling foreign keys).
   const linkedIdToRef = new Map<string, string>();
   for (const source of args.sources) {
@@ -294,6 +309,7 @@ export function generateCreatePlanFromSources(args: {
           source,
           source.existingDestination,
           args.destinationConnectorAccountId,
+          args.destinationConnectorService,
           linkedIdToRef,
           mappingByLinkedId,
           reciprocalSuppressionMessageByFieldKey,
@@ -302,12 +318,27 @@ export function generateCreatePlanFromSources(args: {
           args.destinationMaxFieldNameLength,
           destinationNameLengthUnit,
           args.destinationNameCharacterRules,
+          destinationNameStyle,
           args.destinationSupportsManyToManyForeignKeys ?? true,
           args.destinationServiceDisplayName,
           args.destinationFieldTypeSupport,
         ),
       );
     } else {
+      // Name of the column the source record's remote id is synced into, when the source has one. A source
+      // field that only BECOMES this name once styled or shortened ("Airtable Record ID" → `airtable_record_id`)
+      // is the one renamed, so the source-record-id column keeps its name. A source field already named this
+      // keeps it instead, and no column is injected (see `buildSourceRecordIdField`).
+      const sourceRecordIdFieldName = sourceRecordIdFieldNameForSource(
+        source,
+        args.destinationConnectorService,
+        args.destinationMaxFieldNameLength,
+        destinationNameLengthUnit,
+        destinationNameStyle,
+      );
+      const sourceRecordIdFieldNameIsFreeForInjection =
+        sourceRecordIdFieldName !== undefined &&
+        !sourceHasFieldRequestingName(source, sourceRecordIdFieldName, args.destinationFieldTypeSupport);
       const fields = collectCreateFieldSpecsForSource(
         source,
         {
@@ -315,9 +346,14 @@ export function generateCreatePlanFromSources(args: {
           markPrimaryField: true,
           destinationServiceDisplayName: args.destinationServiceDisplayName,
           reservedFieldNames: args.destinationReservedFieldNames,
+          fieldNamesTakenByInjectedFields:
+            sourceRecordIdFieldNameIsFreeForInjection && sourceRecordIdFieldName !== undefined
+              ? [sourceRecordIdFieldName]
+              : [],
           maxFieldNameLength: args.destinationMaxFieldNameLength,
           nameLengthUnit: destinationNameLengthUnit,
           nameCharacterRules: args.destinationNameCharacterRules,
+          nameStyle: destinationNameStyle,
           destinationSupportsManyToManyForeignKeys: args.destinationSupportsManyToManyForeignKeys ?? true,
           destinationFieldTypeSupport: args.destinationFieldTypeSupport,
         },
@@ -330,13 +366,8 @@ export function generateCreatePlanFromSources(args: {
       // into, so a synced row always knows where it came from. Skipped when a
       // same-named field already exists (the source already has one) or when the
       // source has no known remote-id path to map from (see buildSourceRecordIdField).
-      const sourceRecordIdField = buildSourceRecordIdField(
-        source,
-        fields,
-        args.destinationConnectorService,
-        args.destinationMaxFieldNameLength,
-        destinationNameLengthUnit,
-      );
+      const sourceRecordIdField =
+        sourceRecordIdFieldName !== undefined ? buildSourceRecordIdField(sourceRecordIdFieldName, fields) : null;
       if (sourceRecordIdField && source.idFieldPath !== undefined) {
         fields.push(sourceRecordIdField);
         // Record where this injected field is fed from: the source's remote-id
@@ -368,11 +399,21 @@ export function generateCreatePlanFromSources(args: {
           notes,
         });
       }
-      // Characters the destination can't hold are removed first, then a name over the
-      // destination's limit is middle-elided to fit; the elided name is what collision
-      // detection and dedup then work against.
+      // The name is converted to the destination's name style first, then characters the
+      // destination can't hold are removed, then a name over the destination's limit is
+      // middle-elided to fit; the elided name is what collision detection and dedup then
+      // work against. A source in the destination's own native type system (Supabase →
+      // Postgres) keeps its table name, as it keeps its column names: a database's own
+      // names are already the ones people query.
+      const tableNameStyle: NameStyle = sourceSharesDestinationNativeTypeSystem(
+        source,
+        args.destinationFieldTypeSupport,
+      )
+        ? 'asGiven'
+        : destinationNameStyle;
+      const styledTableName = convertNameToNameStyle(source.tableName, tableNameStyle, FALLBACK_TABLE_NAME);
       const fittedTableName = fitNameToCharacterRules(
-        source.tableName,
+        styledTableName,
         args.destinationNameCharacterRules,
         FALLBACK_TABLE_NAME,
       );
@@ -380,8 +421,10 @@ export function generateCreatePlanFromSources(args: {
         fittedTableName,
         args.destinationMaxTableNameLength,
         destinationNameLengthUnit,
+        tableNameStyle,
       );
-      const wereTableNameCharactersRemoved = fittedTableName !== source.tableName;
+      const wasTableNameConvertedToNameStyle = styledTableName !== source.tableName;
+      const wereTableNameCharactersRemoved = fittedTableName !== styledTableName;
       const wasTableNameShortenedToFit = elidedTableName !== fittedTableName;
       // Classify the collision BEFORE allocating: `takenTableNames` merges existing
       // and in-plan names, so the distinction must be read off the frozen set first.
@@ -392,9 +435,15 @@ export function generateCreatePlanFromSources(args: {
         takenTableNames,
         args.destinationMaxTableNameLength,
         destinationNameLengthUnit,
+        tableNameStyle,
       );
       const wasTableNameDeduplicated = tableName !== elidedTableName;
-      if (wereTableNameCharactersRemoved || wasTableNameShortenedToFit || wasTableNameDeduplicated) {
+      if (
+        wasTableNameConvertedToNameStyle ||
+        wereTableNameCharactersRemoved ||
+        wasTableNameShortenedToFit ||
+        wasTableNameDeduplicated
+      ) {
         tableNotes.push({
           sourceDataFolderId: source.dataFolderId,
           ref: source.ref,
@@ -406,10 +455,14 @@ export function generateCreatePlanFromSources(args: {
               : 'duplicate_in_plan'
             : wereTableNameCharactersRemoved
               ? 'unsupported_characters'
-              : 'truncated_to_length_limit',
+              : wasTableNameShortenedToFit
+                ? 'truncated_to_length_limit'
+                : 'converted_to_name_style',
           message: tableRenameMessage({
             requestedName: fittedTableName,
             finalName: tableName,
+            wasConvertedToNameStyle: wasTableNameConvertedToNameStyle,
+            nameStyle: tableNameStyle,
             wereCharactersRemoved: wereTableNameCharactersRemoved,
             wasShortenedToFit: wasTableNameShortenedToFit,
             wasDeduplicated: wasTableNameDeduplicated,
@@ -600,6 +653,7 @@ function buildAddFieldsPlanForSource(
   source: PlanGeneratorSource,
   existingDestination: ExistingDestinationTable,
   connectorAccountId: string,
+  destinationConnectorService: Service | undefined,
   linkedIdToRef: Map<string, string>,
   mappingByLinkedId: Map<string, string[]>,
   reciprocalSuppressionMessageByFieldKey: Map<string, string>,
@@ -608,6 +662,7 @@ function buildAddFieldsPlanForSource(
   maxFieldNameLength: number | undefined,
   nameLengthUnit: NameLengthUnit,
   nameCharacterRules: NameCharacterRules | undefined,
+  nameStyle: NameStyle,
   destinationSupportsManyToManyForeignKeys: boolean,
   destinationServiceDisplayName: string | undefined,
   destinationFieldTypeSupport: DestinationFieldTypeSupport | undefined,
@@ -615,6 +670,19 @@ function buildAddFieldsPlanForSource(
   const existingDestinationFieldsByName = new Map(
     existingDestination.existingFields.map((field) => [normalizeNameForUniqueness(field.name), field] as const),
   );
+  // The source-record-id column the table was created with, unless a source field asks for that name itself.
+  // A source field that only styles or shortens to it ("Airtable Record ID" → `airtable_record_id`) was
+  // renamed at create, so it must not be mapped into the column holding the source record's identity.
+  const sourceRecordIdFieldName = sourceRecordIdFieldNameForSource(
+    source,
+    destinationConnectorService,
+    maxFieldNameLength,
+    nameLengthUnit,
+    nameStyle,
+  );
+  const sourceRecordIdFieldNameWasInjected =
+    sourceRecordIdFieldName !== undefined &&
+    !sourceHasFieldRequestingName(source, sourceRecordIdFieldName, destinationFieldTypeSupport);
   const fields = collectCreateFieldSpecsForSource(
     source,
     {
@@ -623,9 +691,12 @@ function buildAddFieldsPlanForSource(
       existingDestinationFieldsByName,
       destinationServiceDisplayName,
       reservedFieldNames,
+      fieldNamesTakenByInjectedFields:
+        sourceRecordIdFieldNameWasInjected && sourceRecordIdFieldName !== undefined ? [sourceRecordIdFieldName] : [],
       maxFieldNameLength,
       nameLengthUnit,
       nameCharacterRules,
+      nameStyle,
       destinationSupportsManyToManyForeignKeys,
       destinationFieldTypeSupport,
     },
@@ -662,6 +733,11 @@ interface CreateFieldSpecOptions {
   /** Field names the destination connector reserves (e.g. Postgres `id`) — seeded into the taken-names
    *  set so a colliding source field is renamed rather than dropped at create. Compared case-insensitively. */
   reservedFieldNames?: string[];
+  /** Names of fields the plan adds itself after the source's (the source-record-id column) — seeded into the
+   *  taken-names set like `reservedFieldNames`, so a source field that styles or shortens to one is renamed.
+   *  In an add-fields plan they name the column the table was created with, which, like a reserved name, a
+   *  source field can only adopt under its full name. */
+  fieldNamesTakenByInjectedFields?: string[];
   /** The destination's maximum field-name length, if capped. A longer requested name is middle-elided to
    *  fit (reserving room for any dedup suffix), so the plan never trips `FIELD_NAME_TOO_LONG` (DEV-10816). */
   maxFieldNameLength?: number;
@@ -669,6 +745,9 @@ interface CreateFieldSpecOptions {
   nameLengthUnit?: NameLengthUnit;
   /** Characters the destination can't hold in a field name, removed before eliding and dedup (DEV-12413). */
   nameCharacterRules?: NameCharacterRules;
+  /** The style new field names are converted to before anything else (Postgres's lowercase SQL identifiers),
+   *  except a source column that shares the destination's native type system. Absent ⇒ `'asGiven'`. */
+  nameStyle?: NameStyle;
   /**
    * Whether the destination can represent a many-to-many foreign key (a link field holding a list of ids).
    * When false (Postgres/Supabase, whose FK is a single scalar column), a multi-valued source foreign key is
@@ -699,9 +778,15 @@ function collectCreateFieldSpecsForSource(
     // Reserved destination names (e.g. Postgres's auto `id`) are already taken, so a source field that
     // folds to one is renamed by `allocateUniqueName` instead of being silently dropped at create.
     ...(options.reservedFieldNames?.map(normalizeNameForUniqueness) ?? []),
+    ...(options.fieldNamesTakenByInjectedFields?.map(normalizeNameForUniqueness) ?? []),
   ]);
-  // Existing destination columns already adopted by an earlier source field of this table (add-fields only).
+  // Existing destination columns an earlier source field of this table already matched — adopted, or skipped
+  // as an incompatible match (add-fields only).
   const existingColumnPathsAdoptedInThisTable = new Set<string>();
+  // Add-fields only: who took each name when the table was created, so a re-plan finds a field suffixed then.
+  const createTimeFieldNameAllocationByNameStyle = options.existingDestinationFieldsByName
+    ? replayCreateTimeFieldNameAllocations(source, options, reciprocalSuppressionMessageByFieldKey)
+    : undefined;
   for (const schemaField of source.schemaFields) {
     const spec = mapSchemaFieldToCreateFieldSpec(
       source,
@@ -709,6 +794,7 @@ function collectCreateFieldSpecsForSource(
       options,
       takenFieldNames,
       existingColumnPathsAdoptedInThisTable,
+      createTimeFieldNameAllocationByNameStyle,
       linkedIdToRef,
       mappingByLinkedId,
       reciprocalSuppressionMessageByFieldKey,
@@ -720,6 +806,70 @@ function collectCreateFieldSpecsForSource(
 }
 
 /**
+ * Who took each field name when an add-fields re-plan's table was created, replayed for one name style: the
+ * position, among the source fields that were named in source order, of the field given each name. Names
+ * taken before any field was named (reserved names, the injected source-record-id) sit at position -1.
+ */
+interface CreateTimeFieldNameAllocation {
+  namingPositionByFieldPath: Map<string, number>;
+  namingPositionByNormalizedName: Map<string, number>;
+}
+
+/**
+ * Replay the names the source's fields were given when their table was created, once per name style the
+ * existing-field lookup tries (`'asGiven'` for a table created before the destination styled its names, then
+ * the destination's style). Every named field took its name at create — including one the user then left
+ * unselected, so its name was never created — which is what lets a re-plan step past a name an EARLIER field
+ * took (`phone`, given to an unselected "Phone #") to the one this field was suffixed into (`phone_2`).
+ * Assumes the source's fields are in the order they were in at create.
+ */
+function replayCreateTimeFieldNameAllocations(
+  source: PlanGeneratorSource,
+  options: CreateFieldSpecOptions,
+  reciprocalSuppressionMessageByFieldKey: Map<string, string>,
+): Map<NameStyle, CreateTimeFieldNameAllocation> {
+  const destinationNameStyle = options.nameStyle ?? 'asGiven';
+  const nameLengthUnit = options.nameLengthUnit ?? 'characters';
+  const namesTakenBeforeAnyField = [
+    ...(options.reservedFieldNames ?? []),
+    ...(options.fieldNamesTakenByInjectedFields ?? []),
+  ].map(normalizeNameForUniqueness);
+  const allocationByNameStyle = new Map<NameStyle, CreateTimeFieldNameAllocation>();
+  for (const nameStyle of new Set<NameStyle>(['asGiven', destinationNameStyle])) {
+    const allocation: CreateTimeFieldNameAllocation = {
+      namingPositionByFieldPath: new Map(),
+      namingPositionByNormalizedName: new Map(namesTakenBeforeAnyField.map((name) => [name, -1])),
+    };
+    const takenNormalizedNames = new Set(namesTakenBeforeAnyField);
+    // The fields `mapSchemaFieldToCreateFieldSpec` names: not the id column, not a suppressed reciprocal link.
+    for (const schemaField of source.schemaFields) {
+      if (source.idFieldPath !== undefined && schemaField.path === source.idFieldPath) continue;
+      if (reciprocalSuppressionMessageByFieldKey.has(reciprocalSuppressionKey(source.dataFolderId, schemaField.path))) {
+        continue;
+      }
+      const fieldNameStyle = fieldNameStyleForSchemaField(schemaField, nameStyle, options.destinationFieldTypeSupport);
+      const { fittedFieldName } = styleAndFitFieldName(
+        requestedFieldNameForSchemaField(schemaField, options.destinationFieldTypeSupport),
+        fieldNameStyle,
+        options.nameCharacterRules,
+      );
+      const allocatedFieldName = allocateUniqueName(
+        fittedFieldName,
+        takenNormalizedNames,
+        options.maxFieldNameLength,
+        nameLengthUnit,
+        fieldNameStyle,
+      );
+      const namingPosition = allocation.namingPositionByFieldPath.size;
+      allocation.namingPositionByFieldPath.set(schemaField.path, namingPosition);
+      allocation.namingPositionByNormalizedName.set(normalizeNameForUniqueness(allocatedFieldName), namingPosition);
+    }
+    allocationByNameStyle.set(nameStyle, allocation);
+  }
+  return allocationByNameStyle;
+}
+
+/**
  * Map one source field to a create-field spec, or return null (with an
  * explanatory note) when it should be omitted: the id column, or a field the
  * destination already has. A foreign key whose target can't be bound yet is NOT
@@ -727,9 +877,11 @@ function collectCreateFieldSpecsForSource(
  * `needs_target` note so it survives into the plan/draft to be resolved later.
  *
  * A field that IS emitted is given a name the destination can hold and unique
- * within the table (via `takenFieldNames`): characters the destination can't use
- * are removed, a name over the limit is elided, and a colliding name gets a numeric
- * suffix. Any change is recorded in the note's `renamedFromName`.
+ * within the table (via `takenFieldNames`): it is converted to the destination's
+ * name style, characters the destination can't use are removed, a name over the
+ * limit is elided, and a colliding name gets a numeric suffix — in that order, so
+ * the collision check sees the final name. Any change is recorded in the note's
+ * `renamedFromName`.
  */
 function mapSchemaFieldToCreateFieldSpec(
   source: PlanGeneratorSource,
@@ -737,6 +889,7 @@ function mapSchemaFieldToCreateFieldSpec(
   options: CreateFieldSpecOptions,
   takenFieldNames: Set<string>,
   existingColumnPathsAdoptedInThisTable: Set<string>,
+  createTimeFieldNameAllocationByNameStyle: Map<NameStyle, CreateTimeFieldNameAllocation> | undefined,
   linkedIdToRef: Map<string, string>,
   mappingByLinkedId: Map<string, string[]>,
   reciprocalSuppressionMessageByFieldKey: Map<string, string>,
@@ -753,16 +906,17 @@ function mapSchemaFieldToCreateFieldSpec(
     ? { ...schemaField, suggestedTransformer: viewUnpackTransformer }
     : schemaField;
 
-  // A column copied within ONE native type system (Supabase → Postgres) keeps the source's own column name
-  // (`pharmacies_desired`, not the view's display label "Pharmacies Desired") — the destination is the same
-  // kind of database, so its columns should read exactly like the source's (DEV-11903). The column name is
-  // the field's full path: a native-typed column is a top-level column, and its name may itself contain dots.
   const displayFieldName = schemaField.displayLabel ?? schemaFieldPropertyKey(schemaField);
   const nativeColumnTypeInDestinationTypeSystem = nativeColumnTypeSharedWithDestination(
     schemaField,
     options.destinationFieldTypeSupport,
   );
-  const requestedFieldName = nativeColumnTypeInDestinationTypeSystem ? schemaField.path : displayFieldName;
+  const requestedFieldName = requestedFieldNameForSchemaField(schemaField, options.destinationFieldTypeSupport);
+  const fieldNameStyle = fieldNameStyleForSchemaField(
+    schemaField,
+    options.nameStyle ?? 'asGiven',
+    options.destinationFieldTypeSupport,
+  );
 
   // This side of a symmetric relationship was chosen for suppression (DEV-10753): the other side is
   // suggested instead, or — for a many-to-many the destination can't hold — neither side is. Record a
@@ -796,10 +950,16 @@ function mapSchemaFieldToCreateFieldSpec(
     maxFieldNameLength: options.maxFieldNameLength,
     nameLengthUnit: options.nameLengthUnit ?? 'characters',
     nameCharacterRules: options.nameCharacterRules,
+    nameStyle: fieldNameStyle,
+    sourceFieldPath: schemaField.path,
+    createTimeFieldNameAllocationByNameStyle,
     existingColumnPathsAdoptedInThisTable,
   });
   if (existingFieldMatch) {
     const { existingField, fullNameChangedToMatch } = existingFieldMatch;
+    // Claimed whether it is adopted or skipped below: it is this field's column either way, so a later field
+    // whose name collides with it (both convert to `owner`) must look past it to its own (`owner_2`).
+    existingColumnPathsAdoptedInThisTable.add(existingField.columnPath);
     const renamedFromFullNameIfChanged =
       fullNameChangedToMatch !== undefined ? { renamedFromName: fullNameChangedToMatch } : {};
     if (!schemaField.foreignKey) {
@@ -819,7 +979,6 @@ function mapSchemaFieldToCreateFieldSpec(
         sourceKindWithDestinationSupport === existingField.kind ||
         sourceKindWithBaseLogicalTypes === existingField.kind
       ) {
-        existingColumnPathsAdoptedInThisTable.add(existingField.columnPath);
         notes.push({
           sourceDataFolderId: source.dataFolderId,
           sourceFieldPath: schemaField.path,
@@ -882,17 +1041,37 @@ function mapSchemaFieldToCreateFieldSpec(
     }
   }
 
-  // This field will be emitted — give it a name the destination can hold (characters it can't use
-  // removed), elided to the destination's field-name limit when it has one, and unique within the table.
+  // This field will be emitted — give it a name in the destination's style, that the destination can hold
+  // (characters it can't use removed), elided to the destination's field-name limit when it has one, and
+  // unique within the table.
   const nameLengthUnit = options.nameLengthUnit ?? 'characters';
-  const fittedFieldName = fitNameToCharacterRules(requestedFieldName, options.nameCharacterRules, FALLBACK_FIELD_NAME);
-  const elidedFittedFieldName = elideNameToMaxLength(fittedFieldName, options.maxFieldNameLength, nameLengthUnit);
-  const fieldName = allocateUniqueName(fittedFieldName, takenFieldNames, options.maxFieldNameLength, nameLengthUnit);
-  const wereFieldNameCharactersRemoved = fittedFieldName !== requestedFieldName;
+  const { styledFieldName, fittedFieldName } = styleAndFitFieldName(
+    requestedFieldName,
+    fieldNameStyle,
+    options.nameCharacterRules,
+  );
+  const elidedFittedFieldName = elideNameToMaxLength(
+    fittedFieldName,
+    options.maxFieldNameLength,
+    nameLengthUnit,
+    fieldNameStyle,
+  );
+  const fieldName = allocateUniqueName(
+    fittedFieldName,
+    takenFieldNames,
+    options.maxFieldNameLength,
+    nameLengthUnit,
+    fieldNameStyle,
+  );
+  const wasFieldNameConvertedToNameStyle = styledFieldName !== requestedFieldName;
+  const wereFieldNameCharactersRemoved = fittedFieldName !== styledFieldName;
   const wasFieldNameShortenedToFit = elidedFittedFieldName !== fittedFieldName;
   const wasFieldNameDeduplicated = fieldName !== elidedFittedFieldName;
   const renamedFromName =
-    wereFieldNameCharactersRemoved || wasFieldNameShortenedToFit || wasFieldNameDeduplicated
+    wasFieldNameConvertedToNameStyle ||
+    wereFieldNameCharactersRemoved ||
+    wasFieldNameShortenedToFit ||
+    wasFieldNameDeduplicated
       ? requestedFieldName
       : undefined;
   const renamedForReservedName =
@@ -900,6 +1079,9 @@ function mapSchemaFieldToCreateFieldSpec(
     (options.reservedFieldNames ?? []).some(
       (reserved) => normalizeNameForUniqueness(reserved) === normalizeNameForUniqueness(fittedFieldName),
     );
+  const nameStyleClause = wasFieldNameConvertedToNameStyle
+    ? `converted to ${nameStyleDescription(fieldNameStyle)}`
+    : undefined;
   const charactersClause = wereFieldNameCharactersRemoved
     ? `removed characters the destination can't use in a field name`
     : undefined;
@@ -912,7 +1094,7 @@ function mapSchemaFieldToCreateFieldSpec(
     wasFieldNameShortenedToFit && options.maxFieldNameLength !== undefined
       ? `shortened to fit the destination's ${options.maxFieldNameLength}-${nameLengthUnitLabel(nameLengthUnit)} field-name limit`
       : undefined;
-  const renameClause = composeNoteMessage(charactersClause, shortenClause, dedupClause);
+  const renameClause = composeNoteMessage(nameStyleClause, charactersClause, shortenClause, dedupClause);
 
   if (foreignKeyType) {
     if (foreignKeyNeedsTargetLinkedTableId !== null) {
@@ -984,8 +1166,9 @@ function mapSchemaFieldToCreateFieldSpec(
 interface ExistingDestinationFieldMatch {
   existingField: ExistingDestinationField;
   /**
-   * Set when the match was on the name the source field is created under — characters the destination
-   * can't use removed, then middle-elided to its field-name limit — not on its full name: the full name.
+   * Set when the match was on a name the source field is created under — converted to the destination's
+   * name style, characters the destination can't use removed, then middle-elided to its field-name limit —
+   * not on its full name: the full name.
    */
   fullNameChangedToMatch?: string;
 }
@@ -1000,11 +1183,21 @@ interface ExistingDestinationFieldMatch {
  *     find that column rather than propose a duplicate under the new name (DEV-11903);
  *  3. either of those as it was actually created: characters the destination can't use removed (DEV-12413),
  *     then middle-elided to its field-name limit (DEV-10816). Without this a re-plan misses the changed
- *     column and proposes a second, suffixed one beside it (DEV-10906).
+ *     column and proposes a second, suffixed one beside it (DEV-10906). Tried first as a table created
+ *     before the destination styled its names holds it (`"Invoice Settings (Default…Method)"`), then in
+ *     the destination's name style (`address_city`, `invoice_settings_default_payment_method`).
  *
- * A changed-name match skips a column an earlier field of this table already adopted: two long names
- * can elide to the same `head…tail` (or two names lose their emoji to the same name), and only the first
- * was created under it, so mapping both to that column would silently merge two source fields into one.
+ * Trying the full names first is what keeps a table created before the name style working: its
+ * `"Address (City)"` column is adopted by that full name, so `address_city` is never added beside it.
+ *
+ * Every match skips a column an earlier field of this table already adopted: two long names can elide to
+ * the same `head…tail`, two names can lose their emoji or convert to the same name, and a converted name can
+ * equal another field's own ("Phone #" → `phone` beside "Phone"). Only the first was created under it, so
+ * mapping both to that column would silently merge two source fields into one. The later field was created
+ * under a suffixed name instead (`phone_2` beside `phone`), so the lookup walks the suffixed names in the
+ * order `allocateUniqueName` handed them out — for an unchanged name too — stepping past a name an earlier
+ * field took at create (see `replayCreateTimeFieldNameAllocations`) and a name taken before any field was
+ * named: a reserved name (`id`) or the injected source-record-id column.
  */
 function findExistingDestinationFieldMatchingSourceField(args: {
   existingDestinationFieldsByName: Map<string, ExistingDestinationField> | undefined;
@@ -1013,6 +1206,9 @@ function findExistingDestinationFieldMatchingSourceField(args: {
   maxFieldNameLength: number | undefined;
   nameLengthUnit: NameLengthUnit;
   nameCharacterRules: NameCharacterRules | undefined;
+  nameStyle: NameStyle;
+  sourceFieldPath: string;
+  createTimeFieldNameAllocationByNameStyle: Map<NameStyle, CreateTimeFieldNameAllocation> | undefined;
   existingColumnPathsAdoptedInThisTable: Set<string>;
 }): ExistingDestinationFieldMatch | undefined {
   const { existingDestinationFieldsByName } = args;
@@ -1020,21 +1216,125 @@ function findExistingDestinationFieldMatchingSourceField(args: {
   const fullNamesInLookupOrder = [args.requestedFieldName, args.displayFieldName];
   for (const fullName of fullNamesInLookupOrder) {
     const existingField = existingDestinationFieldsByName.get(normalizeNameForUniqueness(fullName));
-    if (existingField) return { existingField };
-  }
-  for (const fullName of fullNamesInLookupOrder) {
-    const createdName = elideNameToMaxLength(
-      fitNameToCharacterRules(fullName, args.nameCharacterRules, FALLBACK_FIELD_NAME),
-      args.maxFieldNameLength,
-      args.nameLengthUnit,
-    );
-    if (createdName === fullName) continue;
-    const existingField = existingDestinationFieldsByName.get(normalizeNameForUniqueness(createdName));
     if (existingField && !args.existingColumnPathsAdoptedInThisTable.has(existingField.columnPath)) {
-      return { existingField, fullNameChangedToMatch: fullName };
+      return { existingField };
+    }
+  }
+  const nameStylesInLookupOrder: NameStyle[] = args.nameStyle === 'asGiven' ? ['asGiven'] : ['asGiven', args.nameStyle];
+  for (const nameStyle of nameStylesInLookupOrder) {
+    const createTimeFieldNameAllocation = args.createTimeFieldNameAllocationByNameStyle?.get(nameStyle);
+    // Unknown position ⇒ only the names taken before any field (position -1) belong to another field.
+    const thisFieldNamingPosition =
+      createTimeFieldNameAllocation?.namingPositionByFieldPath.get(args.sourceFieldPath) ?? 0;
+    for (const fullName of fullNamesInLookupOrder) {
+      const { fittedFieldName } = styleAndFitFieldName(fullName, nameStyle, args.nameCharacterRules);
+      for (let suffix = 1; ; suffix += 1) {
+        const candidateName =
+          suffix === 1
+            ? elideNameToMaxLength(fittedFieldName, args.maxFieldNameLength, args.nameLengthUnit, nameStyle)
+            : buildSuffixedCandidate(fittedFieldName, suffix, args.maxFieldNameLength, args.nameLengthUnit, nameStyle);
+        const normalizedCandidateName = normalizeNameForUniqueness(candidateName);
+        const namingPositionOfCandidate =
+          createTimeFieldNameAllocation?.namingPositionByNormalizedName.get(normalizedCandidateName);
+        const candidateWasGivenToAnotherFieldFirst =
+          namingPositionOfCandidate !== undefined && namingPositionOfCandidate < thisFieldNamingPosition;
+        const existingField = existingDestinationFieldsByName.get(normalizedCandidateName);
+        // A styled name is created exactly as written, so a column that matches it only ignoring case is not
+        // one it made: in a table created before the name style, `phone` must not take "Phone #"'s neighbour
+        // "Phone".
+        const existingFieldCreatedUnderCandidate =
+          existingField && (nameStyle === 'asGiven' || existingField.name === candidateName)
+            ? existingField
+            : undefined;
+        // Neither a column nor a name an earlier field took at create: the field was never created under this
+        // name or any later suffix.
+        if (!existingField && !candidateWasGivenToAnotherFieldFirst) break;
+        if (
+          existingFieldCreatedUnderCandidate &&
+          !candidateWasGivenToAnotherFieldFirst &&
+          !args.existingColumnPathsAdoptedInThisTable.has(existingFieldCreatedUnderCandidate.columnPath)
+        ) {
+          return { existingField: existingFieldCreatedUnderCandidate, fullNameChangedToMatch: fullName };
+        }
+      }
     }
   }
   return undefined;
+}
+
+/**
+ * The name a source field asks to be created under, before the destination's name rules apply. A column
+ * copied within ONE native type system (Supabase → Postgres) keeps the source's own column name
+ * (`pharmacies_desired`, not the view's display label "Pharmacies Desired") — the destination is the same
+ * kind of database, so its columns should read exactly like the source's (DEV-11903). The column name is
+ * the field's full path: a native-typed column is a top-level column, and its name may itself contain dots.
+ * Any other field asks for its display label.
+ */
+function requestedFieldNameForSchemaField(
+  schemaField: SchemaField,
+  destinationFieldTypeSupport: DestinationFieldTypeSupport | undefined,
+): string {
+  return nativeColumnTypeSharedWithDestination(schemaField, destinationFieldTypeSupport)
+    ? schemaField.path
+    : (schemaField.displayLabel ?? schemaFieldPropertyKey(schemaField));
+}
+
+/** The style a source field's name takes: its own name is kept for a column in the destination's type system. */
+function fieldNameStyleForSchemaField(
+  schemaField: SchemaField,
+  destinationNameStyle: NameStyle,
+  destinationFieldTypeSupport: DestinationFieldTypeSupport | undefined,
+): NameStyle {
+  // A column kept under its own name (same native type system) isn't restyled either: a database's own
+  // column names are already the ones people query.
+  return nativeColumnTypeSharedWithDestination(schemaField, destinationFieldTypeSupport)
+    ? 'asGiven'
+    : destinationNameStyle;
+}
+
+/**
+ * A requested field name converted to `fieldNameStyle`, then with the characters the destination can't hold
+ * removed: the name a field is created under, before shortening and deduplication.
+ */
+function styleAndFitFieldName(
+  requestedFieldName: string,
+  fieldNameStyle: NameStyle,
+  nameCharacterRules: NameCharacterRules | undefined,
+): { styledFieldName: string; fittedFieldName: string } {
+  const styledFieldName = convertNameToNameStyle(requestedFieldName, fieldNameStyle, FALLBACK_FIELD_NAME);
+  return {
+    styledFieldName,
+    fittedFieldName: fitNameToCharacterRules(styledFieldName, nameCharacterRules, FALLBACK_FIELD_NAME),
+  };
+}
+
+/**
+ * Whether the source is the same kind of database as the destination (Supabase → Postgres): one of its
+ * columns carries the destination's native type system. Such a source keeps its own table name, as its
+ * columns keep theirs.
+ */
+function sourceSharesDestinationNativeTypeSystem(
+  source: PlanGeneratorSource,
+  destinationFieldTypeSupport: DestinationFieldTypeSupport | undefined,
+): boolean {
+  return source.schemaFields.some(
+    (schemaField) => nativeColumnTypeSharedWithDestination(schemaField, destinationFieldTypeSupport) !== undefined,
+  );
+}
+
+/** Whether one of the source's emittable fields (not its id column) asks for `fieldName` itself, case-insensitively. */
+function sourceHasFieldRequestingName(
+  source: PlanGeneratorSource,
+  fieldName: string,
+  destinationFieldTypeSupport: DestinationFieldTypeSupport | undefined,
+): boolean {
+  const normalizedFieldName = normalizeNameForUniqueness(fieldName);
+  return source.schemaFields.some(
+    (schemaField) =>
+      schemaField.path !== source.idFieldPath &&
+      normalizeNameForUniqueness(requestedFieldNameForSchemaField(schemaField, destinationFieldTypeSupport)) ===
+        normalizedFieldName,
+  );
 }
 
 /**
@@ -1055,15 +1355,18 @@ function nativeColumnTypeSharedWithDestination(
 }
 
 /**
- * Compose the human-readable message for a `TableMappingNote` covering any mix of
- * removed characters the destination can't use, a dedup rename (collision with an
- * existing or in-plan table), and a length-limit elision. The dedup-only wording is
- * unchanged from before the elision feature, so a plain collision reads exactly as it
- * always did. `requestedName` is the name after removing characters, the one that collided.
+ * Compose the human-readable message for a `TableMappingNote` covering any mix of a
+ * conversion to the destination's name style, removed characters the destination can't
+ * use, a dedup rename (collision with an existing or in-plan table), and a length-limit
+ * elision. The dedup-only wording is unchanged from before the elision feature, so a
+ * plain collision reads exactly as it always did. `requestedName` is the name after
+ * converting it and removing characters, the one that collided.
  */
 function tableRenameMessage(args: {
   requestedName: string;
   finalName: string;
+  wasConvertedToNameStyle: boolean;
+  nameStyle: NameStyle;
   wereCharactersRemoved: boolean;
   wasShortenedToFit: boolean;
   wasDeduplicated: boolean;
@@ -1072,6 +1375,9 @@ function tableRenameMessage(args: {
   nameLengthUnit: NameLengthUnit;
 }): string {
   const clauses: string[] = [];
+  if (args.wasConvertedToNameStyle) {
+    clauses.push(`the name was converted to ${nameStyleDescription(args.nameStyle)}`);
+  }
   if (args.wereCharactersRemoved) {
     clauses.push(`the name had characters the destination can't use`);
   }
@@ -1088,6 +1394,18 @@ function tableRenameMessage(args: {
     );
   }
   return `${clauses.join('; ')}; renamed to "${args.finalName}"`;
+}
+
+/** How a note names a name style ("converted to a lowercase, SQL-friendly name"). */
+function nameStyleDescription(nameStyle: NameStyle): string {
+  switch (nameStyle) {
+    case 'asGiven':
+      return 'the name it was given';
+    case 'lowercaseSqlIdentifier':
+      return 'a lowercase, SQL-friendly name';
+    default:
+      return assertUnreachable(nameStyle);
+  }
 }
 
 /** The unit word for a name-limit note ("63-character" / "63-byte"). */
@@ -1358,41 +1676,47 @@ function resolveForeignKey(
 }
 
 /**
- * Build the injected source-record-id field for a create-table plan: a `text`
- * column named for the source service (`postgres_record_id`, `airtable_record_id`,
- * …, or `source_record_id` when the service is unknown), marked `isSourceRecordId`
- * so clients render it as a mandatory, non-removable field. Remote ids are read as
- * strings (see `readRecordIdAsString`), so `text` is the right logical type.
+ * Name of the injected source-record-id field for a create-table plan: named for the
+ * source service (`postgres_record_id`, `airtable_record_id`, …, or `source_record_id`
+ * when the service is unknown). When source and destination are the SAME service, the
+ * name is disambiguated with a `_source_` infix (`postgres_source_record_id`) so it
+ * doesn't read like the destination's own record id.
  *
- * When source and destination are the SAME service, the name is disambiguated with
- * a `_source_` infix (`postgres_source_record_id`) so it doesn't read like the
- * destination's own record id.
- *
- * Returns null when:
- *  - the source has no known remote-id path (`idFieldPath`): the whole point of
- *    the field is to store the source's identity on the destination row for
- *    record matching, which is impossible without a source id to copy, so there
- *    is nothing to put in it; or
- *  - a field of the same name already exists on the source (the destination would
- *    otherwise get a duplicate), in which case the existing field already serves
- *    the purpose.
+ * Undefined when the source has no known remote-id path (`idFieldPath`): the whole
+ * point of the field is to store the source's identity on the destination row for
+ * record matching, which is impossible without a source id to copy, so there is
+ * nothing to put in it.
  */
-function buildSourceRecordIdField(
+function sourceRecordIdFieldNameForSource(
   source: PlanGeneratorSource,
-  existingFields: CreateFieldSpec[],
   destinationConnectorService: Service | undefined,
   maxFieldNameLength: number | undefined,
   nameLengthUnit: NameLengthUnit,
-): CreateFieldSpec | null {
-  if (source.idFieldPath === undefined) return null;
+  nameStyle: NameStyle,
+): string | undefined {
+  if (source.idFieldPath === undefined) return undefined;
   const servicePrefix = source.connectorService ? source.connectorService.toLowerCase() : 'source';
   const sourceAndDestinationAreSameService =
     source.connectorService !== undefined && source.connectorService === destinationConnectorService;
-  const fieldName = elideNameToMaxLength(
+  return elideNameToMaxLength(
     sourceAndDestinationAreSameService ? `${servicePrefix}_source_record_id` : `${servicePrefix}_record_id`,
     maxFieldNameLength,
     nameLengthUnit,
+    nameStyle,
   );
+}
+
+/**
+ * Build the injected source-record-id field (named by {@link sourceRecordIdFieldNameForSource}):
+ * a `text` column marked `isSourceRecordId` so clients render it as a mandatory,
+ * non-removable field. Remote ids are read as strings (see `readRecordIdAsString`),
+ * so `text` is the right logical type.
+ *
+ * Returns null when a field of the same name already exists on the source (the
+ * destination would otherwise get a duplicate), in which case the existing field
+ * already serves the purpose.
+ */
+function buildSourceRecordIdField(fieldName: string, existingFields: CreateFieldSpec[]): CreateFieldSpec | null {
   const existingFieldNames = new Set(existingFields.map((field) => normalizeNameForUniqueness(field.name)));
   if (existingFieldNames.has(normalizeNameForUniqueness(fieldName))) return null;
   return {

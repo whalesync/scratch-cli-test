@@ -435,6 +435,10 @@ export class SchemaBuilderService {
         : {}),
       // Characters the destination can't hold in a name (MySQL's emoji, trailing spaces) are removed from the plan.
       destinationNameCharacterRules: destinationCapabilities?.nameCharacterRules,
+      // New names take the destination's style first (Postgres/Supabase: "Address (City)" → `address_city`).
+      ...(destinationCapabilities?.nameStyle !== undefined
+        ? { destinationNameStyle: destinationCapabilities.nameStyle }
+        : {}),
       // Fields past the destination's per-table cap stay in the plan but are noted `over_field_limit`, so a
       // client leaves them unselected instead of the save failing at create (DEV-12414).
       ...(destinationCapabilities?.maxFieldsPerTable !== undefined
