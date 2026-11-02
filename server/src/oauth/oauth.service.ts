@@ -868,9 +868,14 @@ export class OAuthService {
    * lock ({@link buildConnectionCredentialsLockKey}), retrying from outside the transaction
    * while another writer holds it — for the same reason the refresh path does not queue
    * inside its transaction (see {@link refreshOAuthTokensUnderConnectionLock}). Every
-   * writer of `encryptedCredentials` other than the refresh itself goes through here.
+   * writer of `encryptedCredentials` on an existing connection other than the refresh itself
+   * goes through here: the connector seam ({@link updateStoredCredentialsUnderConnectionLock}),
+   * re-auth, and the connection PATCH (`ConnectorAccountService.update`).
+   *
+   * `workWhileHoldingLock` runs inside the transaction, so it must be cheap and must not call
+   * out to a vendor: do any network work before taking the lock.
    */
-  private async runWhileHoldingConnectionCredentialsLock<ResultOfWorkWhileHoldingLock>(
+  async runWhileHoldingConnectionCredentialsLock<ResultOfWorkWhileHoldingLock>(
     connectorAccountId: string,
     workWhileHoldingLock: (tx: Prisma.TransactionClient) => Promise<ResultOfWorkWhileHoldingLock>,
   ): Promise<ResultOfWorkWhileHoldingLock> {

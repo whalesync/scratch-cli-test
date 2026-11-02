@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import type { ConnectorAccount } from '@prisma/client';
 import {
   TableDiscoveryMode,
@@ -66,6 +66,7 @@ describe('ConnectorAccountService', () => {
   let workbookEventService: jest.Mocked<WorkbookEventService>;
   let experimentsService: jest.Mocked<ExperimentsService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
+  let oauthService: jest.Mocked<OAuthService>;
 
   beforeEach(() => {
     dbService = {
@@ -139,7 +140,13 @@ describe('ConnectorAccountService', () => {
       getConnector: jest.fn(),
       getAuthParser: jest.fn(),
     } as unknown as jest.Mocked<ConnectorsService>;
-    const oauthService = {} as jest.Mocked<OAuthService>;
+    // The credentials lock runs its work against the same mocked client, standing in for the transaction.
+    oauthService = {
+      runWhileHoldingConnectionCredentialsLock: jest.fn(
+        (_connectorAccountId: string, workWhileHoldingLock: (tx: unknown) => Promise<unknown>) =>
+          workWhileHoldingLock(dbService.client),
+      ),
+    } as unknown as jest.Mocked<OAuthService>;
 
     experimentsService = {} as jest.Mocked<ExperimentsService>;
 
@@ -405,6 +412,108 @@ describe('ConnectorAccountService', () => {
         username: 'editor',
         password: 'new-app-password',
         endpoint: 'https://a.test',
+      });
+    });
+
+    describe('concurrent credential writers (DEV-12337)', () => {
+      // Two stored blobs, as if another writer (a token refresh, a Supabase role write) stored new credentials
+      // between the PATCH's first read and the read it makes under the credentials lock.
+      const ENCRYPTED_CREDENTIALS_READ_BEFORE_EDIT = { encrypted: 'read-before-edit', iv: 'iv-1', salt: 'salt-1' };
+      const ENCRYPTED_CREDENTIALS_WRITTEN_MEANWHILE = { encrypted: 'written-meanwhile', iv: 'iv-2', salt: 'salt-2' };
+
+      function mockAccountReadBeforeEditThenReReadUnderLock(service: string): void {
+        (dbService.client.connectorAccount.findUnique as jest.Mock)
+          .mockResolvedValueOnce(
+            createMockAccount({
+              service,
+              encryptedCredentials: ENCRYPTED_CREDENTIALS_READ_BEFORE_EDIT,
+            } as Partial<ConnectorAccount>),
+          )
+          .mockResolvedValueOnce(
+            createMockAccount({
+              service,
+              encryptedCredentials: ENCRYPTED_CREDENTIALS_WRITTEN_MEANWHILE,
+            } as Partial<ConnectorAccount>),
+          );
+        (dbService.client.connectorAccount.update as jest.Mock).mockResolvedValue(
+          createMockAccount({ service } as Partial<ConnectorAccount>),
+        );
+        (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({ organizationId: 'org_test' });
+      }
+
+      it.each([
+        ['a rename', { displayName: 'Renamed' }],
+        ['a rename with empty credential params', { displayName: 'Renamed', userProvidedParams: {} }],
+      ])('%s writes no credentials and takes no credentials lock', async (_description, updateDto) => {
+        mockStoredAccount('PIPEDRIVE', { oauthAccessToken: 'access-token', oauthRefreshToken: 'refresh-token' });
+
+        await service.update(WORKBOOK_ID, ACCOUNT_ID, updateDto, ACTOR);
+
+        expect(oauthService.runWhileHoldingConnectionCredentialsLock).not.toHaveBeenCalled();
+        expect(credentialEncryptionService.encryptCredentials).not.toHaveBeenCalled();
+        expect(dbService.client.connectorAccount.update).toHaveBeenCalledTimes(1);
+        expect(dbService.client.connectorAccount.update).toHaveBeenCalledWith({
+          where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+          data: expect.objectContaining({ displayName: 'Renamed', healthStatus: null }) as unknown,
+        });
+        expect(dbService.client.connectorAccount.update).toHaveBeenCalledWith({
+          where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+          data: expect.not.objectContaining({ encryptedCredentials: expect.anything() as unknown }) as unknown,
+        });
+      });
+
+      it('a credential edit merges into the credentials re-read under the lock, keeping a refresh token rotated meanwhile', async () => {
+        mockAccountReadBeforeEditThenReReadUnderLock('PIPEDRIVE');
+        credentialEncryptionService.decryptCredentials.mockImplementation((encryptedCredentials) =>
+          Promise.resolve(
+            encryptedCredentials.encrypted === ENCRYPTED_CREDENTIALS_WRITTEN_MEANWHILE.encrypted
+              ? { oauthAccessToken: 'access-token-after-refresh', oauthRefreshToken: 'refresh-token-after-refresh' }
+              : { oauthAccessToken: 'access-token-before-refresh', oauthRefreshToken: 'refresh-token-before-refresh' },
+          ),
+        );
+
+        await service.update(
+          WORKBOOK_ID,
+          ACCOUNT_ID,
+          { userProvidedParams: { customOAuthClientSecret: 'new-client-secret' } },
+          ACTOR,
+        );
+
+        expect(oauthService.runWhileHoldingConnectionCredentialsLock).toHaveBeenCalledWith(
+          ACCOUNT_ID,
+          expect.any(Function),
+        );
+        expect(dbService.client.connectorAccount.findUnique).toHaveBeenNthCalledWith(2, {
+          where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+        });
+        expect(credentialsPassedToEncryption()).toEqual({
+          oauthAccessToken: 'access-token-after-refresh',
+          oauthRefreshToken: 'refresh-token-after-refresh',
+          customOAuthClientSecret: 'new-client-secret',
+        });
+        expect(dbService.client.connectorAccount.update).toHaveBeenCalledTimes(1);
+        expect(dbService.client.connectorAccount.update).toHaveBeenCalledWith({
+          where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+          data: expect.objectContaining({
+            encryptedCredentials: expect.anything() as unknown,
+            healthStatus: null,
+          }) as unknown,
+        });
+      });
+
+      it('MySQL: an edit is refused with a 409, and nothing is written, when the credentials changed after the parser read them', async () => {
+        mockAccountReadBeforeEditThenReReadUnderLock('MYSQL');
+        credentialEncryptionService.decryptCredentials.mockResolvedValueOnce({ ...STORED_MYSQL_CREDENTIALS });
+
+        await expect(
+          service.update(WORKBOOK_ID, ACCOUNT_ID, { userProvidedParams: { password: 'rotated-secret' } }, ACTOR),
+        ).rejects.toThrow(ConflictException);
+        expect(oauthService.runWhileHoldingConnectionCredentialsLock).toHaveBeenCalledWith(
+          ACCOUNT_ID,
+          expect.any(Function),
+        );
+        expect(credentialEncryptionService.encryptCredentials).not.toHaveBeenCalled();
+        expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
       });
     });
   });
