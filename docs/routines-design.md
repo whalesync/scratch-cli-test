@@ -10,7 +10,7 @@ The term "routine" is approachable for non-technical users. It conveys something
 
 ## Design Principles
 
-1. **Postgres is the source of truth; YAML is the editing format** — A routine definition is the verbatim YAML text of one `routines/<name>.yaml` file, stored as a `RoutineDefinition` row and parsed on every read (DEV-11399). The file path remains the routine's identity. `routines/*.yaml` in the workbook config git repo is only the one-time import source for workbooks that predate the table (plus a transitional one-way mirror, off by default). See [Storage and migration](#storage-and-migration).
+1. **Postgres is the source of truth; YAML is the editing format** — A routine definition is the verbatim YAML text of one `routines/<name>.yaml` file, stored as a `RoutineDefinition` row and parsed on every read (DEV-11399). The file path remains the routine's identity. Git is not read or written for routines; definitions that predate the table were imported once from `routines/*.yaml` in the workbook config repo. See [Storage and migration](#storage-and-migration).
 2. **Minimal UI** — No visual workflow builder. Users edit routine files through Scratch's existing file editor. The UI shows which routines exist and their run status.
 3. **Sequential execution** — Steps run one after another. If a step fails, the routine stops.
 4. **One at a time** — A routine can only have one active run at a time.
@@ -18,7 +18,7 @@ The term "routine" is approachable for non-technical users. It conveys something
 
 ## Routine File Format
 
-A routine file is identified by its path under `routines/` (e.g. `routines/daily-content-sync.yaml`); that path is what the API, the schedules, and the run history all key on. The text itself lives in Postgres (see [Storage and migration](#storage-and-migration)); if the transitional git mirror is turned on (it is off by default) it is also written to `routines/` at the root of the workbook config repo — the same repo that already holds `syncs/` and `transformers/` — which is what `scratchmd` binaries older than DEV-12617 read. The current CLI has no routine support (DEV-12661), and its config checkout leaves `routines/` out.
+A routine file is identified by its path under `routines/` (e.g. `routines/daily-content-sync.yaml`); that path is what the API, the schedules, and the run history all key on. The text itself lives only in Postgres (see [Storage and migration](#storage-and-migration)); nothing is written to the workbook config repo. The CLI has no routine support (DEV-12661), and its config checkout leaves `routines/` out.
 
 ```yaml
 # routines/daily-content-sync.yaml
@@ -136,13 +136,6 @@ Future enhancement: automatically reload routines after git operations (pull, pu
 │                                                     │
 │  routines/daily-content-sync.yaml ─► YAML text, v3  │
 │  routines/weekly-full-publish.yaml ─► YAML text, v1 │
-└─────────────────────────────────────────────────────┘
-        ▲                                   │
-        │ one-time import                   │ one-way mirror (transitional, off
-        │ (routinesPendingGitImport)        │  unless ROUTINES_GIT_MIRROR_ENABLED)
-        │                                   ▼
-┌─────────────────────────────────────────────────────┐
-│  Workbook config repo (routines/*.yaml)             │
 └─────────────────────────────────────────────────────┘
         │
         │  "Reload Routines" parses every stored definition (discovery only)
@@ -298,7 +291,7 @@ User clicks "Run"              Schedule fires (ROUTINE action)
                   ▼
        RoutineService.triggerRun(workbookId, filePath)
                   │
-                  ├─ Read YAML file from git repo
+                  ├─ Read the stored YAML (RoutineDefinition)
                   ├─ Parse and validate
                   ├─ Check: is this routine already running? → reject (409)
                   ├─ Create RoutineRun + RoutineRunStep records
@@ -387,7 +380,7 @@ A new **Routines** section in the workbook sidebar, alongside the existing **Syn
 - Shows status indicator per routine: idle, running (with progress), last run result (success/failure)
 - Clicking a routine opens the YAML file in the file editor
 - "Run" button to trigger a manual run
-- "Reload" button to reload routines from git
+- "Reload" button to re-read and re-parse every stored routine
 
 ### Run History
 
@@ -401,15 +394,11 @@ Accessible from the routine's sidebar entry or a detail panel:
 
 **Before DEV-11399** the YAML file in the config git repo *was* the definition: every list, edit and scheduled run did a git round-trip through scratch-git, and a routine only existed once its file was committed to `main`.
 
-**Since DEV-11399** the definition is a `RoutineDefinition` row: `(workbookId, filePath)` unique, `content` = the verbatim YAML text, `version` = a counter bumped on every content change, `source` = who last wrote it (`web` / `cli` / `generated` / `git-import`). Nothing stores a parsed copy — the server parses `content` on every read, so comments and formatting round-trip unchanged through the editor, malformed files are still storable (they surface as `parseError`), and a parser change never needs a backfill. `RoutineDefinitionStoreService` (`server/src/routine/routine-definition-store.service.ts`) is the only code that touches the table or reads definitions from git.
+**Since DEV-11399** the definition is a `RoutineDefinition` row: `(workbookId, filePath)` unique, `content` = the verbatim YAML text, `version` = a counter bumped on every content change, `source` = who last wrote it (`web` / `cli` / `generated` / `git-import`). Nothing stores a parsed copy — the server parses `content` on every read, so comments and formatting round-trip unchanged through the editor, malformed files are still storable (they surface as `parseError`), and a parser change never needs a backfill. `RoutineDefinitionStoreService` (`server/src/routine/routine-definition-store.service.ts`) is the only code that touches the table.
 
-**The git fallback is a one-shot import, not a perpetual fallback.** `Workbook.routinesPendingGitImport` is `true` for every workbook that existed when the table was added and `false` for new ones. The first routine read of a flagged workbook (list, get, trigger, scheduled run) copies `routines/*.yaml` into rows (`source: 'git-import'`; a row a user wrote meanwhile wins) and clears the flag. After that git is never consulted for definitions again — a perpetual "read git when the row is missing" would resurrect every deleted routine. The import throws rather than importing a partial set when scratch-git fails, because `reloadRoutines` orphan-cleans ROUTINE schedules against the list it gets and a partial list would delete live schedules. An **empty** listing clears the flag only after scratch-git confirms the repo exists (`/api/repo/manage/:id/exists`): scratch-git answers `[]` for a repo it does not have, and clearing the flag on that answer would silently lose every routine the real repo holds (locally this bites when two checkouts' scratch-git instances, each with its own `local/scratch-git-repos/`, take turns on port 3100). A workbook whose repo is missing keeps its flag and is reported separately by `routine-git-import`.
+**Moving existing routines out of git (history).** Workbooks that predated the table carried a `Workbook.routinesPendingGitImport` flag. The first routine read of a flagged workbook copied its `routines/*.yaml` into rows (`source: 'git-import'`) and cleared the flag. The admin code migration `routine-git-import` drained the rest (prod reached 0 on 2026-10-29, DEV-12618). It was a one-shot import rather than a perpetual "read git when the row is missing" fallback, because that would have resurrected every deleted routine. A transitional one-way mirror kept writing `routines/*.yaml` back into the config repo for `scratchmd` binaries older than DEV-12617. DEV-12619 turned it off, and the `routine-git-cleanup` code migration deleted those files (git history keeps them). DEV-12620 then removed the import, the mirror, both code migrations, and the flag. Git is no longer read or written for routine definitions.
 
-**Draining the long tail.** The admin code migration `routine-git-import` (`POST /code-migrations/run`) runs the same import over still-flagged workbooks in batches and reports `remainingCount`; when it holds at 0 the fallback code can be deleted.
-
-**The transitional git mirror (off by default).** When `ROUTINES_GIT_MIRROR_ENABLED` is true, every definition change is followed by a full-state one-way mirror of `routines/` into the config repo (`RoutineGitMirrorService`). It existed so `scratchmd routines pull|status|push` binaries older than DEV-12617 kept working, and nothing reads it back. The current CLI has no routine support (DEV-12661) and prod showed no CLI routine use, so DEV-12619 turned the default off. With the mirror off, the `routine-git-cleanup` code migration (refused while the mirror is on) deletes `routines/*.yaml` from git; history keeps the old copies. DEV-12620 then deletes the mirror, the import, and the flag column.
-
-**Workbook export/import.** The dev-tools workbook export (`DevToolsService.exportWorkbook`) carries every definition (`filePath`, `content`, `version`, `source`; DEV-12621), and import recreates them on the new workbook. The one edit import makes to the text is rewriting `coa_`/`dfd_`/`syn_` ids to the imported workbook's new ids, since steps can reference a connection, folder or sync by id; comments and formatting are otherwise untouched. `ROUTINE` schedules already travel and need no remap because they key on the file path. `RoutineRun` history does not travel, and imported definitions are not written to the transitional git mirror.
+**Workbook export/import.** The dev-tools workbook export (`DevToolsService.exportWorkbook`) carries every definition (`filePath`, `content`, `version`, `source`; DEV-12621), and import recreates them on the new workbook. The one edit import makes to the text is rewriting `coa_`/`dfd_`/`syn_` ids to the imported workbook's new ids, since steps can reference a connection, folder or sync by id; comments and formatting are otherwise untouched. `ROUTINE` schedules already travel and need no remap because they key on the file path. `RoutineRun` history does not travel.
 
 ## Relationship to Existing Schedule System
 

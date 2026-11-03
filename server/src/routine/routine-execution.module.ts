@@ -7,7 +7,6 @@ import { JobModule } from 'src/job/job.module';
 import { LiveExportRunStoreModule } from 'src/live-export-run-store/live-export-run-store.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { RunCountModule } from 'src/run-count/run-count.module';
-import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
 import { RoutineDefinitionStoreService } from './routine-definition-store.service';
 import { RoutineExecutorService } from './routine-executor.service';
@@ -22,12 +21,11 @@ import { WhalesyncRunNotifierService } from './whalesync-run-notifier.service';
  * module without creating a circular module dependency. RoutineModule (file CRUD + read API) imports
  * this for the definition store, parser/validator + executor; ScheduleModule and CronModule import it
  * for the executor. The store (RoutineDefinitionStoreService) is the single owner of routine
- * definitions in Postgres and of their one-time import from git (DEV-11399).
+ * definitions in Postgres (DEV-11399).
  */
 @Module({
   imports: [
     DbModule,
-    ScratchGitModule,
     WorkerEnqueuerModule,
     JobModule,
     AuditLogModule,

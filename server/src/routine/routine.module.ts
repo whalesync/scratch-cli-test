@@ -6,10 +6,8 @@ import { JobModule } from 'src/job/job.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { ScheduleModule } from 'src/schedule/schedule.module';
-import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { RoutineExecutionModule } from './routine-execution.module';
-import { RoutineGitMirrorService } from './routine-git-mirror.service';
 import { RoutineController } from './routine.controller';
 import { RoutineService } from './routine.service';
 
@@ -19,21 +17,19 @@ import { RoutineService } from './routine.service';
   // module's context — mirrors ScheduleModule, whose controller uses the same guards.
   // RoutineExecutionModule provides the definition store + parser/validator (used by RoutineService)
   // and the RoutineExecutorService (used by the controller's trigger/cancel endpoints).
-  // ScratchGitModule is still needed by RoutineGitMirrorService (the transitional git mirror).
   imports: [
     DbModule,
     MetricsModule,
     ScratchConfigModule,
     ScheduleModule,
     WorkbookModule,
-    ScratchGitModule,
     AuditLogModule,
     RateLimiterModule,
     RoutineExecutionModule,
     JobModule,
   ],
   controllers: [RoutineController],
-  providers: [RoutineService, RoutineGitMirrorService],
+  providers: [RoutineService],
   exports: [RoutineService],
 })
 export class RoutineModule {}

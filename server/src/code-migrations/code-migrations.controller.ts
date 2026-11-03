@@ -26,7 +26,6 @@ import { type DataFolderId } from '@spinner/shared-types';
 import { chunk } from 'lodash';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { hasAdminToolsPermission } from 'src/auth/permissions';
-import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
@@ -38,14 +37,13 @@ import {
   WEBFLOW_NESTED_STRUCTURE_VERSION,
 } from 'src/remote-service/connectors/library/webflow/webflow-folder-paths';
 import { Service } from 'src/remote-service/connectors/service-constants';
-import { RoutineDefinitionStoreService } from 'src/routine/routine-definition-store.service';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SYSTEM_ACTOR } from 'src/users/types';
 import { assertUnreachable } from 'src/utils/asserts';
 import { EncryptedData } from 'src/utils/encryption';
 import { escapeLikeWildcards } from 'src/utils/prisma-like';
-import { getWorkbookRepoPath, WorkbookRepoService } from 'src/workbook/workbook-repo.service';
+import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
@@ -213,32 +211,6 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'unscoped rows.',
   },
   {
-    name: 'routine-git-import',
-    supportsDryRun: true,
-    description:
-      'DEV-11399: copies routine definitions (routines/*.yaml in the workbook config git repo) into the ' +
-      'RoutineDefinition table for workbooks still flagged routinesPendingGitImport, then clears the flag. ' +
-      'Every routine read already does this lazily for the workbook it touches; this run drains the long ' +
-      'tail proactively. Idempotent (rows a user wrote meanwhile win; a re-run skips imported workbooks) and ' +
-      'non-destructive (git is left untouched — see routine-git-cleanup). A scratch-git failure skips that ' +
-      'workbook with its flag still set so the next run retries it, and a workbook whose config repo does not ' +
-      'exist on the git host keeps its flag too (an absent repo cannot prove "no routines" — check the git host ' +
-      'before clearing it by hand). remainingCount = workbooks still flagged; ' +
-      'when it holds at 0 the git fallback code can be removed. Dry-run lists the files each workbook would ' +
-      'import. `ids` targets workbooks; `qty` takes that many still-flagged workbooks, oldest first.',
-  },
-  {
-    name: 'routine-git-cleanup',
-    supportsDryRun: true,
-    description:
-      'DEV-11399 final step: deletes routines/*.yaml from the config git repo of workbooks whose routine ' +
-      'definitions have been imported into Postgres (routinesPendingGitImport = false), so git stops carrying ' +
-      'a stale copy. REFUSES to run while ROUTINES_GIT_MIRROR_ENABLED is true — the next routine write would ' +
-      'just recreate the files (the mirror is off by default since DEV-12619). Reversible through git ' +
-      'history. Dry-run lists the files that would be deleted. `ids` targets ' +
-      'workbooks; `qty` takes that many imported workbooks that still have routine files in git, oldest first.',
-  },
-  {
     name: 'webflow-folder-restructure-inverse',
     supportsDryRun: true,
     description:
@@ -275,8 +247,6 @@ export class CodeMigrationsController {
     private readonly scratchGitService: ScratchGitService,
     private readonly connectionQuiesceService: ConnectionQuiesceService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
-    private readonly routineDefinitionStore: RoutineDefinitionStoreService,
-    private readonly scratchConfigService: ScratchConfigService,
   ) {}
 
   @Get('available')
@@ -333,196 +303,9 @@ export class CodeMigrationsController {
         return this.runWebflowFolderRestructure(dto);
       case 'webflow-folder-restructure-inverse':
         return this.runWebflowFolderRestructureInverse(dto);
-      case 'routine-git-import':
-        return this.runRoutineGitImport(dto);
-      case 'routine-git-cleanup':
-        return this.runRoutineGitCleanup(dto);
       default:
         throw new BadRequestException(`Unknown migration: ${dto.migration}`);
     }
-  }
-
-  /**
-   * DEV-11399: drains `Workbook.routinesPendingGitImport` by running the same one-shot git import
-   * every routine read performs lazily ({@link RoutineDefinitionStoreService.ensureImportedFromGit}).
-   * Idempotent and non-destructive: rows already in the table win, git is never modified, and a
-   * workbook whose repo read fails keeps its flag (so `remainingCount` stays honest and the next
-   * run retries it). Dry-run reads git and reports what would be inserted without writing.
-   */
-  private async runRoutineGitImport(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
-    const dryRun = dto.dryRun === true;
-    const targetingSpecificIds = dto.ids !== undefined && dto.ids.length > 0;
-    const candidateWorkbooks = await this.db.client.workbook.findMany({
-      where: targetingSpecificIds
-        ? { id: { in: dto.ids }, routinesPendingGitImport: true }
-        : { routinesPendingGitImport: true, isPendingDelete: false },
-      take: targetingSpecificIds ? undefined : dto.qty,
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, organizationId: true },
-    });
-
-    const migratedIds: string[] = [];
-    let importedFileCount = 0;
-    let skippedExistingFileCount = 0;
-    let skippedInvalidFileCount = 0;
-    let erroredWorkbookCount = 0;
-    let workbooksWithNoRoutineFiles = 0;
-    let workbooksWithMissingConfigRepo = 0;
-
-    for (const workbook of candidateWorkbooks) {
-      const workbookId = workbook.id as WorkbookId;
-      try {
-        if (dryRun) {
-          const repoId = getWorkbookRepoPath(workbook.organizationId, workbookId);
-          const gitFiles = await this.routineDefinitionStore.readRoutineFilesFromGit(repoId);
-          if (gitFiles.length === 0) {
-            // Same guard as the real import: an empty listing from a repo that does not exist on
-            // this git host would be left flagged, not counted as done.
-            const { exists } = await this.scratchGitService.repoExists(repoId);
-            if (!exists) {
-              workbooksWithMissingConfigRepo += 1;
-              this.logger.warn(
-                `routine-git-import (dry-run): workbook ${workbook.id} config repo ${repoId} does not exist on the git host; its flag would be kept`,
-              );
-              continue;
-            }
-            workbooksWithNoRoutineFiles += 1;
-          }
-          importedFileCount += gitFiles.length;
-          migratedIds.push(workbook.id);
-          this.logger.log(
-            `routine-git-import (dry-run): workbook ${workbook.id} would import ${gitFiles.length} file(s): ${gitFiles
-              .map((file) => file.path)
-              .join(', ')}`,
-          );
-          continue;
-        }
-        const outcome = await this.routineDefinitionStore.ensureImportedFromGit(workbookId);
-        if (outcome.configRepoMissing) {
-          // Flag deliberately kept by the store (see RoutineGitImportOutcome.configRepoMissing).
-          workbooksWithMissingConfigRepo += 1;
-          continue;
-        }
-        importedFileCount += outcome.imported;
-        skippedExistingFileCount += outcome.skippedExisting;
-        skippedInvalidFileCount += outcome.skippedInvalid;
-        if (outcome.imported + outcome.skippedExisting + outcome.skippedInvalid === 0) {
-          workbooksWithNoRoutineFiles += 1;
-        }
-        migratedIds.push(workbook.id);
-      } catch (error) {
-        // The flag stays set on this workbook; the rest of the batch still runs.
-        erroredWorkbookCount += 1;
-        this.logger.warn(`routine-git-import: workbook ${workbook.id} failed to import: ${String(error)}`);
-      }
-    }
-
-    const remainingCount = await this.db.client.workbook.count({
-      where: { routinesPendingGitImport: true, isPendingDelete: false },
-    });
-    this.logger.log(
-      `routine-git-import${dryRun ? ' (dry-run)' : ''} complete: ${migratedIds.length} workbook(s), ` +
-        `${importedFileCount} file(s) imported, ${erroredWorkbookCount} errored, ` +
-        `${workbooksWithMissingConfigRepo} with no config repo on the git host (flag kept); remaining=${remainingCount}`,
-    );
-
-    return {
-      migratedIds,
-      remainingCount,
-      migrationName: 'routine-git-import',
-      dryRun,
-      summary: [
-        { label: dryRun ? 'workbooks that would be imported' : 'workbooks imported', count: migratedIds.length },
-        { label: dryRun ? 'routine files that would be imported' : 'routine files imported', count: importedFileCount },
-        { label: 'routine files already in the DB (row kept)', count: skippedExistingFileCount },
-        { label: 'routine files with an invalid path (left in git)', count: skippedInvalidFileCount },
-        { label: 'workbooks with no routine files in git', count: workbooksWithNoRoutineFiles },
-        {
-          label: 'workbooks whose config repo is missing on the git host (flag kept — investigate)',
-          count: workbooksWithMissingConfigRepo,
-        },
-        { label: 'workbooks errored (flag kept, retried next run)', count: erroredWorkbookCount },
-      ],
-    };
-  }
-
-  /**
-   * DEV-11399 final step: removes `routines/*.yaml` from the config git repo of every workbook
-   * whose definitions are already in Postgres. Refused while the transitional git mirror is on —
-   * the next routine write would recreate the files.
-   * Never touches a still-flagged workbook (its git copy is the import source). Reversible via
-   * git history; dry-run lists what would be deleted.
-   */
-  private async runRoutineGitCleanup(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
-    if (this.scratchConfigService.isRoutinesGitMirrorEnabled()) {
-      throw new BadRequestException(
-        'routine-git-cleanup refused: ROUTINES_GIT_MIRROR_ENABLED is on, so the next routine write would recreate ' +
-          'the files. Unset it (the mirror is off by default since DEV-12619) and retry.',
-      );
-    }
-    const dryRun = dto.dryRun === true;
-    const targetingSpecificIds = dto.ids !== undefined && dto.ids.length > 0;
-    // Only imported workbooks are candidates; `qty` may over-scan workbooks whose repo has no
-    // routine files (we cannot tell from the DB), so the sweep walks oldest-first and stops after
-    // `qty` workbooks that actually had files to delete.
-    const candidateWorkbooks = await this.db.client.workbook.findMany({
-      where: targetingSpecificIds
-        ? { id: { in: dto.ids }, routinesPendingGitImport: false }
-        : { routinesPendingGitImport: false, isPendingDelete: false },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, organizationId: true },
-    });
-
-    const migratedIds: string[] = [];
-    let deletedFileCount = 0;
-    let erroredWorkbookCount = 0;
-    for (const workbook of candidateWorkbooks) {
-      if (!targetingSpecificIds && dto.qty !== undefined && migratedIds.length >= dto.qty) {
-        break;
-      }
-      const repoId = getWorkbookRepoPath(workbook.organizationId, workbook.id as WorkbookId);
-      try {
-        const gitFiles = await this.routineDefinitionStore.readRoutineFilesFromGit(repoId);
-        if (gitFiles.length === 0) {
-          continue;
-        }
-        const pathsToDelete = gitFiles.map((file) => file.path);
-        if (!dryRun) {
-          await this.scratchGitService.deleteFilesFromBranch(
-            repoId,
-            MAIN_BRANCH,
-            pathsToDelete,
-            `DEV-11399: remove routine files now stored in Postgres (${SYSTEM_ACTOR.userId})`,
-          );
-        }
-        deletedFileCount += pathsToDelete.length;
-        migratedIds.push(workbook.id);
-        this.logger.log(
-          `routine-git-cleanup${dryRun ? ' (dry-run)' : ''}: workbook ${workbook.id} ${dryRun ? 'would delete' : 'deleted'} ${pathsToDelete.join(', ')}`,
-        );
-      } catch (error) {
-        erroredWorkbookCount += 1;
-        this.logger.warn(`routine-git-cleanup: workbook ${workbook.id} failed: ${String(error)}`);
-      }
-    }
-
-    // The DB cannot say which repos still hold routine files, so "remaining" is the honest upper
-    // bound: imported workbooks not cleaned in this run.
-    const remainingCount = Math.max(0, candidateWorkbooks.length - migratedIds.length);
-    return {
-      migratedIds,
-      remainingCount,
-      migrationName: 'routine-git-cleanup',
-      dryRun,
-      summary: [
-        { label: dryRun ? 'workbooks with files to delete' : 'workbooks cleaned', count: migratedIds.length },
-        {
-          label: dryRun ? 'routine files that would be deleted' : 'routine files deleted from git',
-          count: deletedFileCount,
-        },
-        { label: 'workbooks errored', count: erroredWorkbookCount },
-      ],
-    };
   }
 
   /**

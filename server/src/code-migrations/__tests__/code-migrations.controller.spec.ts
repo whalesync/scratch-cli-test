@@ -2,14 +2,12 @@
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
 import { AuditLogService } from 'src/audit/audit-log.service';
-import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { NotionApiClient } from 'src/remote-service/connectors/library/notion/notion-api-client';
-import { RoutineDefinitionStoreService } from 'src/routine/routine-definition-store.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { CodeMigrationsController } from '../code-migrations.controller';
@@ -40,8 +38,6 @@ describe('CodeMigrationsController', () => {
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let connectionQuiesceService: jest.Mocked<ConnectionQuiesceService>;
   let metricsService: jest.Mocked<CustomMetricsService>;
-  let routineDefinitionStore: jest.Mocked<RoutineDefinitionStoreService>;
-  let scratchConfigService: jest.Mocked<ScratchConfigService>;
 
   beforeEach(() => {
     dbService = {
@@ -96,7 +92,6 @@ describe('CodeMigrationsController', () => {
     scratchGitService = {
       resolveConnectionRepoPath: jest.fn().mockResolvedValue('repo-1'),
       moveFolder: jest.fn().mockResolvedValue({ moved: true }),
-      repoExists: jest.fn().mockResolvedValue({ exists: true, hasHead: true }),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     connectionQuiesceService = {
@@ -110,20 +105,6 @@ describe('CodeMigrationsController', () => {
       withLoggedExecTimeForConnector: jest.fn(),
     } as unknown as jest.Mocked<CustomMetricsService>;
 
-    routineDefinitionStore = {
-      ensureImportedFromGit: jest.fn().mockResolvedValue({
-        attempted: true,
-        configRepoMissing: false,
-        imported: 0,
-        skippedExisting: 0,
-        skippedInvalid: 0,
-      }),
-      readRoutineFilesFromGit: jest.fn().mockResolvedValue([]),
-    } as unknown as jest.Mocked<RoutineDefinitionStoreService>;
-    scratchConfigService = {
-      isRoutinesGitMirrorEnabled: jest.fn().mockReturnValue(true),
-    } as unknown as jest.Mocked<ScratchConfigService>;
-
     controller = new CodeMigrationsController(
       dbService,
       workbookRepoService,
@@ -133,8 +114,6 @@ describe('CodeMigrationsController', () => {
       scratchGitService,
       connectionQuiesceService,
       metricsService,
-      routineDefinitionStore,
-      scratchConfigService,
     );
   });
 
@@ -686,206 +665,6 @@ describe('CodeMigrationsController', () => {
         label: 'Dead rows that would be deleted (file gone from every claimant repo)',
         count: 1,
       });
-    });
-  });
-
-  describe('runMigration - routine-git-import / routine-git-cleanup (DEV-11399)', () => {
-    const flaggedWorkbooks = [
-      { id: 'wkb_old1', organizationId: 'org_a' },
-      { id: 'wkb_old2', organizationId: 'org_a' },
-    ];
-
-    it('lists both migrations as dry-run capable', () => {
-      const { migrations } = controller.getAvailableMigrations(makeReqWithUser());
-      expect(migrations.find((m) => m.name === 'routine-git-import')?.supportsDryRun).toBe(true);
-      expect(migrations.find((m) => m.name === 'routine-git-cleanup')?.supportsDryRun).toBe(true);
-    });
-
-    it('routine-git-import runs the one-shot import for still-flagged workbooks and reports remainingCount', async () => {
-      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue(flaggedWorkbooks);
-      (dbService.client.workbook.count as jest.Mock).mockResolvedValue(5);
-      routineDefinitionStore.ensureImportedFromGit
-        .mockResolvedValueOnce({
-          attempted: true,
-          configRepoMissing: false,
-          imported: 2,
-          skippedExisting: 1,
-          skippedInvalid: 0,
-        })
-        .mockResolvedValueOnce({
-          attempted: true,
-          configRepoMissing: false,
-          imported: 0,
-          skippedExisting: 0,
-          skippedInvalid: 0,
-        });
-
-      const result = await controller.runMigration(makeReqWithUser(), { migration: 'routine-git-import', qty: 2 });
-
-      expect(dbService.client.workbook.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { routinesPendingGitImport: true, isPendingDelete: false },
-          take: 2,
-          orderBy: { createdAt: 'asc' },
-        }),
-      );
-      expect(routineDefinitionStore.ensureImportedFromGit).toHaveBeenCalledTimes(2);
-      expect(result).toMatchObject({
-        migrationName: 'routine-git-import',
-        dryRun: false,
-        migratedIds: ['wkb_old1', 'wkb_old2'],
-        remainingCount: 5,
-      });
-      expect(result.summary).toEqual(
-        expect.arrayContaining([
-          { label: 'routine files imported', count: 2 },
-          { label: 'routine files already in the DB (row kept)', count: 1 },
-          { label: 'workbooks with no routine files in git', count: 1 },
-        ]),
-      );
-    });
-
-    it('routine-git-import keeps going past an errored workbook (its flag stays set) and counts it', async () => {
-      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue(flaggedWorkbooks);
-      routineDefinitionStore.ensureImportedFromGit
-        .mockRejectedValueOnce(new Error('scratch-git 503'))
-        .mockResolvedValueOnce({
-          attempted: true,
-          configRepoMissing: false,
-          imported: 1,
-          skippedExisting: 0,
-          skippedInvalid: 0,
-        });
-
-      const result = await controller.runMigration(makeReqWithUser(), { migration: 'routine-git-import', qty: 2 });
-
-      expect(result.migratedIds).toEqual(['wkb_old2']);
-      expect(result.summary).toEqual(
-        expect.arrayContaining([{ label: 'workbooks errored (flag kept, retried next run)', count: 1 }]),
-      );
-    });
-
-    it('routine-git-import does not count a workbook whose config repo is missing on the git host as migrated', async () => {
-      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue(flaggedWorkbooks);
-      (dbService.client.workbook.count as jest.Mock).mockResolvedValue(1);
-      routineDefinitionStore.ensureImportedFromGit
-        .mockResolvedValueOnce({
-          attempted: true,
-          configRepoMissing: true,
-          imported: 0,
-          skippedExisting: 0,
-          skippedInvalid: 0,
-        })
-        .mockResolvedValueOnce({
-          attempted: true,
-          configRepoMissing: false,
-          imported: 1,
-          skippedExisting: 0,
-          skippedInvalid: 0,
-        });
-
-      const result = await controller.runMigration(makeReqWithUser(), { migration: 'routine-git-import', qty: 2 });
-
-      expect(result.migratedIds).toEqual(['wkb_old2']);
-      expect(result.remainingCount).toBe(1);
-      expect(result.summary).toEqual(
-        expect.arrayContaining([
-          { label: 'workbooks whose config repo is missing on the git host (flag kept — investigate)', count: 1 },
-        ]),
-      );
-    });
-
-    it('routine-git-import dry-run leaves a workbook whose config repo is missing out of the would-migrate list', async () => {
-      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue([flaggedWorkbooks[0]]);
-      routineDefinitionStore.readRoutineFilesFromGit.mockResolvedValue([]);
-      (scratchGitService.repoExists as jest.Mock).mockResolvedValue({ exists: false, hasHead: false });
-
-      const result = await controller.runMigration(makeReqWithUser(), {
-        migration: 'routine-git-import',
-        ids: ['wkb_old1'],
-        dryRun: true,
-      });
-
-      expect(scratchGitService.repoExists).toHaveBeenCalledWith('org_a/wkb_old1/wkb_old1');
-      expect(result.migratedIds).toEqual([]);
-      expect(routineDefinitionStore.ensureImportedFromGit).not.toHaveBeenCalled();
-    });
-
-    it('routine-git-import dry-run reads git but writes nothing and clears no flag', async () => {
-      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue([flaggedWorkbooks[0]]);
-      routineDefinitionStore.readRoutineFilesFromGit.mockResolvedValue([
-        { path: 'routines/a.yaml', content: 'name: A\n' },
-      ]);
-
-      const result = await controller.runMigration(makeReqWithUser(), {
-        migration: 'routine-git-import',
-        ids: ['wkb_old1'],
-        dryRun: true,
-      });
-
-      expect(routineDefinitionStore.ensureImportedFromGit).not.toHaveBeenCalled();
-      expect(routineDefinitionStore.readRoutineFilesFromGit).toHaveBeenCalledWith('org_a/wkb_old1/wkb_old1');
-      expect(result).toMatchObject({ dryRun: true, migratedIds: ['wkb_old1'] });
-      expect(result.summary).toEqual(
-        expect.arrayContaining([{ label: 'routine files that would be imported', count: 1 }]),
-      );
-    });
-
-    it('routine-git-cleanup refuses while the git mirror is enabled', async () => {
-      scratchConfigService.isRoutinesGitMirrorEnabled.mockReturnValue(true);
-
-      await expect(
-        controller.runMigration(makeReqWithUser(), { migration: 'routine-git-cleanup', qty: 1 }),
-      ).rejects.toThrow(BadRequestException);
-      expect(scratchGitService.deleteFilesFromBranch).toBeUndefined();
-    });
-
-    it('routine-git-cleanup deletes routines/*.yaml only for imported workbooks that still have files in git', async () => {
-      scratchConfigService.isRoutinesGitMirrorEnabled.mockReturnValue(false);
-      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue([
-        { id: 'wkb_done1', organizationId: 'org_a' },
-        { id: 'wkb_done2', organizationId: 'org_a' },
-      ]);
-      routineDefinitionStore.readRoutineFilesFromGit
-        .mockResolvedValueOnce([{ path: 'routines/a.yaml', content: 'name: A\n' }])
-        .mockResolvedValueOnce([]);
-      const deleteFilesFromBranch = jest.fn().mockResolvedValue(undefined);
-      (scratchGitService as unknown as { deleteFilesFromBranch: jest.Mock }).deleteFilesFromBranch =
-        deleteFilesFromBranch;
-
-      const result = await controller.runMigration(makeReqWithUser(), { migration: 'routine-git-cleanup', qty: 5 });
-
-      expect(dbService.client.workbook.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { routinesPendingGitImport: false, isPendingDelete: false } }),
-      );
-      expect(deleteFilesFromBranch).toHaveBeenCalledWith(
-        'org_a/wkb_done1/wkb_done1',
-        'main',
-        ['routines/a.yaml'],
-        expect.stringContaining('DEV-11399'),
-      );
-      expect(deleteFilesFromBranch).toHaveBeenCalledTimes(1);
-      expect(result).toMatchObject({ migrationName: 'routine-git-cleanup', migratedIds: ['wkb_done1'], dryRun: false });
-    });
-
-    it('routine-git-cleanup dry-run lists the files but deletes nothing', async () => {
-      scratchConfigService.isRoutinesGitMirrorEnabled.mockReturnValue(false);
-      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue([
-        { id: 'wkb_done1', organizationId: 'org_a' },
-      ]);
-      routineDefinitionStore.readRoutineFilesFromGit.mockResolvedValue([{ path: 'routines/a.yaml', content: 'x' }]);
-      const deleteFilesFromBranch = jest.fn();
-      (scratchGitService as unknown as { deleteFilesFromBranch: jest.Mock }).deleteFilesFromBranch =
-        deleteFilesFromBranch;
-
-      const result = await controller.runMigration(makeReqWithUser(), {
-        migration: 'routine-git-cleanup',
-        ids: ['wkb_done1'],
-        dryRun: true,
-      });
-
-      expect(deleteFilesFromBranch).not.toHaveBeenCalled();
-      expect(result).toMatchObject({ dryRun: true, migratedIds: ['wkb_done1'] });
     });
   });
 

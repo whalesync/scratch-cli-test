@@ -267,11 +267,6 @@ export class ScratchGitService {
     return this.scratchGitClient.getBranchHead(repoId, branch);
   }
 
-  /** Whether the repo exists on the git host at all — see {@link ScratchGitClient.repoExists}. */
-  async repoExists(repoId: string): Promise<{ exists: boolean; hasHead: boolean }> {
-    return this.scratchGitClient.repoExists(repoId);
-  }
-
   async buildIndex(repoId: string): Promise<{ count: number }> {
     return this.scratchGitClient.buildIndex(repoId);
   }

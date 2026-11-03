@@ -211,12 +211,6 @@ model Workbook {
   // merge (null values delete keys), never wholesale-replaced. See WorkbookSettings.
   settings Json? @default("{}") // WorkbookSettings object
 
-  // True while this workbook's routine definitions may still live only as `routines/*.yaml` in
-  // its config git repo (DEV-11399). The first routine read imports them into RoutineDefinition
-  // rows and clears the flag; after that git is never consulted for definitions. The migration
-  // that added this column set it true for every pre-existing workbook; new workbooks start false.
-  routinesPendingGitImport Boolean @default(false)
-
   user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId         String?
   organizationId String
@@ -1029,10 +1023,9 @@ model Schedule {
 /// A routine definition — the verbatim YAML text the user edits — one row per routine file.
 /// Postgres is the source of truth (DEV-11399): the server parses `content` on every read and
 /// never stores a parsed copy, so comments and formatting round-trip unchanged through the
-/// editor. `routines/*.yaml` in the workbook config git repo is only (a) the one-time
-/// import source for workbooks that predate this table (see Workbook.routinesPendingGitImport)
-/// and (b) a one-way mirror written after each change while ROUTINES_GIT_MIRROR_ENABLED, so
-/// older `scratchmd routines pull` binaries keep working during the transition.
+/// editor. Definitions that predate this table were imported once from `routines/*.yaml` in the
+/// workbook config git repo (`source` "git-import"); git is no longer read or written for
+/// routines (DEV-12620).
 /// `filePath` (e.g. "routines/daily-sync.yaml") stays the routine's identity everywhere:
 /// RoutineRun.routineFilePath, Schedule.entityId (action ROUTINE), Workbook.settings.sync_routine.
 model RoutineDefinition {

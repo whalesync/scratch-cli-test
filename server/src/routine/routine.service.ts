@@ -22,7 +22,6 @@ import { RoutineRunEntity } from './entities/routine-run.entity';
 import { RoutineEntity } from './entities/routine.entity';
 import { RoutineDefinitionSource, RoutineDefinitionStoreService } from './routine-definition-store.service';
 import { assertValidRoutineFilePath } from './routine-file-path';
-import { RoutineGitMirrorService } from './routine-git-mirror.service';
 import { RoutineParserService } from './routine-parser.service';
 import { RoutineReferenceValidatorService, validateRoutineReferences } from './routine-reference-validator.service';
 import { ParsedRoutine, RoutineParseResult } from './routine.types';
@@ -35,17 +34,15 @@ export type RoutineFileUpsertOutcome = 'created' | 'updated' | 'unchanged';
 
 /**
  * Routine definitions live in Postgres (`RoutineDefinition`, DEV-11399) behind
- * {@link RoutineDefinitionStoreService}; this service adds validation, audit logging, the join with
- * schedules + run history, and the transitional git mirror ({@link RoutineGitMirrorService}) that
- * keeps `routines/*.yaml` in the config repo current for pre-DEV-11399 CLIs. "File" in the method
- * names is the routine's identity (its `routines/<name>.yaml` path), not where it is stored.
+ * {@link RoutineDefinitionStoreService}; this service adds validation, audit logging, and the join
+ * with schedules + run history. "File" in the method names is the routine's identity (its
+ * `routines/<name>.yaml` path), not where it is stored.
  */
 @Injectable()
 export class RoutineService {
   constructor(
     private readonly db: DbService,
     private readonly routineDefinitionStore: RoutineDefinitionStoreService,
-    private readonly routineGitMirror: RoutineGitMirrorService,
     private readonly scheduleService: ScheduleService,
     private readonly parser: RoutineParserService,
     private readonly referenceValidator: RoutineReferenceValidatorService,
@@ -54,11 +51,10 @@ export class RoutineService {
   ) {}
 
   /**
-   * Reads every routine definition (running the one-time git import for a workbook that predates
-   * the table) and returns the discovered routines (malformed YAML carries a `parseError`), each
-   * joined with its ROUTINE Schedule row + latest run. The routine YAML no longer owns the schedule
-   * (DEV-10478), so reload performs no schedule writes other than orphan-cleaning ROUTINE schedules
-   * whose routine no longer exists. It does NOT execute anything.
+   * Reads every routine definition and returns the discovered routines (malformed YAML carries a
+   * `parseError`), each joined with its ROUTINE Schedule row + latest run. The routine YAML no longer
+   * owns the schedule (DEV-10478), so reload performs no schedule writes other than orphan-cleaning
+   * ROUTINE schedules whose routine no longer exists. It does NOT execute anything.
    */
   async reloadRoutines(workbookId: WorkbookId, actor: Actor): Promise<Routine[]> {
     const parseResultsByFilePath = await this.readAndParseRoutineFiles(workbookId);
@@ -272,7 +268,6 @@ export class RoutineService {
       source: options.source ?? 'web',
       updatedByUserId: actor.userId,
     });
-    this.routineGitMirror.mirrorWorkbookRoutinesInBackground(workbookId, actor);
 
     await this.auditLogService.logEvent({
       actor,
@@ -313,7 +308,6 @@ export class RoutineService {
       source: options.source ?? 'web',
       updatedByUserId: actor.userId,
     });
-    this.routineGitMirror.mirrorWorkbookRoutinesInBackground(workbookId, actor);
 
     await this.auditLogService.logEvent({
       actor,
@@ -364,7 +358,6 @@ export class RoutineService {
     if (!deleted) {
       throw new NotFoundException(`Routine file ${path} not found`);
     }
-    this.routineGitMirror.mirrorWorkbookRoutinesInBackground(workbookId, actor);
     await this.scheduleService.deleteRoutineScheduleByFilePath(workbookId, path);
 
     await this.auditLogService.logEvent({
@@ -380,7 +373,7 @@ export class RoutineService {
 
   /**
    * Blocks a create/update when a routine references a folder or connection that does not exist in
-   * the workbook. Runs after the structural parse succeeds and before the git commit, so nothing is
+   * the workbook. Runs after the structural parse succeeds and before the store write, so nothing is
    * written unless every reference resolves. Joins with "; " to match the structural validator's
    * message format.
    */
@@ -392,9 +385,8 @@ export class RoutineService {
   }
 
   /**
-   * Reads every stored routine definition and parses each. Key = file path. The store runs the
-   * one-time git import first, so this is always the COMPLETE set — `reloadRoutines` relies on
-   * that to orphan-clean schedules safely.
+   * Reads every stored routine definition and parses each. Key = file path. This is always the
+   * COMPLETE set — `reloadRoutines` relies on that to orphan-clean schedules safely.
    */
   private async readAndParseRoutineFiles(workbookId: WorkbookId): Promise<Map<string, RoutineParseResult>> {
     const definitions = await this.routineDefinitionStore.listDefinitions(workbookId);

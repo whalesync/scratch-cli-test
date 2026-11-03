@@ -6,7 +6,6 @@ import { JobService } from 'src/job/job.service';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { Actor } from 'src/users/types';
 import { RoutineDefinitionStoreService } from '../routine-definition-store.service';
-import { RoutineGitMirrorService } from '../routine-git-mirror.service';
 import { RoutineParserService } from '../routine-parser.service';
 import { RoutineReferenceValidatorService } from '../routine-reference-validator.service';
 import { RoutineService } from '../routine.service';
@@ -117,7 +116,6 @@ describe('RoutineService', () => {
   let getDefinition: jest.Mock;
   let upsertDefinition: jest.Mock;
   let deleteDefinition: jest.Mock;
-  let mirrorWorkbookRoutinesInBackground: jest.Mock;
   let deleteRoutineScheduleByFilePath: jest.Mock;
   let deleteOrphanedRoutineSchedules: jest.Mock;
   let findRoutineSchedules: jest.Mock;
@@ -140,7 +138,6 @@ describe('RoutineService', () => {
         Promise.resolve({ definition: definitionRow(filePath, content), outcome: 'created' }),
       );
     deleteDefinition = jest.fn().mockResolvedValue(true);
-    mirrorWorkbookRoutinesInBackground = jest.fn();
     deleteRoutineScheduleByFilePath = jest.fn().mockResolvedValue(undefined);
     deleteOrphanedRoutineSchedules = jest.fn().mockResolvedValue(undefined);
     findRoutineSchedules = jest.fn().mockResolvedValue([]);
@@ -162,9 +159,6 @@ describe('RoutineService', () => {
       upsertDefinition,
       deleteDefinition,
     } as unknown as RoutineDefinitionStoreService;
-    const routineGitMirror = {
-      mirrorWorkbookRoutinesInBackground,
-    } as unknown as RoutineGitMirrorService;
     const scheduleService = {
       deleteRoutineScheduleByFilePath,
       deleteOrphanedRoutineSchedules,
@@ -180,7 +174,6 @@ describe('RoutineService', () => {
     service = new RoutineService(
       db,
       routineDefinitionStore,
-      routineGitMirror,
       scheduleService,
       new RoutineParserService(),
       referenceValidator,
@@ -361,7 +354,7 @@ describe('RoutineService', () => {
   describe('createRoutineFile', () => {
     const VALID_YAML = 'name: Sched\nsteps:\n  - action: pull\n';
 
-    it('stores the definition, mirrors to git in the background, audit-logs, and returns the joined routine', async () => {
+    it('stores the definition, audit-logs, and returns the joined routine', async () => {
       getDefinition.mockResolvedValue(null); // does not already exist
 
       const routine = await service.createRoutineFile(
@@ -374,7 +367,6 @@ describe('RoutineService', () => {
         source: 'web',
         updatedByUserId: ACTOR.userId,
       });
-      expect(mirrorWorkbookRoutinesInBackground).toHaveBeenCalledWith(WORKBOOK_ID, ACTOR);
       // The schedule is managed via the Schedule API now — create touches no schedule rows.
       expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
       expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'create' }));
@@ -403,7 +395,6 @@ describe('RoutineService', () => {
         service.createRoutineFile(WORKBOOK_ID, { path: 'routines/dup.yaml', content: VALID_YAML }, ACTOR),
       ).rejects.toThrow(ConflictException);
       expect(upsertDefinition).not.toHaveBeenCalled();
-      expect(mirrorWorkbookRoutinesInBackground).not.toHaveBeenCalled();
     });
 
     it('throws BadRequest and writes nothing when the YAML is invalid', async () => {
@@ -449,7 +440,7 @@ describe('RoutineService', () => {
   });
 
   describe('updateRoutineFile', () => {
-    it('stores the new content, mirrors in the background, and does not touch the schedule', async () => {
+    it('stores the new content and does not touch the schedule', async () => {
       getDefinition.mockResolvedValue(definitionRow('routines/a.yaml', 'name: Old\nsteps:\n  - action: pull\n'));
 
       await service.updateRoutineFile(
@@ -464,7 +455,6 @@ describe('RoutineService', () => {
         'name: Manual\nsteps:\n  - action: pull\n',
         { source: 'web', updatedByUserId: ACTOR.userId },
       );
-      expect(mirrorWorkbookRoutinesInBackground).toHaveBeenCalledWith(WORKBOOK_ID, ACTOR);
       // Editing the routine file never touches the schedule — it is owned by the Schedule table.
       expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
       expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'update' }));
@@ -535,12 +525,11 @@ describe('RoutineService', () => {
         source: 'web',
         updatedByUserId: ACTOR.userId,
       });
-      expect(mirrorWorkbookRoutinesInBackground).toHaveBeenCalledTimes(1);
       expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'update' }));
       expect(routine).toMatchObject({ filePath: 'routines/run.yaml', name: 'New', parseError: null });
     });
 
-    it('writes nothing, mirrors nothing, and logs no audit event when the stored content is identical', async () => {
+    it('writes nothing and logs no audit event when the stored content is identical', async () => {
       getDefinition.mockResolvedValue(definitionRow('routines/run.yaml', NEW_YAML));
 
       const { routine, outcome } = await service.upsertRoutineFile(
@@ -551,7 +540,6 @@ describe('RoutineService', () => {
 
       expect(outcome).toBe('unchanged');
       expect(upsertDefinition).not.toHaveBeenCalled();
-      expect(mirrorWorkbookRoutinesInBackground).not.toHaveBeenCalled();
       expect(logEvent).not.toHaveBeenCalled();
       expect(routine).toMatchObject({ filePath: 'routines/run.yaml', name: 'New', parseError: null });
     });
@@ -567,13 +555,12 @@ describe('RoutineService', () => {
   });
 
   describe('deleteRoutineFile', () => {
-    it('deletes the definition and its schedule, mirrors in the background, and audit-logs', async () => {
+    it('deletes the definition and its schedule, and audit-logs', async () => {
       deleteDefinition.mockResolvedValue(true);
 
       await service.deleteRoutineFile(WORKBOOK_ID, 'routines/a.yaml', ACTOR);
 
       expect(deleteDefinition).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/a.yaml');
-      expect(mirrorWorkbookRoutinesInBackground).toHaveBeenCalledWith(WORKBOOK_ID, ACTOR);
       expect(deleteRoutineScheduleByFilePath).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/a.yaml');
       expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'delete' }));
     });
@@ -585,7 +572,6 @@ describe('RoutineService', () => {
         NotFoundException,
       );
       expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
-      expect(mirrorWorkbookRoutinesInBackground).not.toHaveBeenCalled();
     });
   });
 
