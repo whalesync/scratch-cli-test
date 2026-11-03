@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import type { DbJob } from '@prisma/client';
 import type { WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
@@ -289,5 +290,82 @@ describe('JobService.updateJobProgressAndCheckCancel', () => {
       data: { progress },
       select: { cancelRequestedAt: true },
     });
+  });
+});
+
+describe('JobService.systemCancelJob', () => {
+  const TIMEOUT_REASON = 'Canceled: routine step timed out after 60s';
+  let service: JobService;
+  let mockUpdateMany: jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    mockUpdateMany = jest.fn();
+
+    const db = {
+      client: {
+        dbJob: { updateMany: mockUpdateMany },
+      },
+    } as unknown as DbService;
+
+    const config = {
+      getRedisHost: () => 'localhost',
+      getRedisPort: () => 6379,
+      getRedisPassword: () => undefined,
+    } as unknown as ScratchConfigService;
+
+    service = new JobService(db, config);
+  });
+
+  it('flags a running job canceled with the given reason and signals its worker, with no actor check', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    mockGetJob.mockResolvedValue(makeBullJob('active'));
+
+    await service.systemCancelJob(makeDbJob() as unknown as DbJob, TIMEOUT_REASON);
+
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'job_1', status: { in: ['created', 'active'] } },
+      data: {
+        status: 'canceled',
+        cancelRequestedAt: expect.any(Date),
+        finishedOn: expect.any(Date),
+        error: TIMEOUT_REASON,
+      },
+    });
+    expect(mockPublish).toHaveBeenCalledWith(
+      `job-cancel:${BULL_JOB_ID}`,
+      JSON.stringify({ action: 'cancel', jobId: BULL_JOB_ID }),
+    );
+  });
+
+  it('removes a job still waiting in the queue so no worker ever starts it', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const waitingBullJob = { ...makeBullJob('waiting'), remove: jest.fn().mockResolvedValue(undefined) };
+    mockGetJob.mockResolvedValue(waitingBullJob);
+
+    await service.systemCancelJob(makeDbJob({ status: 'created' }) as unknown as DbJob, TIMEOUT_REASON);
+
+    expect(waitingBullJob.remove).toHaveBeenCalledTimes(1);
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it('leaves a job alone when it finished after the caller read it, keeping its real outcome', async () => {
+    // The caller saw the job active, but it completed before the cancel landed: the guarded update matches nothing.
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+
+    await service.systemCancelJob(makeDbJob({ status: 'active' }) as unknown as DbJob, TIMEOUT_REASON);
+
+    expect(mockGetJob).not.toHaveBeenCalled();
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op for a job the caller already read as terminal', async () => {
+    for (const status of ['completed', 'failed', 'canceled']) {
+      await service.systemCancelJob(makeDbJob({ status }) as unknown as DbJob, TIMEOUT_REASON);
+    }
+
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+    expect(mockGetJob).not.toHaveBeenCalled();
   });
 });

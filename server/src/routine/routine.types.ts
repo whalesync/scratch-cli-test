@@ -4,16 +4,20 @@ import { z } from 'zod';
 /**
  * Maximum per-step timeout (seconds), keyed by action. Validated here, and enforced by
  * RoutineExecutorService: an unspecified `timeout` defaults to this per-action max, and a
- * specified one is capped at it. Pull actions get a longer ceiling than sync/plan actions
- * (large full pulls take longer).
+ * specified one is capped at it. A step whose job outlives its timeout has the job cancelled and
+ * the run failed, so each ceiling must clear the longest step a healthy run legitimately takes.
+ *
+ * Sized from prod (DEV-12713): large Live Exports (140k–190k records) run full source pulls of
+ * 2.5–5 h every night and publishes of up to ~3 h, and a sync has taken 26 min. The ceilings stay
+ * well under a day so a hung step still frees the routine before its next daily run.
  */
 export const ROUTINE_STEP_TIMEOUT_MAX_SECONDS: Record<RoutineAction, number> = {
   // Pre-flight cleanup is a fast local git reset per connection — a tight ceiling is plenty.
   [RoutineAction.DISCARD_PENDING_CHANGES]: 10 * 60,
-  [RoutineAction.PULL]: 60 * 60,
-  [RoutineAction.SYNC]: 30 * 60,
-  [RoutineAction.PUBLISH_PLAN]: 30 * 60,
-  [RoutineAction.PUBLISH]: 60 * 60,
+  [RoutineAction.PULL]: 12 * 60 * 60,
+  [RoutineAction.SYNC]: 60 * 60,
+  [RoutineAction.PUBLISH_PLAN]: 60 * 60,
+  [RoutineAction.PUBLISH]: 6 * 60 * 60,
 };
 
 /**

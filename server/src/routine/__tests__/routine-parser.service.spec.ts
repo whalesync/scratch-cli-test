@@ -1,6 +1,6 @@
 import { RoutineAction } from '@spinner/shared-types';
 import { RoutineParserService } from '../routine-parser.service';
-import { ParsedRoutine, RoutineParseResult } from '../routine.types';
+import { ParsedRoutine, ROUTINE_STEP_TIMEOUT_MAX_SECONDS, RoutineParseResult } from '../routine.types';
 
 function expectRoutine(result: RoutineParseResult): ParsedRoutine {
   if ('error' in result) {
@@ -234,9 +234,18 @@ steps:
   });
 
   it('rejects a per-step timeout above the action maximum', () => {
-    // pull max is 3600s; 99999 exceeds it.
-    const error = expectError(parser.parse('name: Slow\nsteps:\n  - action: pull\n    timeout: 99999\n'));
+    const timeoutOneSecondOverThePullMaximum = ROUTINE_STEP_TIMEOUT_MAX_SECONDS[RoutineAction.PULL] + 1;
+    const error = expectError(
+      parser.parse(`name: Slow\nsteps:\n  - action: pull\n    timeout: ${timeoutOneSecondOverThePullMaximum}\n`),
+    );
     expect(error).toMatch(/timeout/);
+  });
+
+  it('accepts a per-step timeout equal to the action maximum', () => {
+    // Large Live Exports run multi-hour full pulls (DEV-12713), so the pull ceiling is 12 hours.
+    expect(ROUTINE_STEP_TIMEOUT_MAX_SECONDS[RoutineAction.PULL]).toBe(12 * 60 * 60);
+    const routine = expectRoutine(parser.parse('name: Slow\nsteps:\n  - action: pull\n    timeout: 43200\n'));
+    expect(routine.steps[0].timeout).toBe(43200);
   });
 
   it('rejects an unknown top-level key (strict)', () => {

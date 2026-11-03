@@ -1,5 +1,5 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, RoutineRun as PrismaRoutineRun, RoutineRunStep as PrismaRoutineRunStep } from '@prisma/client';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { DbJob, Prisma, RoutineRun as PrismaRoutineRun, RoutineRunStep as PrismaRoutineRunStep } from '@prisma/client';
 import {
   createRoutineRunId,
   createRoutineRunStepId,
@@ -22,6 +22,8 @@ import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { LiveExportRunLifecycleService } from 'src/live-export-run-store/live-export-run-lifecycle.service';
 import { WSLogger } from 'src/logger';
+import { CustomMetric } from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { RunCountService } from 'src/run-count/run-count.service';
 import { Actor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -68,8 +70,10 @@ type RoutineStepOutcome =
     }
   | { kind: 'failed'; error: string }
   | { kind: 'canceled' }
-  // Another driver already owns this step (it won the per-step claim) but hasn't recorded a job id
-  // yet — yield to it. The reaper resumes the run if that driver dies.
+  // Stop driving and leave the run to RoutineRunReaperService. Either another driver already owns this step (it
+  // won the per-step claim) but hasn't recorded a job id yet — the reaper resumes the run if that driver dies — or
+  // this driver's wait on the step's job ended before the timeout with the job unfinished, and the reaper resumes
+  // the run once that job is terminal.
   | { kind: 'yield' };
 
 /** Per-trigger overrides applied to the run's step snapshot (see {@link RoutineExecutorService.triggerRun}). */
@@ -118,6 +122,7 @@ export class RoutineExecutorService {
     private readonly runCountService: RunCountService,
     private readonly liveExportRunLifecycle: LiveExportRunLifecycleService,
     private readonly whalesyncRunNotifier: WhalesyncRunNotifierService,
+    @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {}
 
   /**
@@ -433,25 +438,93 @@ export class RoutineExecutorService {
     }
 
     const timeoutMs = this.resolveTimeoutMs(step);
+    // Monotonic, so a wall-clock adjustment can't make a wait that ended early pass for a timeout.
+    const waitForStepJobStartedAtMs = performance.now();
     try {
       const job = await this.bullEnqueuer.getJob(bullJobId);
       if (job) {
         await job.waitUntilFinished(this.bullEnqueuer.getQueueEvents(), timeoutMs);
       }
     } catch {
-      // waitUntilFinished rejects on job failure OR on its ttl. Disambiguate via the DbJob below —
-      // the DbJob row (durable in Postgres) is the source of truth, not the evictable BullMQ object.
+      // waitUntilFinished rejects on job failure, on its ttl, OR on a Redis error. Disambiguate via the DbJob
+      // below — the DbJob row (durable in Postgres) is the source of truth, not the evictable BullMQ object.
     }
 
     const dbJob = await this.jobService.getJobByBullJobId(bullJobId);
-    if (!dbJob || !TERMINAL_JOB_STATUSES.includes(dbJob.status)) {
-      // Not terminal after the wait returned/threw ⇒ timed out. ALWAYS cancel before failing the run
-      // so a long publish stops shipping rather than running on past the run's failure.
-      await this.jobService.cancelJob(bullJobId, actor);
-      return { kind: 'failed', error: `Step timed out after ${Math.round(timeoutMs / 1000)}s` };
+    if (!dbJob) {
+      // The enqueuer writes the DbJob before the BullMQ job, so a missing row was deleted (job cleanup ages out
+      // terminal jobs). Nothing is left to wait for or cancel, so fail the step rather than wait on it forever.
+      return { kind: 'failed', error: `Step job ${bullJobId} no longer exists` };
+    }
+    if (TERMINAL_JOB_STATUSES.includes(dbJob.status)) {
+      return this.classifyOutcome(step, dbJob);
     }
 
-    return this.classifyOutcome(step, dbJob);
+    const waitForStepJobElapsedMs = performance.now() - waitForStepJobStartedAtMs;
+    if (waitForStepJobElapsedMs < timeoutMs) {
+      // The wait ended before the timeout with the job unfinished: a Redis error, a BullMQ job that can't be read,
+      // or BullMQ failing a stalled job the worker never recorded. That is not a timeout, so never cancel a job
+      // that may still be healthy. Stop driving instead; the reaper resumes the run once the job is terminal.
+      WSLogger.warn({
+        source: 'RoutineExecutorService.runStep',
+        message: `Lost track of routine step ${step.stepIndex}'s job before its timeout; leaving run ${run.id} to the reaper`,
+        runId: run.id,
+        workbookId: run.workbookId,
+        stepIndex: step.stepIndex,
+        action: step.action,
+        bullJobId,
+        dbJobStatus: dbJob.status,
+        waitForStepJobElapsedMs: Math.round(waitForStepJobElapsedMs),
+      });
+      this.metricsService.logValue(CustomMetric.ROUTINE_STEP_JOB_WAIT_ENDED_BEFORE_TIMEOUT, 1);
+      return { kind: 'yield' };
+    }
+
+    // Timed out. ALWAYS cancel before failing the run so a long publish stops shipping rather than running on
+    // past the run's failure.
+    const timeoutSeconds = Math.round(timeoutMs / 1000);
+    await this.cancelJobOfTimedOutStep(run, step, dbJob, timeoutSeconds);
+    return { kind: 'failed', error: `Step timed out after ${timeoutSeconds}s` };
+  }
+
+  /**
+   * Cancels the job of a step that outlived its timeout. Cancels as the system: the run's actor carries no
+   * workspace permissions, so the access-checked {@link JobService.cancelJob} would always refuse it (DEV-12713).
+   * Never throws — the caller fails the run either way, and a run left `running` would sit there until its job
+   * finished on its own. `systemCancelJob` writes the DbJob's cancel flag before it touches Redis, so even a Redis
+   * failure after that still stops the worker at its next checkpoint.
+   */
+  private async cancelJobOfTimedOutStep(
+    run: PrismaRoutineRun,
+    step: PrismaRoutineRunStep,
+    dbJob: DbJob,
+    timeoutSeconds: number,
+  ): Promise<void> {
+    const timedOutStepLogFields = {
+      runId: run.id,
+      workbookId: run.workbookId,
+      stepIndex: step.stepIndex,
+      action: step.action,
+      bullJobId: dbJob.bullJobId,
+      timeoutSeconds,
+    };
+    WSLogger.warn({
+      source: 'RoutineExecutorService.cancelJobOfTimedOutStep',
+      message: `Routine step ${step.stepIndex} timed out after ${timeoutSeconds}s; cancelling its job and failing run ${run.id}`,
+      ...timedOutStepLogFields,
+    });
+    this.metricsService.logValue(CustomMetric.ROUTINE_STEP_TIMED_OUT, 1);
+
+    try {
+      await this.jobService.systemCancelJob(dbJob, `Canceled: routine step timed out after ${timeoutSeconds}s`);
+    } catch (error) {
+      WSLogger.error({
+        source: 'RoutineExecutorService.cancelJobOfTimedOutStep',
+        message: `Failed to cancel the job of timed-out routine step ${step.stepIndex}; failing run ${run.id} anyway`,
+        error,
+        ...timedOutStepLogFields,
+      });
+    }
   }
 
   /** Maps a step's action to the right enqueuer, resolving its folder/connection/sync against the context. */

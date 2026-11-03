@@ -83,7 +83,7 @@ describe('ConnectionQuiesceService', () => {
       .mockResolvedValueOnce([]);
 
     const summary = await service.quiesceConnection(WORKBOOK_ID, CONNECTOR_ACCOUNT_ID, { drainPollIntervalMs: 1 });
-    expect(jobService.systemCancelJob).toHaveBeenCalledWith(job);
+    expect(jobService.systemCancelJob).toHaveBeenCalledWith(job, 'Canceled by connection migration');
     expect(summary.cancelledJobs).toBe(1);
   });
 

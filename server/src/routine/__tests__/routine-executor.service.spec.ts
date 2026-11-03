@@ -6,6 +6,8 @@ import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { LiveExportRunLifecycleService } from 'src/live-export-run-store/live-export-run-lifecycle.service';
+import { CustomMetric } from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { RunCountService } from 'src/run-count/run-count.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { RoutineDefinitionStoreService } from '../routine-definition-store.service';
@@ -200,6 +202,8 @@ function makeService(deps: {
   context?: RoutineValidationContext;
   /** Pass `{ enqueueForRun: jest.fn() }` to assert on the Whalesync failure-notification hook. */
   whalesyncRunNotifier?: { enqueueForRun: jest.Mock };
+  /** Pass `{ logValue: jest.fn() }` to assert on the step-timeout metrics. */
+  metricsService?: { logValue: jest.Mock };
 }): RoutineExecutorService {
   const referenceValidator = {
     loadContext: jest.fn().mockResolvedValue(deps.context ?? singleFolderContext()),
@@ -217,6 +221,7 @@ function makeService(deps: {
     { recordRoutineRun: jest.fn() } as unknown as RunCountService,
     classicLiveExportRunLifecycle(),
     (deps.whalesyncRunNotifier ?? { enqueueForRun: jest.fn() }) as unknown as WhalesyncRunNotifierService,
+    (deps.metricsService ?? { logValue: jest.fn() }) as unknown as CustomMetricsService,
   );
 }
 
@@ -240,6 +245,21 @@ function finishedJob() {
  */
 const dbJobResult = (fields: { status: string; error: string | null; progress: unknown }): DbJob =>
   fields as unknown as DbJob;
+
+/**
+ * Fakes the monotonic clock the executor times a step's wait with. It stands still until `advanceByMs` moves it, so a
+ * test decides whether a wait used up the step's timeout without waiting in real time. Restore with
+ * `jest.restoreAllMocks()`.
+ */
+function fakeMonotonicClock(): { advanceByMs: (elapsedMs: number) => void } {
+  let fakeNowMs = 0;
+  jest.spyOn(performance, 'now').mockImplementation(() => fakeNowMs);
+  return {
+    advanceByMs: (elapsedMs: number) => {
+      fakeNowMs += elapsedMs;
+    },
+  };
+}
 
 describe('RoutineExecutorService.execute', () => {
   function baseRun(overrides: Partial<FakeRun> = {}): FakeRun {
@@ -506,36 +526,149 @@ describe('RoutineExecutorService.execute', () => {
     expect(enqueueForRun).not.toHaveBeenCalled();
   });
 
-  it('cancels the in-flight job and fails the run on a step timeout', async () => {
-    const run = baseRun();
-    const steps = [makeStep(0, RoutineAction.PULL)];
-    const db = makeFakeDb(run, steps);
+  describe('step timeout (DEV-12713)', () => {
+    const STEP_TIMEOUT_SECONDS = 60;
+    const STEP_TIMEOUT_MS = STEP_TIMEOUT_SECONDS * 1000;
 
-    const bullEnqueuer = {
-      enqueuePullLinkedFolderFilesJob: jest.fn().mockResolvedValue({ id: 'pull-job' }),
-      // waitUntilFinished rejects (its ttl) and the DbJob is still active ⇒ timeout.
-      getJob: jest
-        .fn()
-        .mockResolvedValue({ id: 'pull-job', waitUntilFinished: jest.fn().mockRejectedValue(new Error('timed out')) }),
-      getQueueEvents: jest.fn().mockReturnValue({}),
-    };
-    const jobService = {
-      getJobByBullJobId: jest.fn().mockResolvedValue({ status: 'active', error: null, progress: null }),
-      cancelJob: jest.fn().mockResolvedValue({ success: true, message: 'ok' }),
-    };
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
 
-    const enqueueForRun = jest.fn();
-    const service = makeService({ db, bullEnqueuer, jobService, whalesyncRunNotifier: { enqueueForRun } });
-    await service.execute(RUN_ID);
+    /** A pull step whose job is still running when the executor's wait on it returns. */
+    function stillRunningPullStep(waitUntilFinished: jest.Mock) {
+      const run = baseRun();
+      const steps = [makeStep(0, RoutineAction.PULL, { timeoutSeconds: STEP_TIMEOUT_SECONDS })];
+      const db = makeFakeDb(run, steps);
+      const bullEnqueuer = {
+        enqueuePullLinkedFolderFilesJob: jest.fn().mockResolvedValue({ id: 'pull-job' }),
+        getJob: jest.fn().mockResolvedValue({ id: 'pull-job', waitUntilFinished }),
+        getQueueEvents: jest.fn().mockReturnValue({}),
+      };
+      const stillActivePullDbJob = {
+        id: 'job_pull',
+        bullJobId: 'pull-job',
+        status: 'active',
+        error: null,
+        progress: null,
+      } as unknown as DbJob;
+      return { run, steps, db, bullEnqueuer, stillActivePullDbJob };
+    }
 
-    expect(jobService.cancelJob).toHaveBeenCalledWith('pull-job', expect.anything());
-    expect(steps[0].status).toBe('failed');
-    expect(steps[0].error).toMatch(/timed out/i);
-    expect(run.status).toBe('failed');
-    // A timeout flows through the same failure path, so resultSummary gets the clean timeout message.
-    expect(run.resultSummary).toMatch(/timed out/i);
-    // ...and is queued for Whalesync like any other failure.
-    expect(enqueueForRun).toHaveBeenCalledWith(RUN_ID);
+    it('cancels the timed-out job as the system, never through the access-checked cancel, and fails the run', async () => {
+      const monotonicClock = fakeMonotonicClock();
+      // waitUntilFinished rejects on its ttl once the whole timeout has passed, and the DbJob is still active.
+      const waitUntilFinished = jest.fn(async () => {
+        monotonicClock.advanceByMs(STEP_TIMEOUT_MS);
+        throw new Error('Job wait pull timed out before finishing');
+      });
+      const { run, steps, db, bullEnqueuer, stillActivePullDbJob } = stillRunningPullStep(waitUntilFinished);
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(stillActivePullDbJob),
+        systemCancelJob: jest.fn().mockResolvedValue(undefined),
+        // The run's actor carries no workspace permissions, so the real cancelJob throws ForbiddenException for it —
+        // the crash this ticket is about. The timeout path must never reach it.
+        cancelJob: jest.fn().mockRejectedValue(new Error('You do not have access to this job')),
+      };
+
+      const enqueueForRun = jest.fn();
+      const metricsService = { logValue: jest.fn() };
+      const service = makeService({
+        db,
+        bullEnqueuer,
+        jobService,
+        whalesyncRunNotifier: { enqueueForRun },
+        metricsService,
+      });
+      await service.execute(RUN_ID);
+
+      expect(jobService.systemCancelJob).toHaveBeenCalledWith(
+        stillActivePullDbJob,
+        'Canceled: routine step timed out after 60s',
+      );
+      expect(jobService.cancelJob).not.toHaveBeenCalled();
+      expect(steps[0].status).toBe('failed');
+      expect(steps[0].error).toBe('Step timed out after 60s');
+      expect(run.status).toBe('failed');
+      // A timeout flows through the same failure path, so resultSummary gets the clean timeout message.
+      expect(run.resultSummary).toBe('Step timed out after 60s');
+      // ...and is queued for Whalesync like any other failure.
+      expect(enqueueForRun).toHaveBeenCalledWith(RUN_ID);
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.ROUTINE_STEP_TIMED_OUT, 1);
+    });
+
+    it('still fails the run when cancelling the timed-out job throws', async () => {
+      const monotonicClock = fakeMonotonicClock();
+      const waitUntilFinished = jest.fn(async () => {
+        monotonicClock.advanceByMs(STEP_TIMEOUT_MS);
+        throw new Error('Job wait pull timed out before finishing');
+      });
+      const { run, steps, db, bullEnqueuer, stillActivePullDbJob } = stillRunningPullStep(waitUntilFinished);
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(stillActivePullDbJob),
+        systemCancelJob: jest.fn().mockRejectedValue(new Error('Redis connection is closed')),
+        cancelJob: jest.fn(),
+      };
+
+      const service = makeService({ db, bullEnqueuer, jobService });
+      await expect(service.execute(RUN_ID)).resolves.toBeUndefined();
+
+      expect(jobService.systemCancelJob).toHaveBeenCalledTimes(1);
+      expect(steps[0].status).toBe('failed');
+      expect(run.status).toBe('failed');
+    });
+
+    it('leaves the run to the reaper, without cancelling, when the wait ends before the timeout', async () => {
+      // No time passes: the wait rejects straight away (a Redis error) while the job is still active.
+      fakeMonotonicClock();
+      const waitUntilFinished = jest.fn().mockRejectedValue(new Error('Connection is closed.'));
+      const { run, steps, db, bullEnqueuer, stillActivePullDbJob } = stillRunningPullStep(waitUntilFinished);
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(stillActivePullDbJob),
+        systemCancelJob: jest.fn(),
+        cancelJob: jest.fn(),
+      };
+
+      const enqueueForRun = jest.fn();
+      const metricsService = { logValue: jest.fn() };
+      const service = makeService({
+        db,
+        bullEnqueuer,
+        jobService,
+        whalesyncRunNotifier: { enqueueForRun },
+        metricsService,
+      });
+      await service.execute(RUN_ID);
+
+      expect(jobService.systemCancelJob).not.toHaveBeenCalled();
+      expect(jobService.cancelJob).not.toHaveBeenCalled();
+      // Still running with its job recorded, so RoutineRunReaperService resumes it once the job is terminal.
+      expect(steps[0].status).toBe('running');
+      expect(steps[0].jobId).toBe('pull-job');
+      expect(run.status).toBe('running');
+      expect(enqueueForRun).not.toHaveBeenCalled();
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.ROUTINE_STEP_JOB_WAIT_ENDED_BEFORE_TIMEOUT, 1);
+      expect(metricsService.logValue).not.toHaveBeenCalledWith(CustomMetric.ROUTINE_STEP_TIMED_OUT, 1);
+    });
+
+    it('fails the step without cancelling when its job record no longer exists', async () => {
+      fakeMonotonicClock();
+      const waitUntilFinished = jest.fn().mockResolvedValue(undefined);
+      const { run, steps, db, bullEnqueuer } = stillRunningPullStep(waitUntilFinished);
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(null),
+        systemCancelJob: jest.fn(),
+        cancelJob: jest.fn(),
+      };
+
+      const service = makeService({ db, bullEnqueuer, jobService });
+      await service.execute(RUN_ID);
+
+      expect(jobService.systemCancelJob).not.toHaveBeenCalled();
+      expect(jobService.cancelJob).not.toHaveBeenCalled();
+      expect(steps[0].status).toBe('failed');
+      expect(steps[0].error).toBe('Step job pull-job no longer exists');
+      expect(run.status).toBe('failed');
+    });
   });
 
   it('completes a publish step WITH a warning (not a failure) when records were rejected', async () => {
@@ -1331,6 +1464,7 @@ describe('RoutineExecutorService.triggerRun', () => {
       { recordRoutineRun: jest.fn() } as unknown as RunCountService,
       classicLiveExportRunLifecycle(),
       { enqueueForRun: jest.fn() } as unknown as WhalesyncRunNotifierService,
+      { logValue: jest.fn() } as unknown as CustomMetricsService,
     );
   }
 

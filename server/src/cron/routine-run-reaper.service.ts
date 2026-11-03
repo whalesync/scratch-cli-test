@@ -109,7 +109,7 @@ export class RoutineRunReaperService {
 
     const dbJob = await this.jobService.getJobByBullJobId(step.jobId);
     if (!dbJob) {
-      // Job row gone — the executor's re-attach branch re-enqueues.
+      // Job row gone (aged out by job cleanup) — the executor fails the step, since nothing is left to wait on.
       return true;
     }
     if (!TERMINAL_JOB_STATUSES.includes(dbJob.status)) {

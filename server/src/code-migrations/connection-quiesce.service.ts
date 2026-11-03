@@ -160,7 +160,7 @@ export class ConnectionQuiesceService {
         job.data as unknown as JobData,
       );
       if (connectorAccountIds.includes(connectorAccountId)) {
-        await this.jobService.systemCancelJob(job);
+        await this.jobService.systemCancelJob(job, 'Canceled by connection migration');
         cancelled += 1;
       }
     }

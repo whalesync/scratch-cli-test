@@ -67,6 +67,13 @@ export enum CustomMetric {
   JOB_RECONCILED_ON_FAILED_EVENT = 'job_reconciled_on_failed_event',
   ROUTINE_RUN_REAPED = 'routine_run_reaped',
 
+  // Routine step timeouts (DEV-12713). `TIMED_OUT` fires when a step's job outlives the step's timeout, so the
+  // executor cancels the job and fails the run. `JOB_WAIT_ENDED_BEFORE_TIMEOUT` fires when the executor's wait on
+  // a step's job ends early with the job unfinished (a Redis error, or BullMQ failing a stalled job the worker never
+  // recorded); the executor then leaves the run to RoutineRunReaperService rather than cancel a job that may be fine.
+  ROUTINE_STEP_TIMED_OUT = 'routine_step_timed_out',
+  ROUTINE_STEP_JOB_WAIT_ENDED_BEFORE_TIMEOUT = 'routine_step_job_wait_ended_before_timeout',
+
   // Graceful-shutdown drain accounting (DEV-11184). Exactly one of these fires per worker instance on
   // SIGTERM (Cloud Run deploy / scale-down). The DRAINED:TIMED_OUT ratio over deploys is the chartable
   // signal that graceful shutdown is working and that deploy-induced job orphaning trends to zero.
@@ -195,6 +202,8 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_REAPED_STALE_CREATED:
     case CustomMetric.JOB_RECONCILED_ON_FAILED_EVENT:
     case CustomMetric.ROUTINE_RUN_REAPED:
+    case CustomMetric.ROUTINE_STEP_TIMED_OUT:
+    case CustomMetric.ROUTINE_STEP_JOB_WAIT_ENDED_BEFORE_TIMEOUT:
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
     case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
@@ -280,6 +289,8 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.JOB_REAPED_STALE_CREATED:
     case CustomMetric.JOB_RECONCILED_ON_FAILED_EVENT:
     case CustomMetric.ROUTINE_RUN_REAPED:
+    case CustomMetric.ROUTINE_STEP_TIMED_OUT:
+    case CustomMetric.ROUTINE_STEP_JOB_WAIT_ENDED_BEFORE_TIMEOUT:
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
     case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:

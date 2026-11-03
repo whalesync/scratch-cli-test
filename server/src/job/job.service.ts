@@ -498,21 +498,26 @@ export class JobService {
   }
 
   /**
-   * DEV-9698 (T4) — system-level cancel of a single job, bypassing the per-actor
-   * access check in {@link cancelJob} (callers are already privileged — the drain
-   * runs inside the admin-gated migration). Marks the DB row canceled, signals a
-   * running worker to abort via the fast-path pub/sub channel, AND removes the job
-   * from the BullMQ queue if it is still waiting/delayed so a worker can't pick it
-   * up after the connection is locked. Idempotent: a job already terminal is a no-op.
+   * System-level cancel of a single job, bypassing the per-actor access check in {@link cancelJob}.
+   * Callers are already privileged and act for the system, not for a user:
+   * - the connection-migration quiesce drain (DEV-9698), which runs inside the admin-gated migration;
+   * - the routine executor, when a step's job outlives the step's timeout (DEV-12713). Its run actor
+   *   carries no workspace permissions, so {@link cancelJob} would always refuse it.
+   *
+   * Marks the DB row canceled with `reason` as its error, signals a running worker to abort via the
+   * fast-path pub/sub channel, AND removes the job from the BullMQ queue if it is still waiting/delayed
+   * so no worker picks it up later. Idempotent: a job already terminal is a no-op — including one that
+   * finished after the caller read `dbJob`, which keeps its real outcome rather than being overwritten.
    */
-  async systemCancelJob(dbJob: DbJob): Promise<void> {
+  async systemCancelJob(dbJob: DbJob, reason: string): Promise<void> {
     if (['completed', 'failed', 'canceled'].includes(dbJob.status)) return;
 
     const now = new Date();
-    await this.db.client.dbJob.update({
-      where: { id: dbJob.id },
-      data: { status: 'canceled', cancelRequestedAt: now, finishedOn: now, error: 'Canceled by connection migration' },
+    const canceledWhileStillCreatedOrActive = await this.db.client.dbJob.updateMany({
+      where: { id: dbJob.id, status: { in: ['created', 'active'] } },
+      data: { status: 'canceled', cancelRequestedAt: now, finishedOn: now, error: reason },
     });
+    if (canceledWhileStillCreatedOrActive.count !== 1) return;
 
     if (!dbJob.bullJobId) return;
 
