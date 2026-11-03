@@ -2,6 +2,8 @@
 
 Guide for the two Google Cloud Monitoring alerts that fire to Slack **`#feed-gcp-alerts`** when the Scratch **download links stop working** — either on our own downloads page or at the underlying GitHub release source. Created for **DEV-11324** after the `app.scratch.md/downloads` links broke (2026-08-17) with no automated signal.
 
+> **Disabled in production since 2026-11-03.** These alerts misfired during prod releases, and Desktop/CLI downloads are no longer a priority now that Scratch mainly serves Live Export. Both toggles are now `false` in `envs/eu-production`, so the uptime checks and alert policies are gone. To bring them back, set both toggles to `true` and apply `envs/eu-production`. The rest of this runbook describes the alerts as they were when enabled.
+
 ## Context
 
 | Item | Value |
@@ -11,7 +13,7 @@ Guide for the two Google Cloud Monitoring alerts that fire to Slack **`#feed-gcp
 | Server endpoints | `GET https://api.scratch.md/desktop-release/latest` and `.../desktop-release/cli/latest` (unauthenticated), served by `server/src/desktop-release/desktop-release.service.ts` |
 | GitHub source | `whalesync/scratch-desktop` (desktop app) and `whalesync/scratch-cli` (the `scratchmd` CLI) — separate repos, one release channel each for prod (bare-semver tag, non-prerelease) |
 | Alert definitions | [`terraform/modules/env/monitoring.tf`](../../terraform/modules/env/monitoring.tf) — "Desktop / CLI download health (DEV-11324)" section (13 uptime checks — one per platform, since GCP allows only one content matcher per check — grouped into 5 per-surface alert policies) |
-| Toggles | `enable_desktop_release_monitoring` (our endpoints) and `enable_github_release_monitoring` (GitHub source) — both `true` in `envs/eu-production`, `false` in `envs/eu-test` |
+| Toggles | `enable_desktop_release_monitoring` (our endpoints) and `enable_github_release_monitoring` (GitHub source) — both `false` in `envs/eu-production` (disabled 2026-11-03) and `envs/eu-test` |
 | Notification | Cloud Monitoring → Slack `#feed-gcp-alerts` + email. Severity **WARNING** (no PagerDuty page); renotifies every 30 min |
 
 ## Why an HTTP-200 check is not enough

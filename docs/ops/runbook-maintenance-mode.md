@@ -104,7 +104,6 @@ Wait for `Lockdown is ON and the backends are stopped.` Then confirm from a netw
 ### During
 
 - Do the maintenance work.
-- On production, expect the `Download - desktop server endpoint broken` and `Download - CLI server endpoint broken` alerts (warn tier: Slack and email) about ten minutes in. They clear on their own.
 - On test, expect the post-deploy environment tests and the scheduled CLI tests to fail and post to Slack.
 - To change the bypass list mid-window, run `on --allow-ip <new list>` again. It resets the list, confirms the lockdown, and applies the new list.
 

@@ -61,10 +61,10 @@ module "eu_production" {
   enable_pagerduty_notifications = true
   enable_slack_notifications     = true
 
-  # Download-link health (DEV-11324): uptime checks + warn-tier alerts on the desktop/CLI download endpoints and the
-  # public GitHub release source. Prod only — test publishes the -test channel hourly and would be noisy.
-  enable_desktop_release_monitoring = true
-  enable_github_release_monitoring  = true
+  # Download-link health (DEV-11324): disabled 2026-11-03. It misfired during prod releases, and Desktop/CLI
+  # downloads are no longer a priority now that Scratch mainly serves Live Export. Set both to true to re-enable.
+  enable_desktop_release_monitoring = false
+  enable_github_release_monitoring  = false
 
   # Artifact Registry cleanup (DEV-11811).
   artifact_registry_cleanup_policy_dry_run          = false
