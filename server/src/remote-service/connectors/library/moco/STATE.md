@@ -17,6 +17,7 @@
 - **Provenance:** <user-provided | reused existing browser session | created by the skill on <date>>
 
 ## Metadata
+- **Connection edits (DEV-12723):** `domain` is a `connectionTarget`. A domain change must send the API Key again, or `PATCH …/connections/:id` returns 400 before anything is stored. `MocoApiClient` also refuses a domain that isn't one plain DNS label, so the API host is always `<domain>.mocoapp.com`.
 - **Type:** STATIC | DYNAMIC | STATIC · custom fields supported (mixed)
 - **Template version:** 2026-06-16 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
 - **Last run:** <YYYY-MM-DD> · scratchmd + gstack · Tester: <name>

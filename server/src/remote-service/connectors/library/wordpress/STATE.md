@@ -18,6 +18,7 @@
 
 ## Metadata
 
+- **Connection edits (DEV-12723):** `endpoint` is a `connectionTarget`. An edit that points the connection at a new site (a new host, scheme, or port) must send the Application password again, or `PATCH …/connections/:id` returns 400 before anything is stored. A path-only change on the same host needs no password. `createConnector` refuses an `endpoint` that isn't text. The edit still skips the create-time endpoint discovery, and the site host isn't checked for SSRF yet (DEV-12574).
 - **Type:** STATIC | DYNAMIC | STATIC · custom fields supported (mixed)
 - **Template version:** 2026-06-16 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
 - **Last run:** <YYYY-MM-DD> · scratchmd + gstack · Tester: <name>

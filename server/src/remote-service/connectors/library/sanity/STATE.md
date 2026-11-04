@@ -17,6 +17,7 @@
 
 ## Metadata
 
+- **Connection edits (DEV-12723):** `sanityProjectId` is a `connectionTarget`. A project ID change must send the API Token again, or `PATCH …/connections/:id` returns 400 before anything is stored. `SanityApiClient` refuses any project ID that isn't one plain DNS label before building a host or path from it (`dataClientForProject`, `listDatasets`). That covers both the connection's Project ID and a folder's table id (`[projectId, dataset, type]`), so the token only ever goes to `<projectId>.api.sanity.io`.
 - **Type:** DYNAMIC (user-defined document types; every field is user-defined — the Content Lake is schemaless)
 - **Template version:** 2026-06-18
 - **Last run:** 2026-07-31 · scaffold + live auth via integration spec · Tester: Claude (with Ryder)

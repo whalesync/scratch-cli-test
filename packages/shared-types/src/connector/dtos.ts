@@ -62,6 +62,19 @@ export interface ConnectorSettingDefinition {
    */
   extrasKey?: string;
   /**
+   * Credential fields only: the field's value decides WHERE the connection sends its credentials. That covers a site
+   * or API URL, a host, and a subdomain or project id that becomes part of the host (WordPress's site URL, Shopify's
+   * shop domain). Set `false` on a field whose name suggests a target but isn't one (Framer's project URL only picks a
+   * project); a registry test makes every URL-, domain-, and host-like field say which.
+   *
+   * An edit that points an existing connection at a target it hasn't used before must send the connection's secret
+   * fields (`type: 'password'`) again in the same request, or the server refuses it (DEV-12723). So a saved secret is
+   * only ever sent to the address it was entered for. The server reads the field's value from the stored credentials,
+   * or from `ConnectorAccount.extras` under the same key (Shopify keeps its shop domain there). Edit forms use the flag
+   * to ask for the secrets up front, via {@link resolveSecretFieldsToReenterForConnectionTargetEdit}.
+   */
+  connectionTarget?: boolean;
+  /**
    * `field-select` only: restricts the picker to the folder's schema fields
    * whose JSON Schema `format` is one of these values — e.g. `['date-time']` to
    * offer only timestamp columns for a last-modified-field picker. A nullable

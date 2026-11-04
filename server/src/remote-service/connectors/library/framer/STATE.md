@@ -17,6 +17,7 @@
 - **Provenance:** user-provided (account + API key supplied by Ivan on 2026-06-18).
 
 ## Metadata
+- **Connection edits (DEV-12723):** `projectUrl` is declared `connectionTarget: false`. The framer-api SDK (0.1.16) only reads the project id from it and always connects to `wss://api.framer.com`, so changing it can't send the API key to another host.
 - **Type:** DYNAMIC — user-defined CMS Collections (tables) with user-defined fields. Field *types* are a fixed finite enum (see field-types table); which fields exist is discovered per-collection via `getFields()`.
 - **Template version:** 2026-06-18
 - **Last run:** 2026-06-19 · scratchmd + gstack · Tester: Claude (connector-build)

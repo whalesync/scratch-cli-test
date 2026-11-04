@@ -46,6 +46,7 @@ import { ConnectorsService } from '../connectors/connectors.service';
 import {
   getConnectorCurrentVersion,
   getServiceAdvancedSettings,
+  getServiceCredentialFields,
   getServiceDisplayName,
   getServiceMetadata,
 } from '../connectors/display-names';
@@ -56,6 +57,7 @@ import {
   isUserFriendlyError,
 } from '../connectors/error';
 import { probeAuthOnly } from '../connectors/library/generic-api/generic-api-probe';
+import { assertEditResendsSecretsWhenItAddsAConnectionTarget } from './connection-target-edit-guard';
 import { ApiQuotaResponse } from './entities/api-quota.entity';
 import { TableList, TableSearchResult } from './entities/table-list.entity';
 import { TableSchemaPreview } from './entities/table-schema-preview.entity';
@@ -172,6 +174,25 @@ function assertNoUserProvidedCredentialKeyNamesAConnectorAccountColumn(userProvi
       `Connection credentials can't use these reserved keys: ${credentialKeysNamingAConnectorAccountColumn.join(', ')}`,
     );
   }
+}
+
+/**
+ * Refuse a credential edit on an OAuth connection, before anything is parsed or stored. The server writes those
+ * credentials: the OAuth tokens and the install, data center, or project details kept with them (Wix's install id,
+ * Supabase's projects). Merging an edit over them could point the connection at another host or tenant. No client edits
+ * them; reconnecting replaces them (DEV-12723).
+ *
+ * Every other connection holds credentials its user entered, including the deprecated `API_KEY` type (the column
+ * default from 2025-09-02 to 2025-10-22, never backfilled), so it keeps taking credential edits.
+ */
+function assertCredentialEditIsNotForAnOAuthConnection(
+  authType: AuthType,
+  userProvidedParams: object | undefined,
+): void {
+  if (authType !== AuthType.OAUTH || Object.keys(userProvidedParams ?? {}).length === 0) {
+    return;
+  }
+  throw new BadRequestException("This connection's credentials can't be edited here. Reconnect it instead.");
 }
 
 @Injectable()
@@ -502,11 +523,12 @@ export class ConnectorAccountService {
     }
 
     assertNoUserProvidedCredentialKeyNamesAConnectorAccountColumn(updateDto.userProvidedParams);
+    assertCredentialEditIsNotForAnOAuthConnection(accountReadBeforeEdit.authType, updateDto.userProvidedParams);
 
-    // A PATCH that doesn't edit credentials (a rename, an extras edit) never writes them, so it can't put back a copy
-    // that a concurrent token refresh or Supabase role write has since replaced (DEV-12337).
+    // Both paths refuse an edit that points the connection at a new target without its secrets (DEV-12723), and
+    // report the targets an accepted edit adds, for the audit log.
     const userProvidedParamsFromEdit = updateDto.userProvidedParams;
-    const account =
+    const { account, addedConnectionTargets } =
       userProvidedParamsFromEdit && Object.keys(userProvidedParamsFromEdit).length > 0
         ? await this.storeCredentialEditUnderConnectionLock(
             workbookId,
@@ -514,13 +536,7 @@ export class ConnectorAccountService {
             userProvidedParamsFromEdit,
             updateDto,
           )
-        : await this.db.client.connectorAccount.update({
-            where: { id, workbookId },
-            data: {
-              ...buildFieldsToStoreFromEditOtherThanCredentialsAndExtras(updateDto),
-              extras: updateDto.extras as Prisma.InputJsonValue | undefined,
-            },
-          });
+        : await this.storeEditWithoutCredentials(workbookId, accountReadBeforeEdit, updateDto);
 
     this.posthogService.trackUpdateDataSource(actor, account, {
       changedFields: Object.keys(updateDto),
@@ -537,6 +553,8 @@ export class ConnectorAccountService {
         service: account.service,
         authType: account.authType,
         changedFields: Object.keys(updateDto),
+        // Where the edit pointed the connection, so an owner can see it later. Hosts and names only, never secrets.
+        ...(addedConnectionTargets.length > 0 ? { addedConnectionTargets } : {}),
       },
     });
 
@@ -1243,19 +1261,22 @@ export class ConnectorAccountService {
    * credentials between that read and the lock, the edit is refused with a 409 instead of overwriting the newer
    * write. Every other service merges the edit into the credentials as re-read under the lock, so whatever another
    * writer stored meanwhile (a rotated refresh token, a Supabase project role) is kept.
+   *
+   * Before anything is written, the edit is checked against exactly what it would store: one that points the
+   * connection at a new target must send the connection's secrets again (DEV-12723). A refused edit throws inside the
+   * lock's transaction, so nothing is stored.
    */
   private async storeCredentialEditUnderConnectionLock(
     workbookId: WorkbookId,
     accountReadBeforeEdit: ConnectorAccount,
     userProvidedParamsFromEdit: Partial<DecryptedCredentials>,
     updateDto: UpdateConnectorAccountDto,
-  ): Promise<ConnectorAccount> {
+  ): Promise<{ account: ConnectorAccount; addedConnectionTargets: string[] }> {
     const connectorAccountId = accountReadBeforeEdit.id;
-    const credentialsParsedFromEditBeforeTakingLock =
-      await this.parseCredentialEditBeforeTakingLockIfParserHandlesEdits(
-        accountReadBeforeEdit,
-        userProvidedParamsFromEdit,
-      );
+    const credentialEditParsedBeforeTakingLock = await this.parseCredentialEditBeforeTakingLockIfParserHandlesEdits(
+      accountReadBeforeEdit,
+      userProvidedParamsFromEdit,
+    );
 
     return this.oauthService.runWhileHoldingConnectionCredentialsLock(connectorAccountId, async (tx) => {
       const accountReReadUnderLock = await tx.connectorAccount.findUnique({
@@ -1265,21 +1286,23 @@ export class ConnectorAccountService {
         throw new NotFoundException('ConnectorAccount not found');
       }
 
+      let storedCredentials: DecryptedCredentials;
       let credentialsToStore: DecryptedCredentials;
-      if (credentialsParsedFromEditBeforeTakingLock) {
+      if (credentialEditParsedBeforeTakingLock) {
         // Every encryption is freshly salted, so unchanged ciphertext means nothing has written the credentials since
-        // the parser read them.
+        // the parser read them: what it read is still what's stored.
         if (!_.isEqual(accountReReadUnderLock.encryptedCredentials, accountReadBeforeEdit.encryptedCredentials)) {
           throw new ConflictException(
             "This connection's credentials changed while your edit was being saved. Reload and try again.",
           );
         }
-        credentialsToStore = { ...credentialsParsedFromEditBeforeTakingLock };
+        storedCredentials = credentialEditParsedBeforeTakingLock.storedCredentialsTheParserRead;
+        credentialsToStore = { ...credentialEditParsedBeforeTakingLock.credentialsParsedFromEdit };
       } else {
-        const credentialsReReadUnderLock = await this.credentialEncryptionService.decryptCredentials(
+        storedCredentials = await this.credentialEncryptionService.decryptCredentials(
           accountReReadUnderLock.encryptedCredentials as unknown as EncryptedData,
         );
-        credentialsToStore = { ...credentialsReReadUnderLock, ...userProvidedParamsFromEdit };
+        credentialsToStore = { ...storedCredentials, ...userProvidedParamsFromEdit };
       }
 
       // For Shopify, store the shop domain in extras (not encrypted) so it can be queried directly
@@ -1294,8 +1317,17 @@ export class ConnectorAccountService {
         delete credentialsRecord.shopDomain;
       }
 
+      const addedConnectionTargets = assertEditResendsSecretsWhenItAddsAConnectionTarget({
+        credentialFieldsByAuthMethod: getServiceCredentialFields(accountReReadUnderLock.service),
+        authType: accountReReadUnderLock.authType,
+        connectionStateBeforeEdit: { credentials: storedCredentials, extras: accountReReadUnderLock.extras },
+        // Leaving `extras` undefined leaves the stored extras in place.
+        connectionStateAfterEdit: { credentials: credentialsToStore, extras: extras ?? accountReReadUnderLock.extras },
+        userProvidedParamsFromEdit,
+      });
+
       const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(credentialsToStore);
-      return tx.connectorAccount.update({
+      const account = await tx.connectorAccount.update({
         where: { id: connectorAccountId, workbookId },
         data: {
           ...buildFieldsToStoreFromEditOtherThanCredentialsAndExtras(updateDto),
@@ -1303,37 +1335,76 @@ export class ConnectorAccountService {
           extras: extras as Prisma.InputJsonValue | undefined,
         },
       });
+      return { account, addedConnectionTargets };
     });
   }
 
   /**
+   * Store a PATCH that doesn't edit credentials (a rename, an extras edit). It never writes them, so it can't put back
+   * a copy that a concurrent token refresh or Supabase role write has since replaced (DEV-12337).
+   *
+   * An extras edit can still change where a connection sends its credentials, since Shopify keeps its shop domain in
+   * extras. So it goes through the same target check as a credential edit (DEV-12723). With no credential values in
+   * the edit, any new target is refused. The stored extras are read outside the credentials lock: an edit that slips
+   * in between could only be undone back to a target the connection had already used.
+   */
+  private async storeEditWithoutCredentials(
+    workbookId: WorkbookId,
+    accountReadBeforeEdit: ConnectorAccount,
+    updateDto: UpdateConnectorAccountDto,
+  ): Promise<{ account: ConnectorAccount; addedConnectionTargets: string[] }> {
+    const addedConnectionTargets = assertEditResendsSecretsWhenItAddsAConnectionTarget({
+      credentialFieldsByAuthMethod: getServiceCredentialFields(accountReadBeforeEdit.service),
+      authType: accountReadBeforeEdit.authType,
+      // The credentials don't change on this path. Leaving them out of both sides only makes the check stricter.
+      connectionStateBeforeEdit: { credentials: {}, extras: accountReadBeforeEdit.extras },
+      connectionStateAfterEdit: { credentials: {}, extras: updateDto.extras ?? accountReadBeforeEdit.extras },
+      userProvidedParamsFromEdit: undefined,
+    });
+    const account = await this.db.client.connectorAccount.update({
+      where: { id: accountReadBeforeEdit.id, workbookId },
+      data: {
+        ...buildFieldsToStoreFromEditOtherThanCredentialsAndExtras(updateDto),
+        extras: updateDto.extras as Prisma.InputJsonValue | undefined,
+      },
+    });
+    return { account, addedConnectionTargets };
+  }
+
+  /**
    * For a service whose AuthParser handles edits, parse the edit against the stored credentials and return the
-   * complete set, which REPLACES them (a rejected edit throws before anything is written). Returns `null` for every
-   * other service, whose edit is merged into the stored credentials instead. Runs before the credentials lock is
-   * taken, because a parser may call the service.
+   * complete set, which REPLACES them (a rejected edit throws before anything is written), together with the stored
+   * credentials it was parsed against. Returns `null` for every other service, whose edit is merged into the stored
+   * credentials instead. Runs before the credentials lock is taken, because a parser may call the service.
    */
   private async parseCredentialEditBeforeTakingLockIfParserHandlesEdits(
     accountReadBeforeEdit: ConnectorAccount,
     userProvidedParamsFromEdit: Partial<DecryptedCredentials>,
-  ): Promise<DecryptedCredentials | null> {
+  ): Promise<{
+    storedCredentialsTheParserRead: DecryptedCredentials;
+    credentialsParsedFromEdit: DecryptedCredentials;
+  } | null> {
     const service = accountReadBeforeEdit.service;
     const authParser = this.connectorsService.getAuthParser({ service });
     if (!authParser?.parsesCredentialEditsAgainstStoredCredentials) {
       return null;
     }
-    const storedCredentials = await this.credentialEncryptionService.decryptCredentials(
+    const storedCredentialsTheParserRead = await this.credentialEncryptionService.decryptCredentials(
       accountReadBeforeEdit.encryptedCredentials as unknown as EncryptedData,
     );
     const { credentials: parsedCredentialsFromEdit } = await this.runAuthParserWithUserFriendlyErrors(
       authParser,
       {
-        // The PATCH schema only checks for an object; a parser that handles edits re-checks every value's type.
+        // The PATCH schema only checks for text values; a parser that handles edits re-checks every value.
         userProvidedParams: userProvidedParamsFromEdit as Record<string, string | undefined>,
-        existingCredentials: storedCredentials,
+        existingCredentials: storedCredentialsTheParserRead,
       },
       service,
     );
-    return parsedCredentialsFromEdit as unknown as DecryptedCredentials;
+    return {
+      storedCredentialsTheParserRead,
+      credentialsParsedFromEdit: parsedCredentialsFromEdit as unknown as DecryptedCredentials,
+    };
   }
 
   private async runAuthParserWithUserFriendlyErrors(

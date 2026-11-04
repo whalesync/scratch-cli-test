@@ -1,3 +1,4 @@
+export * from './connection-target-edit';
 export * from './connector-error-code';
 export * from './credentials';
 export * from './dtos';

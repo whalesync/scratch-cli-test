@@ -89,7 +89,8 @@ export class SanityConnector extends Connector {
     credentialFields: {
       user_provided_params: [
         { key: 'apiKey', type: 'password', label: 'API Token', required: true, placeholder: 'sk...' },
-        { key: 'sanityProjectId', type: 'string', label: 'Project ID', required: false },
+        // The project id is the API host's subdomain, so changing it means entering the token again (DEV-12723).
+        { key: 'sanityProjectId', type: 'string', label: 'Project ID', required: false, connectionTarget: true },
       ],
     },
   });

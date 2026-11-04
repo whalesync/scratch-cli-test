@@ -87,6 +87,8 @@ export class GongConnector extends Connector {
           placeholder: 'https://us-12345.api.gong.io',
           description: "Your company's API base URL, shown on the same Gong API settings page",
           required: false,
+          // The Access Key Secret is sent to this URL, so changing it means entering the secret again (DEV-12723).
+          connectionTarget: true,
         },
       ],
     },

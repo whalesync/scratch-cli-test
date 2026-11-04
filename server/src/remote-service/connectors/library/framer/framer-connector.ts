@@ -136,6 +136,9 @@ export class FramerConnector extends Connector {
           label: 'Project URL',
           placeholder: 'https://framer.com/projects/Your-Site--abc123',
           required: true,
+          // Not a target: the framer-api SDK only reads the project id from this URL and always connects to
+          // api.framer.com (DEV-12723).
+          connectionTarget: false,
         },
         { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'fr_...', required: true },
       ],

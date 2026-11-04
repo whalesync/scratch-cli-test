@@ -10,6 +10,8 @@
 import { AxiosInstance, isAxiosError } from 'axios';
 import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
+import { ConnectorAuthError } from '../../error';
+import { Service } from '../../service-constants';
 import {
   ShopifyArticleInput,
   ShopifyBlogInput,
@@ -209,6 +211,12 @@ export class ShopifyError extends Error {
   }
 }
 
+/** A shop's Admin API domain: one label under myshopify.com, after {@link normalizeDomain}. */
+const SHOPIFY_ADMIN_API_SHOP_DOMAIN_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/;
+
+export const SHOPIFY_SHOP_DOMAIN_NOT_A_MYSHOPIFY_DOMAIN_MESSAGE =
+  "Enter your shop's myshopify.com domain as the Shop Domain, like your-store.myshopify.com.";
+
 /**
  * Normalize a shop domain to the full myshopify.com format.
  */
@@ -317,6 +325,15 @@ export class ShopifyApiClient {
 
   constructor(credentials: ShopifyCredentials, opts?: { rateLimiter?: RateLimiter }) {
     this.domain = normalizeDomain(credentials.shopDomain);
+    // The Admin API lives only on a shop's myshopify.com domain. Anything else (`evil.example/.myshopify.com`,
+    // `acme.myshopify.com.evil.example`) would send the access token to another host (DEV-12723).
+    if (!SHOPIFY_ADMIN_API_SHOP_DOMAIN_PATTERN.test(this.domain)) {
+      throw new ConnectorAuthError(
+        SHOPIFY_SHOP_DOMAIN_NOT_A_MYSHOPIFY_DOMAIN_MESSAGE,
+        SHOPIFY_SHOP_DOMAIN_NOT_A_MYSHOPIFY_DOMAIN_MESSAGE,
+        Service.SHOPIFY,
+      );
+    }
     this.rateLimiter = opts?.rateLimiter;
 
     this.client = createApiClient({

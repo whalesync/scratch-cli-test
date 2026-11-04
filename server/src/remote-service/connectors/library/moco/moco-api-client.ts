@@ -1,7 +1,13 @@
 import axios, { AxiosInstance, isAxiosError, RawAxiosRequestHeaders } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
+import { ConnectorAuthError } from '../../error';
+import { Service } from '../../service-constants';
+import { isPlainDnsLabel } from '../../utils/dns-label';
 import { MocoCompany, MocoContact, MocoCredentials, MocoEntityType, MocoPagination, MocoProject } from './moco-types';
+
+export const MOCO_DOMAIN_NOT_A_SUBDOMAIN_MESSAGE =
+  "Enter just your Moco subdomain as the Moco Domain, like 'yourcompany' from yourcompany.mocoapp.com.";
 
 const MOCO_RETRY_OPTS: WithRetryOpts = {
   isRateLimited: (error) => isAxiosError(error) && error.response?.status === 429,
@@ -43,6 +49,15 @@ export class MocoApiClient {
   private readonly rateLimiter?: RateLimiter;
 
   constructor(credentials: MocoCredentials, opts?: { rateLimiter?: RateLimiter }) {
+    // The domain becomes the API host's subdomain, so it must be one plain label: a value like `evil.example#` would
+    // otherwise move the host, and the API key with it (DEV-12723).
+    if (!isPlainDnsLabel(credentials.domain)) {
+      throw new ConnectorAuthError(
+        MOCO_DOMAIN_NOT_A_SUBDOMAIN_MESSAGE,
+        MOCO_DOMAIN_NOT_A_SUBDOMAIN_MESSAGE,
+        Service.MOCO,
+      );
+    }
     this.domain = credentials.domain;
     this.rateLimiter = opts?.rateLimiter;
 

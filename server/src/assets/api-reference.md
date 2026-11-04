@@ -1232,6 +1232,10 @@ Updates connection properties.
 }
 ```
 
+- **Values:** every value in `userProvidedParams` must be a string.
+- **New target:** an edit that points the connection at a target it hasn't used before must include the connection's secret fields (`password` type) in the same request. A target is a field the connector marks `connectionTarget` in `credentialFields`, such as a site URL or shop domain. Without the secrets, the request fails with `400` and nothing is stored.
+- **OAuth connections** can't take `userProvidedParams`; reconnect them instead.
+
 ### Delete Connection
 
 ```
@@ -1743,6 +1747,8 @@ Returns metadata for all available connectors. **No authentication required.**
 | `placeholder` | string?  | Input placeholder text                                 |
 | `description` | string?  | Help text shown below the input                        |
 | `required`    | boolean? | Whether the field is required for submission           |
+
+A field may also set `connectionTarget: true` when its value decides where the connection sends its credentials, such as a site URL or shop domain. Changing it on an existing connection requires the connection's `password` fields again.
 
 ---
 

@@ -122,6 +122,9 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
           label: 'WordPress URL',
           placeholder: 'https://your-site.com',
           required: true,
+          // The application password is sent to this site, so changing it means entering the password again
+          // (DEV-12723).
+          connectionTarget: true,
         },
       ],
     },
@@ -687,6 +690,14 @@ connectorRegistry.register({
     }
     if (!ctx.decryptedCredentials?.endpoint) {
       throw new ConnectorInstantiationError('Endpoint is required for WordPress', Service.WORDPRESS);
+    }
+    // A connection edit used to accept any JSON value. `new URL` turns an array into a string and would connect to it,
+    // so only text is used (DEV-12723).
+    if (typeof ctx.decryptedCredentials.endpoint !== 'string') {
+      throw new ConnectorInstantiationError(
+        'The WordPress URL on this connection is not text. Edit the connection and enter it again.',
+        Service.WORDPRESS,
+      );
     }
     return new WordPressConnector(
       ctx.decryptedCredentials.username,

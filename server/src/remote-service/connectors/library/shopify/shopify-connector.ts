@@ -131,6 +131,9 @@ export class ShopifyConnector extends Connector {
           placeholder: 'your-store.myshopify.com',
           description: 'Your Shopify store domain (e.g., your-store.myshopify.com)',
           required: true,
+          // The access token is sent to this shop, so changing it means entering the token again (DEV-12723). The value
+          // is stored in extras, where the edit check reads it too.
+          connectionTarget: true,
         },
         {
           key: 'apiKey',

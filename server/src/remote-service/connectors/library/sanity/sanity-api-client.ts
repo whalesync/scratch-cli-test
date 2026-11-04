@@ -1,6 +1,7 @@
 import { AxiosInstance, isAxiosError, RawAxiosRequestHeaders } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
+import { isPlainDnsLabel } from '../../utils/dns-label';
 import {
   SanityDataset,
   SanityDeployedSchemaDocument,
@@ -39,6 +40,20 @@ export class SanityError extends Error {
     this.name = 'SanityError';
     this.statusCode = statusCode;
     this.responseData = responseData;
+  }
+}
+
+export const SANITY_PROJECT_ID_NOT_A_PLAIN_LABEL_MESSAGE =
+  "This isn't a valid Sanity project ID. Project IDs contain only letters, digits, and hyphens.";
+
+/**
+ * A project id becomes the data API host's subdomain (`{projectId}.api.sanity.io`) and a management API path segment,
+ * so it must be one plain label. It can come from the connection's Project ID or from a folder's table id, and a value
+ * like `evil.example#` would otherwise send the token to another host (DEV-12723).
+ */
+function assertSanityProjectIdIsAPlainDnsLabel(projectId: string): void {
+  if (!isPlainDnsLabel(projectId)) {
+    throw new SanityError(SANITY_PROJECT_ID_NOT_A_PLAIN_LABEL_MESSAGE);
   }
 }
 
@@ -87,6 +102,7 @@ export class SanityApiClient {
   }
 
   private dataClientForProject(projectId: string): AxiosInstance {
+    assertSanityProjectIdIsAPlainDnsLabel(projectId);
     const existingClient = this.dataClientsByProjectId.get(projectId);
     if (existingClient) return existingClient;
     const newClient = createApiClient({
@@ -109,6 +125,7 @@ export class SanityApiClient {
 
   /** List the datasets in a project (e.g. `production`, `staging`). */
   async listDatasets(projectId: string): Promise<SanityDataset[]> {
+    assertSanityProjectIdIsAPlainDnsLabel(projectId);
     const response = await this.withRetry(() =>
       this.managementClient.get<SanityDataset[]>(`/projects/${projectId}/datasets`),
     );

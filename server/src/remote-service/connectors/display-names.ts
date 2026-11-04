@@ -1,4 +1,4 @@
-import { ConnectorMetadata, ConnectorSettingDefinition, Service } from '@spinner/shared-types';
+import { AuthMethod, ConnectorMetadata, ConnectorSettingDefinition, Service } from '@spinner/shared-types';
 import { connectorRegistry } from './connector-registry';
 
 /**
@@ -17,6 +17,14 @@ export function getServiceDisplayName(service: Service): string {
  */
 export function getServiceAdvancedSettings(service: Service): ConnectorSettingDefinition[] {
   return connectorRegistry.get(service)?.advancedSettings ?? [];
+}
+
+/**
+ * Maps a Service value to its credential field definitions, keyed by auth method. Empty for a service with no
+ * registered connector.
+ */
+export function getServiceCredentialFields(service: string): Partial<Record<AuthMethod, ConnectorSettingDefinition[]>> {
+  return connectorRegistry.get(service)?.metadata.credentialFields ?? {};
 }
 
 /**

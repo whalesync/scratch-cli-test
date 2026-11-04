@@ -5,7 +5,14 @@ import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { Alert, Checkbox, ModalProps, PasswordInput, Stack, TextInput } from '@mantine/core';
-import { AuthType, ConnectorAccount, ConnectorSettingDefinition } from '@spinner/shared-types';
+import {
+  AuthType,
+  ConnectorAccount,
+  ConnectorSettingDefinition,
+  describeSecretsToReenterForConnectionTargetChange,
+  isNonBlankCredentialValue,
+  resolveSecretFieldsToReenterForConnectionTargetEdit,
+} from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 import { GenericApiConnectionModal } from './GenericApiConnectionModal';
 import { PemCredentialField } from './PemCredentialField';
@@ -49,6 +56,19 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
       ? metadata?.[connectorAccount.service]?.credentialFields?.user_provided_params
       : undefined) ?? [];
 
+  // Pointing the connection somewhere new (a site URL, a shop domain) means entering its secrets again, or the server
+  // refuses the edit (DEV-12723). Ask for them as soon as a target field has a value, in the server's own words.
+  const { connectionTargetFieldsBeingEdited, secretFieldsToReenter } =
+    resolveSecretFieldsToReenterForConnectionTargetEdit(credentialFields, fieldValues);
+  const secretFieldKeysToReenter = new Set(secretFieldsToReenter.map((field) => field.key));
+  const secretsToReenterMessage =
+    secretFieldsToReenter.length > 0
+      ? describeSecretsToReenterForConnectionTargetChange(
+          secretFieldsToReenter.map((field) => field.label),
+          connectionTargetFieldsBeingEdited.map((field) => field.label),
+        )
+      : null;
+
   // Connect-form fields that persist verbatim rows in extras (`extrasKey`, e.g.
   // Google Sheets' spreadsheet URLs) stay editable after connect: prefill the
   // rows from extras and write them back on save. All generic — the key comes
@@ -83,6 +103,14 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
 
   const handleUpdate = async () => {
     if (!connectorAccount) return;
+
+    if (
+      secretsToReenterMessage &&
+      secretFieldsToReenter.some((field) => !isNonBlankCredentialValue(fieldValues[field.key]))
+    ) {
+      setError(secretsToReenterMessage);
+      return;
+    }
 
     // Validate extras-backed rows (required + per-row pattern) before saving.
     for (const field of extrasBackedFields) {
@@ -169,12 +197,14 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
       );
     }
     if (field.type === 'password') {
+      const isSecretToReenter = secretFieldKeysToReenter.has(field.key);
       return (
         <PasswordInput
           key={field.key}
           label={field.label}
           placeholder={field.placeholder}
-          description={field.description}
+          description={isSecretToReenter ? secretsToReenterMessage : field.description}
+          required={isSecretToReenter}
           value={(fieldValues[field.key] as string) ?? ''}
           onChange={(e) => setFieldValue(field.key, e.currentTarget.value)}
         />

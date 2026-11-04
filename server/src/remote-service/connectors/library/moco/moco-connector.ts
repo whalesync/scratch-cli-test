@@ -76,6 +76,8 @@ export class MocoConnector extends Connector {
           placeholder: 'yourcompany',
           description: "Your Moco subdomain (e.g., 'yourcompany' from yourcompany.mocoapp.com)",
           required: true,
+          // The API key is sent to this subdomain, so changing it means entering the key again (DEV-12723).
+          connectionTarget: true,
         },
         {
           key: 'apiKey',

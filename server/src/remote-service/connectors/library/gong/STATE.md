@@ -7,6 +7,7 @@
 - **Template version:** 2026-06-18
 - **Last run:** 2026-08-06 (morning: seeded real calls, data-stage verification complete)
 - **Type:** STATIC schema · **READ-ONLY connector** (the Gong API has no update surface for any exposed entity — writes are limited to call ingestion + CRM upload, which are integration pipelines, not record edits). All write cells below are `➖` by design, not gaps.
+- **Connection edits (DEV-12723):** `gongBaseUrl` is a `connectionTarget`. An edit that sets a base URL on a new host (or a new scheme or port) must send the Access Key Secret again, or `PATCH …/connections/:id` returns 400 before anything is stored. Clearing it falls back to `api.gong.io` and needs no secret. The base URL can still be any host, including `http://`; checking that host (SSRF) is [DEV-12737](https://linear.app/whalesync/issue/DEV-12737).
 
 ## Test account
 

@@ -291,8 +291,12 @@ describe('ConnectorAccountService', () => {
       sslMode: 'VERIFY_CA',
     };
 
-    function mockStoredAccount(service: string, storedCredentials: DecryptedCredentials): void {
-      const account = createMockAccount({ service } as Partial<ConnectorAccount>);
+    function mockStoredAccount(
+      service: string,
+      storedCredentials: DecryptedCredentials,
+      accountOverrides: Partial<ConnectorAccount> = {},
+    ): void {
+      const account = createMockAccount({ service, ...accountOverrides } as Partial<ConnectorAccount>);
       (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
       (dbService.client.connectorAccount.update as jest.Mock).mockResolvedValue(account);
       (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({ organizationId: 'org_test' });
@@ -413,6 +417,317 @@ describe('ConnectorAccountService', () => {
         username: 'editor',
         password: 'new-app-password',
         endpoint: 'https://a.test',
+      });
+    });
+
+    it('MySQL: the target check reuses the credentials the parser decrypted, with no second decrypt', async () => {
+      mockStoredAccount('MYSQL', STORED_MYSQL_CREDENTIALS);
+
+      await service.update(WORKBOOK_ID, ACCOUNT_ID, { userProvidedParams: { password: 'rotated-secret' } }, ACTOR);
+
+      // One decrypt for the parser and one to build the response.
+      expect(credentialEncryptionService.decryptCredentials).toHaveBeenCalledTimes(2);
+    });
+
+    describe('changing where a connection sends its credentials (DEV-12723)', () => {
+      const STORED_WORDPRESS_CREDENTIALS: DecryptedCredentials = {
+        username: 'editor',
+        password: 'stored-app-password',
+        endpoint: 'https://site.example/wp-json/',
+      };
+      const STORED_SHOPIFY_EXTRAS = { shopDomain: 'acme.myshopify.com' };
+
+      /** Shopify's shop domain arrives as a credential but is stored in extras, so `DecryptedCredentials` lacks it. */
+      function shopifyCredentialEdit(editedParams: {
+        shopDomain: string;
+        apiKey?: string;
+      }): Partial<DecryptedCredentials> {
+        return editedParams as Partial<DecryptedCredentials>;
+      }
+
+      function secretRequiredMessage(secretLabel: string, connectionTargetLabel: string): string {
+        return (
+          `Enter the ${secretLabel} again when you change the ${connectionTargetLabel}. ` +
+          'Scratch only sends a saved secret to the address it was entered for.'
+        );
+      }
+
+      function expectNothingStored(): void {
+        expect(credentialEncryptionService.encryptCredentials).not.toHaveBeenCalled();
+        expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
+        expect(auditLogService.logEvent).not.toHaveBeenCalled();
+      }
+
+      it('WordPress: a site URL change without the password is refused, and nothing is stored', async () => {
+        mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+
+        await expect(
+          service.update(
+            WORKBOOK_ID,
+            ACCOUNT_ID,
+            { userProvidedParams: { endpoint: 'https://evil.example/wp-json/' } },
+            ACTOR,
+          ),
+        ).rejects.toThrow(new BadRequestException(secretRequiredMessage('Application password', 'WordPress URL')));
+        expectNothingStored();
+      });
+
+      it('WordPress: a password typed and then cleared does not count as sent again', async () => {
+        mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+
+        await expect(
+          service.update(
+            WORKBOOK_ID,
+            ACCOUNT_ID,
+            { userProvidedParams: { endpoint: 'https://evil.example/wp-json/', password: '' } },
+            ACTOR,
+          ),
+        ).rejects.toThrow(BadRequestException);
+        expectNothingStored();
+      });
+
+      it('WordPress: a site URL change that sends the password again is stored, and the audit log records the new target', async () => {
+        mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+
+        await service.update(
+          WORKBOOK_ID,
+          ACCOUNT_ID,
+          { userProvidedParams: { endpoint: 'https://new-site.example/wp-json/', password: 'new-app-password' } },
+          ACTOR,
+        );
+
+        expect(credentialsPassedToEncryption()).toEqual({
+          username: 'editor',
+          password: 'new-app-password',
+          endpoint: 'https://new-site.example/wp-json/',
+        });
+        expect(auditLogService.logEvent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ addedConnectionTargets: ['https://new-site.example'] }) as unknown,
+          }),
+        );
+      });
+
+      it('WordPress: re-sending the stored site URL needs no password and records no new target', async () => {
+        mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+
+        await service.update(
+          WORKBOOK_ID,
+          ACCOUNT_ID,
+          { userProvidedParams: { endpoint: 'https://site.example/wp-json/', username: 'other-editor' } },
+          ACTOR,
+        );
+
+        expect(credentialsPassedToEncryption()).toEqual({ ...STORED_WORDPRESS_CREDENTIALS, username: 'other-editor' });
+        expect(auditLogService.logEvent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.not.objectContaining({ addedConnectionTargets: expect.anything() as unknown }) as unknown,
+          }),
+        );
+      });
+
+      it('checks the edit against the credentials re-read under the lock', async () => {
+        // Another writer moved the site URL after the edit's first read. Re-sending the URL stored now adds no target.
+        (dbService.client.connectorAccount.findUnique as jest.Mock)
+          .mockResolvedValueOnce(
+            createMockAccount({
+              service: 'WORDPRESS',
+              encryptedCredentials: { encrypted: 'read-before-edit' },
+            } as Partial<ConnectorAccount>),
+          )
+          .mockResolvedValueOnce(
+            createMockAccount({
+              service: 'WORDPRESS',
+              encryptedCredentials: { encrypted: 'written-meanwhile' },
+            } as Partial<ConnectorAccount>),
+          );
+        (dbService.client.connectorAccount.update as jest.Mock).mockResolvedValue(
+          createMockAccount({ service: 'WORDPRESS' } as Partial<ConnectorAccount>),
+        );
+        (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({ organizationId: 'org_test' });
+        credentialEncryptionService.decryptCredentials.mockImplementation((encryptedCredentials) =>
+          Promise.resolve(
+            encryptedCredentials.encrypted === 'written-meanwhile'
+              ? { ...STORED_WORDPRESS_CREDENTIALS, endpoint: 'https://moved-site.example/wp-json/' }
+              : { ...STORED_WORDPRESS_CREDENTIALS },
+          ),
+        );
+
+        await service.update(
+          WORKBOOK_ID,
+          ACCOUNT_ID,
+          { userProvidedParams: { endpoint: 'https://moved-site.example/wp-json/' } },
+          ACTOR,
+        );
+
+        expect(credentialsPassedToEncryption()).toEqual({
+          ...STORED_WORDPRESS_CREDENTIALS,
+          endpoint: 'https://moved-site.example/wp-json/',
+        });
+      });
+
+      it('Gong: a base URL change without the Access Key Secret is refused', async () => {
+        mockStoredAccount('GONG', {
+          gongAccessKey: 'access-key',
+          gongAccessKeySecret: 'stored-secret',
+          gongBaseUrl: 'https://us-1.api.gong.io',
+        });
+
+        await expect(
+          service.update(
+            WORKBOOK_ID,
+            ACCOUNT_ID,
+            { userProvidedParams: { gongBaseUrl: 'https://evil.example' } },
+            ACTOR,
+          ),
+        ).rejects.toThrow(new BadRequestException(secretRequiredMessage('Access Key Secret', 'API Base URL')));
+        expectNothingStored();
+      });
+
+      it("Gong: Live Export's reauthorize form, which sends every required field again, can change the base URL", async () => {
+        mockStoredAccount('GONG', {
+          gongAccessKey: 'access-key',
+          gongAccessKeySecret: 'stored-secret',
+          gongBaseUrl: 'https://us-1.api.gong.io',
+        });
+        const reauthorizeFormParams = {
+          gongAccessKey: 'access-key',
+          gongAccessKeySecret: 'new-secret',
+          gongBaseUrl: 'https://us-2.api.gong.io',
+        };
+
+        await service.update(WORKBOOK_ID, ACCOUNT_ID, { userProvidedParams: reauthorizeFormParams }, ACTOR);
+
+        expect(credentialsPassedToEncryption()).toEqual(reauthorizeFormParams);
+      });
+
+      it('Sanity: a project ID change without the API token is refused', async () => {
+        mockStoredAccount('SANITY', { apiKey: 'stored-token', sanityProjectId: 'abc123' });
+
+        await expect(
+          service.update(WORKBOOK_ID, ACCOUNT_ID, { userProvidedParams: { sanityProjectId: 'other1' } }, ACTOR),
+        ).rejects.toThrow(new BadRequestException(secretRequiredMessage('API Token', 'Project ID')));
+        expectNothingStored();
+      });
+
+      it('Shopify: an extras-only shop domain change is refused, and nothing is stored', async () => {
+        mockStoredAccount('SHOPIFY', { apiKey: 'stored-token' }, { extras: STORED_SHOPIFY_EXTRAS });
+
+        await expect(
+          service.update(WORKBOOK_ID, ACCOUNT_ID, { extras: { shopDomain: 'evil.myshopify.com' } }, ACTOR),
+        ).rejects.toThrow(new BadRequestException(secretRequiredMessage('Admin API Access Token', 'Shop Domain')));
+        expectNothingStored();
+      });
+
+      it('Shopify: an extras-only edit that keeps the shop domain is stored', async () => {
+        mockStoredAccount('SHOPIFY', { apiKey: 'stored-token' }, { extras: STORED_SHOPIFY_EXTRAS });
+
+        await service.update(
+          WORKBOOK_ID,
+          ACCOUNT_ID,
+          { displayName: 'Renamed', extras: { shopDomain: 'acme.myshopify.com' } },
+          ACTOR,
+        );
+
+        expect(dbService.client.connectorAccount.update).toHaveBeenCalledWith({
+          where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+          data: expect.objectContaining({ displayName: 'Renamed', extras: STORED_SHOPIFY_EXTRAS }) as unknown,
+        });
+      });
+
+      it('Shopify: a shop domain entered as a credential is checked after it moves into extras', async () => {
+        mockStoredAccount('SHOPIFY', { apiKey: 'stored-token' }, { extras: STORED_SHOPIFY_EXTRAS });
+
+        await expect(
+          service.update(
+            WORKBOOK_ID,
+            ACCOUNT_ID,
+            { userProvidedParams: shopifyCredentialEdit({ shopDomain: 'evil.myshopify.com' }) },
+            ACTOR,
+          ),
+        ).rejects.toThrow(new BadRequestException(secretRequiredMessage('Admin API Access Token', 'Shop Domain')));
+        expectNothingStored();
+      });
+
+      it('Shopify: a shop domain change that sends the token again is stored, with the domain in extras', async () => {
+        mockStoredAccount('SHOPIFY', { apiKey: 'stored-token' }, { extras: STORED_SHOPIFY_EXTRAS });
+
+        await service.update(
+          WORKBOOK_ID,
+          ACCOUNT_ID,
+          { userProvidedParams: shopifyCredentialEdit({ shopDomain: 'new-shop.myshopify.com', apiKey: 'new-token' }) },
+          ACTOR,
+        );
+
+        expect(credentialsPassedToEncryption()).toEqual({ apiKey: 'new-token' });
+        expect(dbService.client.connectorAccount.update).toHaveBeenCalledWith({
+          where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+          data: expect.objectContaining({ extras: { shopDomain: 'new-shop.myshopify.com' } }) as unknown,
+        });
+      });
+
+      it("Live Export's extras editor can still rewrite an OAuth connection's extras-backed rows", async () => {
+        const storedSpreadsheetUrls = ['https://docs.google.com/spreadsheets/d/first'];
+        mockStoredAccount(
+          'GOOGLE_SHEETS',
+          { oauthAccessToken: 'access-token' },
+          { authType: 'OAUTH', extras: { spreadsheetUrls: storedSpreadsheetUrls } },
+        );
+        const editedExtras = {
+          spreadsheetUrls: [...storedSpreadsheetUrls, 'https://docs.google.com/spreadsheets/d/second'],
+        };
+
+        await service.update(WORKBOOK_ID, ACCOUNT_ID, { extras: editedExtras }, ACTOR);
+
+        expect(dbService.client.connectorAccount.update).toHaveBeenCalledWith({
+          where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
+          data: expect.objectContaining({ extras: editedExtras }) as unknown,
+        });
+      });
+
+      it('a credential edit on an OAuth connection is refused before the lock is taken, and nothing is stored', async () => {
+        mockStoredAccount(
+          'WIX_BLOG',
+          { oauthAccessToken: 'access-token', oauthWorkspaceId: 'install-of-this-site' },
+          { authType: 'OAUTH' },
+        );
+
+        await expect(
+          service.update(
+            WORKBOOK_ID,
+            ACCOUNT_ID,
+            { userProvidedParams: { oauthWorkspaceId: 'install-of-another-site' } },
+            ACTOR,
+          ),
+        ).rejects.toThrow(
+          new BadRequestException("This connection's credentials can't be edited here. Reconnect it instead."),
+        );
+        expect(oauthService.runWhileHoldingConnectionCredentialsLock).not.toHaveBeenCalled();
+        expectNothingStored();
+      });
+
+      // API_KEY was the column default from 2025-09-02 to 2025-10-22 and was never backfilled. Those connections hold
+      // credentials their user entered, and Live Export's reauthorize form edits them like USER_PROVIDED_PARAMS ones.
+      it('a credential edit on a deprecated API_KEY connection is still merged into its stored credentials', async () => {
+        mockStoredAccount('AIRTABLE', { apiKey: 'stored-token' }, { authType: 'API_KEY' });
+
+        await service.update(WORKBOOK_ID, ACCOUNT_ID, { userProvidedParams: { apiKey: 'rotated-token' } }, ACTOR);
+
+        expect(credentialsPassedToEncryption()).toEqual({ apiKey: 'rotated-token' });
+      });
+
+      it('a target change on a deprecated API_KEY connection asks for the secret, not for a reconnect', async () => {
+        mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS, { authType: 'API_KEY' });
+
+        await expect(
+          service.update(
+            WORKBOOK_ID,
+            ACCOUNT_ID,
+            { userProvidedParams: { endpoint: 'https://evil.example/wp-json/' } },
+            ACTOR,
+          ),
+        ).rejects.toThrow(new BadRequestException(secretRequiredMessage('Application password', 'WordPress URL')));
+        expectNothingStored();
       });
     });
 
