@@ -35,7 +35,7 @@ Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 | 6   | **Foreign keys tested**                                   |   ➖   | Read-only; FK _reads_ verified 2026-10-26 (17 FK constraints on Postgres, joins resolve)        |
 | 7   | **Edge cases & quirks tested**                            |   ⬜   |                                                                                                 |
 | 8   | **View(s) built**                                         |   🔄   | Default view drove the 2026-10-26 SQUARE → POSTGRES Live Export on live sandbox data (551 records, 17 FKs); Supabase/Notion audit still to do |
-| 9   | **OAuth**                                                 |   🟠   | Implemented 2026-10-31 (`SquareOAuthProvider`); not yet signed in live                          |
+| 9   | **OAuth**                                                 |   ✅   | 2026-11-04 — signed in on test (sandbox seller) and exported 552/552 to Postgres; no production sign-in yet |
 | 10  | **Integration test**                                      |   ⬜   |                                                                                                 |
 
 ## TODOs — known pending tasks
@@ -49,7 +49,7 @@ Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 - [ ] Full `/test-live-export SQUARE SUPABASE,NOTION` → `LIVE_EXPORT_AUDIT.md`.
 - [x] Upload the logo: `gs://spv1eu-production-static/connector-icons/square.svg` (Simple Icons `square`; serving 200 as of 2026-10-27).
 - [ ] Flip `visible` to true once a live account has been pulled end to end.
-- [ ] OAuth (Whalesync-owned Square app) so customers don't have to create a Developer app. Code done and redirect URLs registered 2026-10-31; remaining: `terraform apply` both envs, then a live sign-in on test (sandbox seller) and on production.
+- [x] OAuth (Whalesync-owned Square app) so customers don't have to create a Developer app. Merged as !3457 and in production since 2026-11-02; terraform applied in both envs. Verified on test 2026-11-04 (see [OAuth](#oauth-final-milestone)). A production sign-in is still untried.
 - [ ] Incremental pull (every table has `updated_at`; Payments/Refunds list endpoints take `updated_at_begin_time`, Orders/Customers search take an `updated_at` filter). Live Export source pulls are always FULL today, so this only matters for Scratch-side scheduled pulls.
 
 ## Objects / entity types — what the connector exposes
@@ -178,7 +178,7 @@ Hosts: `connect.squareup.com` (production), `connect.squareupsandbox.com` (sandb
 - **Scopes (read-only):** each table declares its `oauthReadScope` in `square-types.ts`; the sign-in asks for their union plus `MERCHANT_PROFILE_READ`: `MERCHANT_PROFILE_READ CUSTOMERS_READ ITEMS_READ ORDERS_READ PAYMENTS_READ INVOICES_READ EMPLOYEES_READ PAYOUTS_READ`.
 - **Sandbox sign-in:** open the sandbox seller's dashboard from the Developer Console (Sandbox test accounts → Open in Square Dashboard) in the same browser first; the sandbox authorize page signs in through that session.
 - **Not handled:** the `oauth.authorization.revoked` webhook. A revoked connection fails its next refresh and has to be reconnected.
-- **Status:** implemented 2026-10-31, not yet signed in live.
+- **Status:** in production since the 2026-11-02 promotion. Verified on test 2026-11-04: signed in through test.whalesync.com/exports with the Default Test Account sandbox seller (connection `coa_biDEOfAfBk`), then Live Export run `rrn_mblCJQkn5n` pulled and published 552/552 records into the test Postgres (schema `square_oauth_test_2026_11_04`: 14 tables, row counts equal to the seeded sandbox, 17 foreign keys, every payment joins to its order). No production sign-in yet.
 
 ## UI quick-links
 
