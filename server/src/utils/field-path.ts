@@ -293,11 +293,25 @@ export function getSchemaAtFieldPath(schema: TSchema, path: string): TSchema | u
   let node: TSchema | undefined = schema;
   for (const segment of segments) {
     if (!node) return undefined;
-    // A filter segment descends into the keyed array's shared element schema;
-    // every other segment is a property lookup.
-    node = parseFilterSegment(segment) ? keyedArrayItemSchema(node) : schemaPropertyValue(node, segment);
+    // A filter segment descends into the keyed array's shared element schema; every
+    // other segment is a property lookup, or — on an array — an element position.
+    node = parseFilterSegment(segment)
+      ? keyedArrayItemSchema(node)
+      : (schemaPropertyValue(node, segment) ?? arrayElementSchemaAtPositionSegment(node, segment));
   }
   return node;
+}
+
+/**
+ * The element schema of an array node for a position segment (`0`, `1`, …), or `undefined`
+ * when `segment` isn't a position or the node isn't an array. Lets a read-only view column
+ * address one element of a verbatim array — Stripe reports a subscription's billing period
+ * on its items (`items.data.0.current_period_start`), not on the subscription itself. The
+ * value side already reads such a path: lodash `get` indexes an array by a numeric key.
+ */
+export function arrayElementSchemaAtPositionSegment(schema: TSchema, segment: string): TSchema | undefined {
+  if (!/^\d+$/.test(segment)) return undefined;
+  return arrayItemSchema(schema);
 }
 
 /**

@@ -174,18 +174,26 @@ describe('StripeConnector', () => {
   // ---------------------------------------------------------------------------
 
   describe('listTables', () => {
-    it('returns all 7 entity types', async () => {
+    it('returns all 15 entity types', async () => {
       const tables = await connector.listTables();
-      expect(tables).toHaveLength(7);
 
-      const ids = tables.map((t) => t.id.wsId);
-      expect(ids).toContain('customers');
-      expect(ids).toContain('products');
-      expect(ids).toContain('prices');
-      expect(ids).toContain('subscriptions');
-      expect(ids).toContain('invoices');
-      expect(ids).toContain('payment_intents');
-      expect(ids).toContain('charges');
+      expect(tables.map((t) => t.id.wsId)).toEqual([
+        'customers',
+        'products',
+        'prices',
+        'subscriptions',
+        'invoices',
+        'payment_intents',
+        'charges',
+        'refunds',
+        'disputes',
+        'credit_notes',
+        'coupons',
+        'promotion_codes',
+        'balance_transactions',
+        'subscription_schedules',
+        'events',
+      ]);
     });
 
     it('includes display names', async () => {

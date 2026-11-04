@@ -137,6 +137,40 @@ describe('getSchemaAtFieldPath', () => {
     });
     expect(getSchemaAtFieldPath(oneOfWrapped, 'field.inner')?.type).toBe('string');
   });
+
+  // A read-only view column can address one element of a verbatim array by position: Stripe reports a
+  // subscription's billing period on its items, so the view reads `items.data.0.current_period_start`.
+  describe('array position segments', () => {
+    const subscriptionLikeSchema = Type.Object({
+      items: Type.Object({
+        data: Type.Array(Type.Object({ current_period_start: Type.Number() })),
+      }),
+      maybeList: Type.Optional(Type.Union([Type.Array(Type.Object({ when: Type.String() })), Type.Null()])),
+      tags: Type.Object({ '0': Type.Boolean() }),
+    });
+
+    it('descends into the element schema of an array', () => {
+      expect(getSchemaAtFieldPath(subscriptionLikeSchema, 'items.data.0.current_period_start')?.type).toBe('number');
+    });
+
+    it('descends through a nullable array', () => {
+      expect(getSchemaAtFieldPath(subscriptionLikeSchema, 'maybeList.3.when')?.type).toBe('string');
+    });
+
+    it('prefers an object property literally named like a position', () => {
+      expect(getSchemaAtFieldPath(subscriptionLikeSchema, 'tags.0')?.type).toBe('boolean');
+    });
+
+    it('does not treat a non-numeric segment as a position', () => {
+      expect(getSchemaAtFieldPath(subscriptionLikeSchema, 'items.data.first.current_period_start')).toBeUndefined();
+    });
+
+    it('reads the value at the same path from a record', () => {
+      const record = { items: { data: [{ current_period_start: 1785436554 }, { current_period_start: 1 }] } };
+      expect(readFieldValueAtPath(record, 'items.data.0.current_period_start')).toBe(1785436554);
+      expect(readFieldValueAtPath({ items: { data: [] } }, 'items.data.0.current_period_start')).toBeUndefined();
+    });
+  });
 });
 
 describe('readFieldValueAtPath', () => {

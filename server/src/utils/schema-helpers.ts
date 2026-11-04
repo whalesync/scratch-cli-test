@@ -2,9 +2,11 @@ import { TSchema } from '@sinclair/typebox';
 import type { ForeignKeyOptionSchema, VirtualFieldDef } from '@spinner/shared-types';
 import {
   parseFilterSegment,
+  PostgresColumnType,
   TransformerConfig,
   X_SCRATCH_AIRTABLE_FIELD_ORDER,
   X_SCRATCH_ASSET_TABLE,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_NATIVE_COLUMN_TYPE,
   X_SCRATCH_PREFIX,
@@ -17,7 +19,11 @@ import {
   type NativeColumnTypeAnnotation,
   type PackInputPrimitive,
 } from '@spinner/shared-types';
-import { keyedArrayItemSchema, segmentFieldPathAgainstSchema } from 'src/utils/field-path';
+import {
+  arrayElementSchemaAtPositionSegment,
+  keyedArrayItemSchema,
+  segmentFieldPathAgainstSchema,
+} from 'src/utils/field-path';
 
 /**
  * `x-scratch-*` keys that annotate a CONTAINER node — an object whose properties
@@ -139,6 +145,12 @@ export interface SchemaField {
   arrayItemType?: string;
   /** The field's exact native column type, from the `x-scratch-native-column-type` annotation (DEV-11903). */
   nativeColumnType?: NativeColumnTypeAnnotation;
+  /**
+   * True when the field is a JSON-document column (a Postgres `jsonb` or MySQL `json` column, which both mark
+   * themselves with the `jsonb` connector data type) that stores any object, array, or scalar as given. The
+   * transform picker copies a value into it whole instead of collapsing an array into one joined string.
+   */
+  acceptsAnyJsonValue?: boolean;
   remoteFieldId?: string;
   /** Unpack transform applied when this field is a sync source (native → plain). */
   suggestedTransformer?: TransformerConfig;
@@ -295,7 +307,8 @@ function propertySchemaAt(schema: TSchema | undefined, key: string): TSchema | u
       if (found) return found;
     }
   }
-  return undefined;
+  // A position segment (`items.data.0`) addresses one element of an array, as in getSchemaAtFieldPath.
+  return arrayElementSchemaAtPositionSegment(schema, key);
 }
 
 /**
@@ -353,6 +366,7 @@ export function extractSchemaFields(schema: TSchema, parentPath = '', propertyKe
     if (arrayItemType) field.arrayItemType = arrayItemType;
     const nativeColumnType = readNativeColumnTypeAnnotation(schema);
     if (nativeColumnType) field.nativeColumnType = nativeColumnType;
+    if (schema[X_SCRATCH_CONNECTOR_DATA_TYPE] === PostgresColumnType.JSONB) field.acceptsAnyJsonValue = true;
     if (schema.description) field.description = schema.description;
     const remoteFieldId = schema[X_SCRATCH_REMOTE_FIELD_ID] as string | undefined;
     if (remoteFieldId) field.remoteFieldId = remoteFieldId;

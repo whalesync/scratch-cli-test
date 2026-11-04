@@ -26,8 +26,33 @@
   "images": {
     "core": []
   },
+  "marketing_features": {
+    "core": [
+      {
+        "name": "Up to 10,000 landing pages"
+      },
+      {
+        "name": "Dedicated onboarding"
+      }
+    ]
+  },
   "metadata": {
     "core": {}
+  },
+  "package_dimensions": {
+    "core": null
+  },
+  "shippable": {
+    "core": null
+  },
+  "statement_descriptor": {
+    "core": null
+  },
+  "tax_code": {
+    "core": "txcd_10103001"
+  },
+  "unit_label": {
+    "core": null
   },
   "updated": {
     "core": "2023-10-09T10:28:44.000Z"

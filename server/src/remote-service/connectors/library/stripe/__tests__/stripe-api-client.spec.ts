@@ -199,7 +199,22 @@ describe('StripeApiClient', () => {
         data: { object: 'list', data: [], has_more: false },
       });
 
-      for (const entityType of ['customers', 'products', 'prices', 'invoices', 'payment_intents', 'charges'] as const) {
+      for (const entityType of [
+        'customers',
+        'products',
+        'prices',
+        'invoices',
+        'payment_intents',
+        'charges',
+        'refunds',
+        'disputes',
+        'credit_notes',
+        'coupons',
+        'promotion_codes',
+        'balance_transactions',
+        'subscription_schedules',
+        'events',
+      ] as const) {
         mockGet.mockClear();
         const gen: AsyncGenerator<unknown[]> = client.listEntities(entityType);
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -228,6 +243,14 @@ describe('StripeApiClient', () => {
         ['invoices', '/v1/invoices'],
         ['payment_intents', '/v1/payment_intents'],
         ['charges', '/v1/charges'],
+        ['refunds', '/v1/refunds'],
+        ['disputes', '/v1/disputes'],
+        ['credit_notes', '/v1/credit_notes'],
+        ['coupons', '/v1/coupons'],
+        ['promotion_codes', '/v1/promotion_codes'],
+        ['balance_transactions', '/v1/balance_transactions'],
+        ['subscription_schedules', '/v1/subscription_schedules'],
+        ['events', '/v1/events'],
       ];
 
       for (const [entityType, endpoint] of entityEndpoints) {
@@ -422,6 +445,73 @@ describe('StripeApiClient', () => {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         params: expect.objectContaining({ subscription: 'sub_1' }),
       });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Invoice and credit note lines hydration (Stripe embeds at most 10 lines)
+  // ---------------------------------------------------------------------------
+
+  describe('line items hydration', () => {
+    it.each([
+      ['invoices', 'in_1', '/v1/invoices/in_1/lines'],
+      ['credit_notes', 'cn_1', '/v1/credit_notes/cn_1/lines'],
+    ] as const)(
+      'follows pagination to backfill %s whose embedded lines are truncated',
+      async (entityType, id, linesPath) => {
+        mockGet
+          .mockResolvedValueOnce({
+            data: {
+              object: 'list',
+              data: [{ id, lines: { object: 'list', url: linesPath, has_more: true, data: [{ id: 'il_1' }] } }],
+              has_more: false,
+            },
+          })
+          .mockResolvedValueOnce({ data: { object: 'list', data: [{ id: 'il_1' }, { id: 'il_2' }], has_more: true } })
+          .mockResolvedValueOnce({ data: { object: 'list', data: [{ id: 'il_3' }], has_more: false } });
+
+        const pages: Record<string, unknown>[][] = [];
+        for await (const page of client.listEntities(entityType)) {
+          pages.push(page);
+        }
+
+        const lines = pages[0][0].lines as { has_more: boolean; data: { id: string }[] };
+        expect(lines.has_more).toBe(false);
+        expect(lines.data.map((line) => line.id)).toEqual(['il_1', 'il_2', 'il_3']);
+        expect(mockGet).toHaveBeenCalledWith(linesPath, { params: { limit: 100 } });
+        expect(mockGet).toHaveBeenCalledWith(linesPath, { params: { limit: 100, starting_after: 'il_2' } });
+      },
+    );
+
+    it('does not re-fetch lines for an invoice whose lines fit in one page', async () => {
+      mockGet.mockResolvedValueOnce({
+        data: {
+          object: 'list',
+          data: [{ id: 'in_small', lines: { object: 'list', has_more: false, data: [{ id: 'il_1' }] } }],
+          has_more: false,
+        },
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _page of client.listEntities('invoices')) {
+        // consume
+      }
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+    });
+
+    it('hydrates truncated lines when fetching a single invoice via getEntity', async () => {
+      mockGet
+        .mockResolvedValueOnce({
+          data: { id: 'in_1', lines: { object: 'list', has_more: true, data: [{ id: 'il_1' }] } },
+        })
+        .mockResolvedValueOnce({ data: { object: 'list', data: [{ id: 'il_1' }, { id: 'il_2' }], has_more: false } });
+
+      const invoice = await client.getEntity('invoices', 'in_1');
+
+      const lines = invoice?.lines as { has_more: boolean; data: { id: string }[] };
+      expect(lines.has_more).toBe(false);
+      expect(lines.data.map((line) => line.id)).toEqual(['il_1', 'il_2']);
     });
   });
 });

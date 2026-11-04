@@ -35,6 +35,14 @@ const ENTITY_IDS: Record<StripeEntityType, EntityId> = {
   invoices: { wsId: 'invoices', remoteId: ['invoices'] },
   payment_intents: { wsId: 'payment_intents', remoteId: ['payment_intents'] },
   charges: { wsId: 'charges', remoteId: ['charges'] },
+  refunds: { wsId: 'refunds', remoteId: ['refunds'] },
+  disputes: { wsId: 'disputes', remoteId: ['disputes'] },
+  credit_notes: { wsId: 'credit_notes', remoteId: ['credit_notes'] },
+  coupons: { wsId: 'coupons', remoteId: ['coupons'] },
+  promotion_codes: { wsId: 'promotion_codes', remoteId: ['promotion_codes'] },
+  balance_transactions: { wsId: 'balance_transactions', remoteId: ['balance_transactions'] },
+  subscription_schedules: { wsId: 'subscription_schedules', remoteId: ['subscription_schedules'] },
+  events: { wsId: 'events', remoteId: ['events'] },
 };
 
 function createConnector(): StripeConnector {
@@ -114,17 +122,11 @@ describeIfKey('StripeConnector — live API', () => {
   // -------------------------------------------------------------------------
 
   describe('listTables', () => {
-    it('returns all 7 entity types', async () => {
+    it('returns every entity type', async () => {
       const tables = await connector.listTables();
       const ids = tables.map((t) => t.id.wsId);
 
-      expect(ids).toContain('customers');
-      expect(ids).toContain('products');
-      expect(ids).toContain('prices');
-      expect(ids).toContain('subscriptions');
-      expect(ids).toContain('invoices');
-      expect(ids).toContain('payment_intents');
-      expect(ids).toContain('charges');
+      expect(ids.sort()).toEqual(Object.keys(ENTITY_IDS).sort());
     });
 
     it('marks all tables as read-only', async () => {
@@ -470,6 +472,35 @@ describeIfKey('StripeConnector — live API', () => {
         const first = files[0] as unknown as { id: string; object: string };
         expect(first.id).toMatch(/^ch_/);
         expect(first.object).toBe('charge');
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Refunds, disputes, credit notes, coupons, promotion codes, balance transactions,
+  // subscription schedules, and events: every one lists through the same pull, so one
+  // shape check each confirms the endpoint and the Stripe `object` it returns.
+  // -------------------------------------------------------------------------
+
+  describe.each<[StripeEntityType, string]>([
+    ['refunds', 'refund'],
+    ['disputes', 'dispute'],
+    ['credit_notes', 'credit_note'],
+    ['coupons', 'coupon'],
+    ['promotion_codes', 'promotion_code'],
+    ['balance_transactions', 'balance_transaction'],
+    ['subscription_schedules', 'subscription_schedule'],
+    ['events', 'event'],
+  ])('%s', (entityType, stripeObjectName) => {
+    it(`pulls ${stripeObjectName} records from the live API`, async () => {
+      const spec = await connector.fetchJsonTableSpec(ENTITY_IDS[entityType]);
+      const files = await collectPulledFiles(connector, spec, 50);
+      expect(Array.isArray(files)).toBe(true);
+
+      for (const file of files) {
+        const record = file as unknown as { id: unknown; object: unknown };
+        expect(typeof record.id).toBe('string');
+        expect(record.object).toBe(stripeObjectName);
       }
     });
   });

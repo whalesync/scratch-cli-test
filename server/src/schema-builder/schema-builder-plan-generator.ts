@@ -1579,12 +1579,13 @@ function arrayElementFieldType(arrayItemType: string | undefined): CreateFieldTy
 /**
  * The field type that keeps a structured source value's shape on this destination, or undefined when the
  * destination can't hold it (the caller then flattens to text). An array of primitives becomes a list
- * column of that element kind when the destination supports one; an object becomes `json` when supported.
+ * column of that element kind when the destination supports one; an object, or any other array (of
+ * objects, or of an element kind the destination has no list for), becomes `json` when supported.
  *
- * Any other array — of objects, or of an element kind the destination has no list for — is NOT given a
- * `json` column: a JSON destination column declares no shape, so the sync's transform picker reads it as
- * single-valued and would join the array into one string before writing it (DEV-11903 review). Such an
- * array keeps flattening to text, where that join is the intended, honest result.
+ * A created JSON column marks itself as one (`acceptsAnyJsonValue`), so the sync's transform picker copies
+ * the array in whole. Before it did, the picker read a JSON column as single-valued and joined an array
+ * into one string of JSON fragments, so arrays of objects were kept as text (DEV-11903 review) — Stripe's
+ * `total_taxes` landed as `{…},{…}`, which isn't valid JSON.
  */
 function fieldTypeKeepingStructuredValue(
   field: SchemaField,
@@ -1605,7 +1606,7 @@ function fieldTypeKeepingStructuredValue(
     const destinationHasThisListKind =
       listFieldType !== undefined &&
       (destinationFieldTypeSupport.supportedArrayElementKinds ?? []).includes(listFieldType.kind);
-    return destinationHasThisListKind ? listFieldType : undefined;
+    if (destinationHasThisListKind) return listFieldType;
   }
   return (destinationFieldTypeSupport.supportedFieldKinds ?? []).includes('json') ? { kind: 'json' } : undefined;
 }

@@ -2,18 +2,7 @@ import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
-import {
-  StripeCharge,
-  StripeCredentials,
-  StripeCustomer,
-  StripeEntityType,
-  StripeInvoice,
-  StripeListResponse,
-  StripePaymentIntent,
-  StripePrice,
-  StripeProduct,
-  StripeSubscription,
-} from './stripe-types';
+import { StripeCredentials, StripeEntityType, StripeListResponse } from './stripe-types';
 
 /**
  * Custom error class for Stripe API errors.
@@ -104,6 +93,53 @@ const ENTITY_ENDPOINTS: Record<StripeEntityType, string> = {
   invoices: '/v1/invoices',
   payment_intents: '/v1/payment_intents',
   charges: '/v1/charges',
+  refunds: '/v1/refunds',
+  disputes: '/v1/disputes',
+  credit_notes: '/v1/credit_notes',
+  coupons: '/v1/coupons',
+  promotion_codes: '/v1/promotion_codes',
+  balance_transactions: '/v1/balance_transactions',
+  subscription_schedules: '/v1/subscription_schedules',
+  // Stripe only lists events from the last 30 days.
+  events: '/v1/events',
+};
+
+/**
+ * A list Stripe embeds in a record and cuts off at 10 entries (`has_more: true`), with the endpoint
+ * that pages through the whole list for one record. The embedded list can't be paginated in place, so
+ * the client fetches the rest from that endpoint and splices it back in (see
+ * `hydrateTruncatedEmbeddedList`).
+ */
+interface TruncatedEmbeddedListSource {
+  /** The record field holding the embedded list. */
+  listFieldName: string;
+  /** The endpoint and fixed query parameters that list every entry for the record with this id. */
+  fullListRequestForRecord: (recordId: string) => { path: string; params: Record<string, string> };
+}
+
+const TRUNCATED_EMBEDDED_LIST_SOURCES: Partial<Record<StripeEntityType, TruncatedEmbeddedListSource>> = {
+  // The same endpoint that backs the nested list (`items.url`).
+  subscriptions: {
+    listFieldName: 'items',
+    fullListRequestForRecord: (subscriptionId) => ({
+      path: '/v1/subscription_items',
+      params: { subscription: subscriptionId },
+    }),
+  },
+  invoices: {
+    listFieldName: 'lines',
+    fullListRequestForRecord: (invoiceId) => ({
+      path: `/v1/invoices/${encodeURIComponent(invoiceId)}/lines`,
+      params: {},
+    }),
+  },
+  credit_notes: {
+    listFieldName: 'lines',
+    fullListRequestForRecord: (creditNoteId) => ({
+      path: `/v1/credit_notes/${encodeURIComponent(creditNoteId)}/lines`,
+      params: {},
+    }),
+  },
 };
 
 /**
@@ -205,10 +241,8 @@ export class StripeApiClient {
       const list = response.data;
 
       if (list.data && list.data.length > 0) {
-        if (entityType === 'subscriptions') {
-          for (const subscription of list.data) {
-            await this.hydrateTruncatedSubscriptionItems(subscription);
-          }
+        for (const record of list.data) {
+          await this.hydrateTruncatedEmbeddedList(entityType, record);
         }
         yield list.data;
         const lastItem = list.data[list.data.length - 1];
@@ -233,9 +267,7 @@ export class StripeApiClient {
         }),
       );
       const entity = response.data;
-      if (entityType === 'subscriptions') {
-        await this.hydrateTruncatedSubscriptionItems(entity);
-      }
+      await this.hydrateTruncatedEmbeddedList(entityType, entity);
       return entity;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -265,9 +297,13 @@ export class StripeApiClient {
    * Stripe's `GET /v1/subscriptions` returns only non-canceled subscriptions
    * unless `status=all` is supplied, which would drop canceled/ended
    * subscriptions from a full pull. Every other entity type lists all records by
-   * default — products and prices return both active and inactive, invoices
-   * return every status including drafts, and charges and payment intents have
-   * no status filter — so they need no extra parameters.
+   * default — products, prices, and promotion codes return both active and
+   * inactive, invoices and credit notes return every status including drafts and
+   * voids, subscription schedules return every status unless filtered, and
+   * charges, payment intents, refunds, disputes, coupons, and balance
+   * transactions have no status filter — so they need no extra parameters.
+   * Events are the exception no parameter can fix: Stripe only lists the last
+   * 30 days of them.
    *
    * See: https://docs.stripe.com/api/subscriptions/list (status parameter)
    */
@@ -281,46 +317,55 @@ export class StripeApiClient {
   }
 
   /**
-   * Repair a subscription whose expanded `items` list was truncated.
+   * Repair a record whose embedded list was truncated: a subscription's `items`, or an invoice's or
+   * credit note's `lines` (see `TRUNCATED_EMBEDDED_LIST_SOURCES`).
    *
-   * Stripe caps the inline `expand[]=data.items` list at 10 entries (the
-   * nested-expand limit) and sets `items.has_more = true` when the subscription
-   * has more line items. A nested expanded list cannot be paginated in-line, so
-   * we re-fetch the complete set from `/v1/subscription_items` — the same
-   * endpoint that backs the nested list (`items.url`) — and splice it back in.
-   * The result is byte-for-byte what Stripe would have returned had it not
+   * Stripe embeds at most 10 entries and sets `has_more = true` when the record has more. An embedded
+   * list cannot be paginated in place, so we fetch the complete set from the endpoint that lists it
+   * for this record and splice it back in. The result is what Stripe would have returned had it not
    * truncated the list, preserving record fidelity.
    *
-   * No-op for subscriptions whose items already fit in a single page.
+   * No-op for entity types with no such list, and for records whose list already fits in one page.
    */
-  private async hydrateTruncatedSubscriptionItems(subscription: Record<string, unknown>): Promise<void> {
-    const subscriptionItemsList = subscription.items as StripeListResponse<Record<string, unknown>> | undefined;
-    if (!subscriptionItemsList || subscriptionItemsList.has_more !== true) {
+  private async hydrateTruncatedEmbeddedList(
+    entityType: StripeEntityType,
+    record: Record<string, unknown>,
+  ): Promise<void> {
+    const listSource = TRUNCATED_EMBEDDED_LIST_SOURCES[entityType];
+    if (!listSource) {
       return;
     }
 
-    const subscriptionId = subscription.id;
-    if (typeof subscriptionId !== 'string') {
+    const embeddedList = record[listSource.listFieldName] as StripeListResponse<Record<string, unknown>> | undefined;
+    if (!embeddedList || embeddedList.has_more !== true) {
       return;
     }
 
-    subscriptionItemsList.data = await this.fetchAllSubscriptionItems(subscriptionId);
-    subscriptionItemsList.has_more = false;
+    const recordId = record.id;
+    if (typeof recordId !== 'string') {
+      return;
+    }
+
+    embeddedList.data = await this.fetchAllEmbeddedListEntries(listSource.fullListRequestForRecord(recordId));
+    embeddedList.has_more = false;
   }
 
   /**
-   * Fetch every line item for a subscription, following Stripe's cursor-based
-   * pagination at the maximum page size. Each returned item embeds its full
-   * `price` object by default, matching the shape of the inline expanded items.
+   * Fetch every entry of a record's embedded list, following Stripe's cursor-based pagination at the
+   * maximum page size. Each entry comes back in the same shape as the embedded ones (a subscription
+   * item embeds its full `price`, an invoice line its `pricing` and `period`).
    */
-  private async fetchAllSubscriptionItems(subscriptionId: string): Promise<Record<string, unknown>[]> {
-    const allSubscriptionItems: Record<string, unknown>[] = [];
+  private async fetchAllEmbeddedListEntries(fullListRequest: {
+    path: string;
+    params: Record<string, string>;
+  }): Promise<Record<string, unknown>[]> {
+    const allEntries: Record<string, unknown>[] = [];
     let startingAfter: string | undefined;
     let hasMore = true;
 
     while (hasMore) {
       const params: Record<string, string | number> = {
-        subscription: subscriptionId,
+        ...fullListRequest.params,
         limit: 100,
       };
       if (startingAfter) {
@@ -328,32 +373,21 @@ export class StripeApiClient {
       }
 
       const response = await this.requestWithRateLimitRetry(() =>
-        this.client.get<StripeListResponse<Record<string, unknown>>>('/v1/subscription_items', {
+        this.client.get<StripeListResponse<Record<string, unknown>>>(fullListRequest.path, {
           params,
         }),
       );
       const list = response.data;
 
       if (list.data && list.data.length > 0) {
-        allSubscriptionItems.push(...list.data);
-        const lastSubscriptionItem = list.data[list.data.length - 1];
-        startingAfter = lastSubscriptionItem.id as string;
+        allEntries.push(...list.data);
+        const lastEntry = list.data[list.data.length - 1];
+        startingAfter = lastEntry.id as string;
       }
 
       hasMore = list.has_more;
     }
 
-    return allSubscriptionItems;
+    return allEntries;
   }
 }
-
-// Re-export types used by the connector
-export type {
-  StripeCharge,
-  StripeCustomer,
-  StripeInvoice,
-  StripePaymentIntent,
-  StripePrice,
-  StripeProduct,
-  StripeSubscription,
-};

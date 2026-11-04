@@ -1,10 +1,11 @@
-import { Type, type TSchema } from '@sinclair/typebox';
+import type { TSchema } from '@sinclair/typebox';
 import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
+import { STRIPE_OBJECT_SCHEMAS_BY_STRIPE_OBJECT_NAME, type StripeObjectName } from './stripe-object-schemas.generated';
 import { STRIPE_UNIX_TIMESTAMP_DATA_TYPE, StripeEntityType } from './stripe-types';
 
 /**
@@ -18,11 +19,21 @@ const ENTITY_DISPLAY_NAMES: Record<StripeEntityType, string> = {
   invoices: 'Invoices',
   payment_intents: 'Payment Intents',
   charges: 'Charges',
+  refunds: 'Refunds',
+  disputes: 'Disputes',
+  credit_notes: 'Credit Notes',
+  coupons: 'Coupons',
+  promotion_codes: 'Promotion Codes',
+  balance_transactions: 'Balance Transactions',
+  subscription_schedules: 'Subscription Schedules',
+  events: 'Events',
 };
 
 /**
  * Path under the Stripe dashboard for each entity type's list view. Most match
- * the entity name, but payment intents and charges both live under /payments.
+ * the entity name, but payment intents, charges, and refunds all live under
+ * /payments, credit notes under /invoices, promotion codes under /coupons, and
+ * subscription schedules under /subscriptions.
  */
 const STRIPE_DASHBOARD_PATHS: Record<StripeEntityType, string> = {
   customers: 'customers',
@@ -32,6 +43,14 @@ const STRIPE_DASHBOARD_PATHS: Record<StripeEntityType, string> = {
   invoices: 'invoices',
   payment_intents: 'payments',
   charges: 'payments',
+  refunds: 'payments',
+  disputes: 'disputes',
+  credit_notes: 'invoices',
+  coupons: 'coupons',
+  promotion_codes: 'coupons',
+  balance_transactions: 'balance/overview',
+  subscription_schedules: 'subscriptions',
+  events: 'events',
 };
 
 /**
@@ -53,6 +72,18 @@ function getTitleColumnRemoteId(entityType: StripeEntityType): string[] {
       return ['id'];
     case 'charges':
       return ['id'];
+    case 'credit_notes':
+      return ['number'];
+    case 'coupons':
+      return ['name'];
+    case 'promotion_codes':
+      return ['code'];
+    case 'refunds':
+    case 'disputes':
+    case 'balance_transactions':
+    case 'subscription_schedules':
+    case 'events':
+      return ['id'];
   }
 }
 
@@ -70,595 +101,161 @@ function getSlugFieldPath(entityType: StripeEntityType): string {
       return 'nickname';
     case 'invoices':
       return 'number';
+    case 'credit_notes':
+      return 'number';
+    case 'coupons':
+      return 'name';
+    case 'promotion_codes':
+      return 'code';
     case 'subscriptions':
     case 'payment_intents':
     case 'charges':
+    case 'refunds':
+    case 'disputes':
+    case 'balance_transactions':
+    case 'subscription_schedules':
+    case 'events':
       return 'id';
   }
 }
 
-// ============= Shared sub-schemas =============
+/** The Stripe object each table holds, by Stripe's own object name. */
+const STRIPE_OBJECT_NAME_BY_ENTITY_TYPE: Record<StripeEntityType, StripeObjectName> = {
+  customers: 'customer',
+  products: 'product',
+  prices: 'price',
+  subscriptions: 'subscription',
+  invoices: 'invoice',
+  payment_intents: 'payment_intent',
+  charges: 'charge',
+  refunds: 'refund',
+  disputes: 'dispute',
+  credit_notes: 'credit_note',
+  coupons: 'coupon',
+  promotion_codes: 'promotion_code',
+  balance_transactions: 'balance_transaction',
+  subscription_schedules: 'subscription_schedule',
+  events: 'event',
+};
 
-function addressSchema(description: string): TSchema {
-  return Type.Optional(
-    Type.Union(
-      [
-        Type.Object({
-          city: Type.Union([Type.String(), Type.Null()]),
-          country: Type.Union([Type.String(), Type.Null()]),
-          line1: Type.Union([Type.String(), Type.Null()]),
-          line2: Type.Union([Type.String(), Type.Null()]),
-          postal_code: Type.Union([Type.String(), Type.Null()]),
-          state: Type.Union([Type.String(), Type.Null()]),
-        }),
-        Type.Null(),
-      ],
-      { description, [X_SCRATCH_READONLY]: true },
+/** The table holding each Stripe object, for turning an id that points at one into a foreign key. */
+const ENTITY_TYPE_BY_STRIPE_OBJECT_NAME = new Map<string, StripeEntityType>(
+  Object.entries(STRIPE_OBJECT_NAME_BY_ENTITY_TYPE).map(([entityType, stripeObjectName]) => [
+    stripeObjectName,
+    entityType as StripeEntityType,
+  ]),
+);
+
+/**
+ * Marker the generator leaves on an expandable field's string id: the Stripe objects the id can point
+ * at (`['customer', 'deleted_customer']`). Stripe returns the id because the connector expands nothing.
+ */
+const STRIPE_EXPANDABLE_RESOURCES_KEY = 'x-stripe-expandable-resources';
+
+/** Stripe's own `format` for an integer holding a Unix-epoch time in seconds. */
+const STRIPE_UNIX_TIME_FORMAT = 'unix-time';
+
+/** A JSON Schema node as the generated file declares it (plain JSON, no TypeBox symbols). */
+interface JsonSchemaNode {
+  type?: string;
+  format?: string;
+  description?: string;
+  properties?: Record<string, JsonSchemaNode>;
+  additionalProperties?: JsonSchemaNode;
+  items?: JsonSchemaNode;
+  anyOf?: JsonSchemaNode[];
+  [annotation: string]: unknown;
+}
+
+/**
+ * The table an expandable id points at, or undefined when it can point at objects in several tables
+ * (a balance transaction's `source` is a charge, refund, payout, or one of a dozen others) or at an
+ * object the connector has no table for. A deleted object (`deleted_customer`) is the same table's
+ * record after deletion.
+ */
+function entityTypeReferencedByExpandableId(stripeObjectNames: string[]): StripeEntityType | undefined {
+  const referencedEntityTypes = new Set(
+    stripeObjectNames.map((stripeObjectName) =>
+      ENTITY_TYPE_BY_STRIPE_OBJECT_NAME.get(stripeObjectName.replace(/^deleted_/, '')),
     ),
   );
+  if (referencedEntityTypes.size !== 1) return undefined;
+  const [referencedEntityType] = referencedEntityTypes;
+  return referencedEntityType;
 }
 
 /**
- * A required Unix-epoch timestamp (seconds). The value stays exactly what Stripe sent — a bare
- * integer; the annotation only RECORDS that Stripe reports this number as a timestamp, which is
- * what lets the default view build a date column instead of a number one.
+ * Turn the generator's Stripe-native markers on one schema node, and everything below it, into Scratch
+ * annotations: an epoch-seconds integer gets the timestamp annotation (so the view builds a date
+ * column backed by an `epoch_to_iso` codec), and an id pointing at a Stripe table becomes a foreign
+ * key. Annotations go on the node itself — on a nullable field, the `anyOf` wrapper — which is where
+ * the view and the schema flattener read them.
  */
-function unixTimestampSchema(description: string): TSchema {
-  return Type.Number({
-    description,
-    [X_SCRATCH_CONNECTOR_DATA_TYPE]: STRIPE_UNIX_TIMESTAMP_DATA_TYPE,
-    [X_SCRATCH_READONLY]: true,
-  });
-}
-
-/** An optional/nullable Unix-epoch timestamp (seconds). See {@link unixTimestampSchema}. */
-function nullableUnixTimestampSchema(description: string): TSchema {
-  return Type.Optional(
-    Type.Union([Type.Number(), Type.Null()], {
-      description,
-      [X_SCRATCH_CONNECTOR_DATA_TYPE]: STRIPE_UNIX_TIMESTAMP_DATA_TYPE,
-      [X_SCRATCH_READONLY]: true,
-    }),
-  );
-}
-
-function metadataSchema(): TSchema {
-  return Type.Optional(
-    Type.Record(Type.String(), Type.String(), {
-      description: 'Key-value metadata',
-      [X_SCRATCH_READONLY]: true,
-    }),
-  );
-}
-
-// ============= Entity schemas =============
-
-function buildCustomerSchema(): TSchema {
-  return Type.Object(
-    {
-      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
-      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
-      name: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Customer name' })),
-      email: Type.Optional(
-        Type.Union([Type.String({ format: 'email' }), Type.Null()], { description: 'Email address' }),
-      ),
-      phone: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Phone number' })),
-      description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Description' })),
-      address: addressSchema('Customer address'),
-      shipping: Type.Optional(
-        Type.Union(
-          [
-            Type.Object({
-              name: Type.Union([Type.String(), Type.Null()]),
-              phone: Type.Union([Type.String(), Type.Null()]),
-              address: Type.Optional(
-                Type.Union([
-                  Type.Object({
-                    city: Type.Union([Type.String(), Type.Null()]),
-                    country: Type.Union([Type.String(), Type.Null()]),
-                    line1: Type.Union([Type.String(), Type.Null()]),
-                    line2: Type.Union([Type.String(), Type.Null()]),
-                    postal_code: Type.Union([Type.String(), Type.Null()]),
-                    state: Type.Union([Type.String(), Type.Null()]),
-                  }),
-                  Type.Null(),
-                ]),
-              ),
-            }),
-            Type.Null(),
-          ],
-          { description: 'Shipping information', [X_SCRATCH_READONLY]: true },
-        ),
-      ),
-      metadata: metadataSchema(),
-      currency: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Default currency', [X_SCRATCH_READONLY]: true }),
-      ),
-      balance: Type.Optional(Type.Number({ description: 'Account balance in cents', [X_SCRATCH_READONLY]: true })),
-      delinquent: Type.Optional(Type.Boolean({ description: 'Has unpaid invoices', [X_SCRATCH_READONLY]: true })),
-      default_source: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Default payment source ID',
-          [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      invoice_prefix: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Invoice prefix', [X_SCRATCH_READONLY]: true }),
-      ),
-      invoice_settings: Type.Optional(
-        Type.Union(
-          [
-            Type.Object({
-              default_payment_method: Type.Union([Type.String(), Type.Null()]),
-              footer: Type.Union([Type.String(), Type.Null()]),
-            }),
-            Type.Null(),
-          ],
-          { description: 'Invoice settings', [X_SCRATCH_READONLY]: true },
-        ),
-      ),
-      tax_exempt: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Tax exemption status', [X_SCRATCH_READONLY]: true }),
-      ),
-      created: unixTimestampSchema('Created timestamp (Unix)'),
-      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
-    },
-    { $id: 'stripe/customers', title: 'Customers' },
-  );
-}
-
-// FIXTURE NOTE: edits here change the generated schema.json checked in under
-// `__fixtures__/view-codec/stripe-products` — see `buildStripeJsonTableSpec` for how to refresh it.
-function buildProductSchema(): TSchema {
-  return Type.Object(
-    {
-      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
-      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
-      name: Type.String({ description: 'Product name' }),
-      description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Product description' })),
-      active: Type.Boolean({ description: 'Whether the product is available for purchase' }),
-      default_price: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Default price ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'prices', linkedTableRemoteId: ['prices'] },
-        }),
-      ),
-      images: Type.Optional(
-        Type.Array(Type.String(), { description: 'Product image URLs', [X_SCRATCH_READONLY]: true }),
-      ),
-      metadata: metadataSchema(),
-      url: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Product URL' })),
-      type: Type.Optional(Type.String({ description: 'Product type', [X_SCRATCH_READONLY]: true })),
-      created: unixTimestampSchema('Created timestamp (Unix)'),
-      updated: unixTimestampSchema('Updated timestamp (Unix)'),
-      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
-    },
-    { $id: 'stripe/products', title: 'Products' },
-  );
-}
-
-function buildPriceSchema(): TSchema {
-  return Type.Object(
-    {
-      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
-      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
-      product: Type.String({
-        description: 'Product ID',
-        [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'products', linkedTableRemoteId: ['products'] },
-      }),
-      active: Type.Boolean({ description: 'Whether the price is active' }),
-      currency: Type.String({ description: 'Three-letter ISO currency code' }),
-      unit_amount: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Price in cents', [X_SCRATCH_READONLY]: true }),
-      ),
-      unit_amount_decimal: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Price in cents as decimal string',
-          [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      type: Type.String({ description: 'Price type (one_time or recurring)', [X_SCRATCH_READONLY]: true }),
-      recurring: Type.Optional(
-        Type.Union(
-          [
-            Type.Object({
-              interval: Type.String({ description: 'Billing interval (day, week, month, year)' }),
-              interval_count: Type.Number({ description: 'Number of intervals between billings' }),
-              usage_type: Type.String({ description: 'Usage type (metered or licensed)' }),
-            }),
-            Type.Null(),
-          ],
-          { description: 'Recurring pricing details', [X_SCRATCH_READONLY]: true },
-        ),
-      ),
-      billing_scheme: Type.Optional(Type.String({ description: 'Billing scheme', [X_SCRATCH_READONLY]: true })),
-      nickname: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Price nickname' })),
-      metadata: metadataSchema(),
-      lookup_key: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Lookup key', [X_SCRATCH_READONLY]: true }),
-      ),
-      created: unixTimestampSchema('Created timestamp (Unix)'),
-      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
-    },
-    { $id: 'stripe/prices', title: 'Prices' },
-  );
-}
-
-function buildSubscriptionSchema(): TSchema {
-  return Type.Object(
-    {
-      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
-      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
-      customer: Type.String({
-        description: 'Customer ID',
-        [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers', linkedTableRemoteId: ['customers'] },
-      }),
-      status: Type.String({
-        description:
-          'Subscription status (active, past_due, unpaid, canceled, incomplete, incomplete_expired, trialing, paused)',
-        [X_SCRATCH_READONLY]: true,
-      }),
-      cancel_at_period_end: Type.Boolean({
-        description: 'Will cancel at end of period',
-        [X_SCRATCH_READONLY]: true,
-      }),
-      canceled_at: nullableUnixTimestampSchema('Cancellation timestamp (Unix)'),
-      ended_at: nullableUnixTimestampSchema('End timestamp (Unix)'),
-      start_date: unixTimestampSchema('Start date (Unix)'),
-      trial_start: nullableUnixTimestampSchema('Trial start (Unix)'),
-      trial_end: nullableUnixTimestampSchema('Trial end (Unix)'),
-      default_payment_method: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Default payment method ID',
-          [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      latest_invoice: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Latest invoice ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices', linkedTableRemoteId: ['invoices'] },
-        }),
-      ),
-      collection_method: Type.Optional(Type.String({ description: 'Collection method', [X_SCRATCH_READONLY]: true })),
-      currency: Type.String({ description: 'Currency code', [X_SCRATCH_READONLY]: true }),
-      metadata: metadataSchema(),
-      items: Type.Optional(
-        Type.Object(
-          {
-            object: Type.Optional(Type.String()),
-            data: Type.Array(
-              Type.Object({
-                id: Type.String(),
-                object: Type.Optional(Type.String()),
-                price: Type.Object({
-                  id: Type.String(),
-                  product: Type.String(),
-                  currency: Type.String(),
-                  unit_amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-                  type: Type.String(),
-                  recurring: Type.Optional(
-                    Type.Union([
-                      Type.Object({
-                        interval: Type.String(),
-                        interval_count: Type.Number(),
-                        usage_type: Type.String(),
-                      }),
-                      Type.Null(),
-                    ]),
-                  ),
-                }),
-                quantity: Type.Optional(Type.Number()),
-                metadata: Type.Optional(Type.Record(Type.String(), Type.String())),
-                created: Type.Optional(Type.Number()),
-                // The billing period lives on the line item, not the subscription: an item's period
-                // is what Stripe removed from the subscription top level. Declared optional because
-                // items spliced in by `hydrateTruncatedSubscriptionItems` come from a different
-                // endpoint, so we never assume the field is there.
-                current_period_start: Type.Optional(
-                  Type.Number({ description: "Start of this item's current billing period (Unix)" }),
-                ),
-                current_period_end: Type.Optional(
-                  Type.Number({ description: "End of this item's current billing period (Unix)" }),
-                ),
-              }),
-            ),
-            has_more: Type.Optional(Type.Boolean()),
-            url: Type.Optional(Type.String()),
-          },
-          { description: 'Subscription line items', [X_SCRATCH_READONLY]: true },
-        ),
-      ),
-      created: unixTimestampSchema('Created timestamp (Unix)'),
-      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
-    },
-    { $id: 'stripe/subscriptions', title: 'Subscriptions' },
-  );
-}
-
-/**
- * Invoices no longer carry a `charge` or `payment_intent` link, and the reverse links (`charge.invoice`,
- * `payment_intent.invoice`) were removed with them — an invoice can now be settled by several partial
- * payments, so the relation moved to the invoice's `payments` list. That list is `expand`-only and its
- * links sit inside an array (`payments.data[].payment.payment_intent`), which the foreign-key extractor
- * does not walk, so it is deliberately not modelled here. Invoice ↔ payment relations are therefore
- * unavailable until both the expand and array-nested foreign keys are supported (DEV-11144).
- */
-function buildInvoiceSchema(): TSchema {
-  return Type.Object(
-    {
-      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
-      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
-      customer: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Customer ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers', linkedTableRemoteId: ['customers'] },
-        }),
-      ),
-      // Replaces the removed top-level `subscription`: Stripe now reports what generated an invoice
-      // through `parent`, whose shape is selected by `parent.type`. The link to the subscription is
-      // annotated where it actually lives rather than hoisted back to the top level.
-      parent: Type.Optional(
-        Type.Union(
-          [
-            Type.Object({
-              type: Type.String({
-                description: 'Which detail hash is populated (subscription_details, quote_details)',
-              }),
-              subscription_details: Type.Optional(
-                Type.Union([
-                  Type.Object({
-                    subscription: Type.Optional(
-                      Type.Union([Type.String(), Type.Null()], {
-                        description: 'Subscription ID',
-                        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                          linkedTableId: 'subscriptions',
-                          linkedTableRemoteId: ['subscriptions'],
-                        },
-                      }),
-                    ),
-                    subscription_proration_date: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-                    metadata: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Null()])),
-                  }),
-                  Type.Null(),
-                ]),
-              ),
-              quote_details: Type.Optional(
-                Type.Union([Type.Object({ quote: Type.Optional(Type.String()) }), Type.Null()]),
-              ),
-            }),
-            Type.Null(),
-          ],
-          { description: 'What generated this invoice (subscription or quote)', [X_SCRATCH_READONLY]: true },
-        ),
-      ),
-      status: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Invoice status (draft, open, paid, uncollectible, void)',
-          [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      currency: Type.String({ description: 'Currency code', [X_SCRATCH_READONLY]: true }),
-      amount_due: Type.Number({ description: 'Amount due in cents', [X_SCRATCH_READONLY]: true }),
-      amount_paid: Type.Number({ description: 'Amount paid in cents', [X_SCRATCH_READONLY]: true }),
-      amount_remaining: Type.Number({ description: 'Amount remaining in cents', [X_SCRATCH_READONLY]: true }),
-      subtotal: Type.Number({ description: 'Subtotal in cents', [X_SCRATCH_READONLY]: true }),
-      total: Type.Number({ description: 'Total in cents', [X_SCRATCH_READONLY]: true }),
-      // Replaces the removed top-level `tax`, which Stripe unified into per-tax-object aggregates.
-      total_taxes: Type.Optional(
-        Type.Union(
-          [
-            Type.Array(
-              Type.Object({
-                amount: Type.Number(),
-                tax_behavior: Type.Optional(Type.String()),
-                taxability_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                taxable_amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-                type: Type.Optional(Type.String()),
-                tax_rate_details: Type.Optional(
-                  Type.Union([Type.Object({ tax_rate: Type.Optional(Type.String()) }), Type.Null()]),
-                ),
-              }),
-            ),
-            Type.Null(),
-          ],
-          { description: 'Aggregate tax amounts across all line items', [X_SCRATCH_READONLY]: true },
-        ),
-      ),
-      number: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Invoice number', [X_SCRATCH_READONLY]: true }),
-      ),
-      description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Invoice description' })),
-      due_date: nullableUnixTimestampSchema('Due date (Unix)'),
-      // Replaces the removed top-level `paid` — whether an invoice is paid is now read from `status`,
-      // and when it was paid from `status_transitions.paid_at`.
-      status_transitions: Type.Optional(
-        Type.Union(
-          [
-            Type.Object({
-              finalized_at: nullableUnixTimestampSchema('When the invoice was finalized (Unix)'),
-              marked_uncollectible_at: nullableUnixTimestampSchema('When the invoice was marked uncollectible (Unix)'),
-              paid_at: nullableUnixTimestampSchema('When the invoice was paid (Unix)'),
-              voided_at: nullableUnixTimestampSchema('When the invoice was voided (Unix)'),
-            }),
-            Type.Null(),
-          ],
-          { description: 'Timestamps for each status the invoice has moved through', [X_SCRATCH_READONLY]: true },
-        ),
-      ),
-      period_start: unixTimestampSchema('Period start (Unix)'),
-      period_end: unixTimestampSchema('Period end (Unix)'),
-      hosted_invoice_url: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Hosted invoice page URL',
-          [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      invoice_pdf: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Invoice PDF URL', [X_SCRATCH_READONLY]: true }),
-      ),
-      collection_method: Type.Optional(Type.String({ description: 'Collection method', [X_SCRATCH_READONLY]: true })),
-      metadata: metadataSchema(),
-      created: unixTimestampSchema('Created timestamp (Unix)'),
-      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
-    },
-    { $id: 'stripe/invoices', title: 'Invoices' },
-  );
-}
-
-function buildPaymentIntentSchema(): TSchema {
-  return Type.Object(
-    {
-      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
-      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
-      customer: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Customer ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers', linkedTableRemoteId: ['customers'] },
-        }),
-      ),
-      amount: Type.Number({ description: 'Amount in cents', [X_SCRATCH_READONLY]: true }),
-      amount_received: Type.Number({ description: 'Amount received in cents', [X_SCRATCH_READONLY]: true }),
-      currency: Type.String({ description: 'Currency code', [X_SCRATCH_READONLY]: true }),
-      status: Type.String({
-        description: 'Payment intent status',
-        [X_SCRATCH_READONLY]: true,
-      }),
-      description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Description' })),
-      payment_method: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Payment method ID',
-          [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      capture_method: Type.Optional(Type.String({ description: 'Capture method', [X_SCRATCH_READONLY]: true })),
-      confirmation_method: Type.Optional(
-        Type.String({ description: 'Confirmation method', [X_SCRATCH_READONLY]: true }),
-      ),
-      metadata: metadataSchema(),
-      latest_charge: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Latest charge ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'charges', linkedTableRemoteId: ['charges'] },
-        }),
-      ),
-      created: unixTimestampSchema('Created timestamp (Unix)'),
-      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
-    },
-    { $id: 'stripe/payment_intents', title: 'Payment Intents' },
-  );
-}
-
-function buildChargeSchema(): TSchema {
-  return Type.Object(
-    {
-      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
-      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
-      customer: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Customer ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers', linkedTableRemoteId: ['customers'] },
-        }),
-      ),
-      amount: Type.Number({ description: 'Amount in cents', [X_SCRATCH_READONLY]: true }),
-      amount_captured: Type.Number({ description: 'Amount captured in cents', [X_SCRATCH_READONLY]: true }),
-      amount_refunded: Type.Number({ description: 'Amount refunded in cents', [X_SCRATCH_READONLY]: true }),
-      currency: Type.String({ description: 'Currency code', [X_SCRATCH_READONLY]: true }),
-      status: Type.String({ description: 'Charge status (succeeded, pending, failed)', [X_SCRATCH_READONLY]: true }),
-      paid: Type.Boolean({ description: 'Whether the charge was paid', [X_SCRATCH_READONLY]: true }),
-      captured: Type.Boolean({ description: 'Whether the charge was captured', [X_SCRATCH_READONLY]: true }),
-      refunded: Type.Boolean({ description: 'Whether the charge was refunded', [X_SCRATCH_READONLY]: true }),
-      disputed: Type.Boolean({ description: 'Whether the charge is disputed', [X_SCRATCH_READONLY]: true }),
-      description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Charge description' })),
-      payment_intent: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Payment intent ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-            linkedTableId: 'payment_intents',
-            linkedTableRemoteId: ['payment_intents'],
-          },
-        }),
-      ),
-      payment_method: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Payment method ID',
-          [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      receipt_email: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Receipt email', [X_SCRATCH_READONLY]: true }),
-      ),
-      receipt_url: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Receipt URL', [X_SCRATCH_READONLY]: true }),
-      ),
-      failure_code: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Failure code', [X_SCRATCH_READONLY]: true }),
-      ),
-      failure_message: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Failure message', [X_SCRATCH_READONLY]: true }),
-      ),
-      billing_details: Type.Optional(
-        Type.Union(
-          [
-            Type.Object({
-              name: Type.Union([Type.String(), Type.Null()]),
-              email: Type.Union([Type.String(), Type.Null()]),
-              phone: Type.Union([Type.String(), Type.Null()]),
-              address: Type.Optional(
-                Type.Union([
-                  Type.Object({
-                    city: Type.Union([Type.String(), Type.Null()]),
-                    country: Type.Union([Type.String(), Type.Null()]),
-                    line1: Type.Union([Type.String(), Type.Null()]),
-                    line2: Type.Union([Type.String(), Type.Null()]),
-                    postal_code: Type.Union([Type.String(), Type.Null()]),
-                    state: Type.Union([Type.String(), Type.Null()]),
-                  }),
-                  Type.Null(),
-                ]),
-              ),
-            }),
-            Type.Null(),
-          ],
-          { description: 'Billing details', [X_SCRATCH_READONLY]: true },
-        ),
-      ),
-      metadata: metadataSchema(),
-      created: unixTimestampSchema('Created timestamp (Unix)'),
-      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
-    },
-    { $id: 'stripe/charges', title: 'Charges' },
-  );
-}
-
-/**
- * Build the TypeBox schema for a Stripe entity type.
- */
-function buildSchema(entityType: StripeEntityType): TSchema {
-  switch (entityType) {
-    case 'customers':
-      return buildCustomerSchema();
-    case 'products':
-      return buildProductSchema();
-    case 'prices':
-      return buildPriceSchema();
-    case 'subscriptions':
-      return buildSubscriptionSchema();
-    case 'invoices':
-      return buildInvoiceSchema();
-    case 'payment_intents':
-      return buildPaymentIntentSchema();
-    case 'charges':
-      return buildChargeSchema();
+function annotateSchemaNode(node: JsonSchemaNode): void {
+  const nonNullArms = node.anyOf?.filter((arm) => arm.type !== 'null');
+  if (nonNullArms && nonNullArms.length > 1) {
+    for (const arm of nonNullArms) annotateSchemaNode(arm);
+    return;
   }
+  const shape = nonNullArms?.[0] ?? node;
+
+  if (shape.format === STRIPE_UNIX_TIME_FORMAT) {
+    delete shape.format;
+    node[X_SCRATCH_CONNECTOR_DATA_TYPE] = STRIPE_UNIX_TIMESTAMP_DATA_TYPE;
+  }
+
+  const expandableResourceNames = shape[STRIPE_EXPANDABLE_RESOURCES_KEY] as string[] | undefined;
+  if (expandableResourceNames) {
+    delete shape[STRIPE_EXPANDABLE_RESOURCES_KEY];
+    const referencedEntityType = entityTypeReferencedByExpandableId(expandableResourceNames);
+    if (referencedEntityType) {
+      node[X_SCRATCH_FOREIGN_KEY_OPTIONS] = {
+        linkedTableId: referencedEntityType,
+        linkedTableRemoteId: [referencedEntityType],
+      };
+    }
+  }
+
+  for (const propertySchema of Object.values(shape.properties ?? {})) annotateSchemaNode(propertySchema);
+  if (shape.additionalProperties) annotateSchemaNode(shape.additionalProperties);
+  if (shape.items) annotateSchemaNode(shape.items);
+}
+
+/**
+ * Mark a top-level field read-only, since the connector is. An `x-scratch-*` key on an object makes
+ * the schema flattener treat it as one opaque value and stop walking into it, which would hide a
+ * foreign key nested inside (a promotion code's `promotion.coupon`). So a non-nullable object gets
+ * the same one-arm `anyOf` wrapper a nullable one already has, and the annotation goes on that.
+ */
+function readonlyTopLevelField(fieldSchema: JsonSchemaNode): JsonSchemaNode {
+  if (!fieldSchema.anyOf && fieldSchema.type === 'object' && fieldSchema.properties) {
+    const { description, ...objectShape } = fieldSchema;
+    return { anyOf: [objectShape], ...(description ? { description } : {}), [X_SCRATCH_READONLY]: true };
+  }
+  fieldSchema[X_SCRATCH_READONLY] = true;
+  return fieldSchema;
+}
+
+/**
+ * Build the record schema for one Stripe table from the shapes generated from Stripe's OpenAPI spec
+ * (`stripe-object-schemas.generated.ts`), so every field Stripe returns is declared — and can reach a
+ * Live Export — without being typed in by hand.
+ */
+export function buildStripeRecordSchema(entityType: StripeEntityType): TSchema {
+  const schema = structuredClone(
+    STRIPE_OBJECT_SCHEMAS_BY_STRIPE_OBJECT_NAME[STRIPE_OBJECT_NAME_BY_ENTITY_TYPE[entityType]],
+  ) as JsonSchemaNode;
+
+  annotateSchemaNode(schema);
+
+  const properties: Record<string, JsonSchemaNode> = {};
+  for (const [fieldName, fieldSchema] of Object.entries(schema.properties ?? {})) {
+    properties[fieldName] = readonlyTopLevelField(fieldSchema);
+  }
+  schema.properties = properties;
+  schema.$id = `stripe/${entityType}`;
+  schema.title = ENTITY_DISPLAY_NAMES[entityType];
+  return schema as TSchema;
 }
 
 /**
@@ -666,13 +263,14 @@ function buildSchema(entityType: StripeEntityType): TSchema {
  *
  * FIXTURE NOTE: real `schema.json` output of this generator is checked in as a codec-test input
  * under `server/src/sync/__fixtures__/view-codec/stripe-*`. Those fixtures are captured inputs,
- * NOT snapshots — there is no automated regeneration. Stripe schemas are hand-maintained here
- * (see the per-entity `build*Schema` helpers), so if you change one, update the matching fixture
- * `schema.json` to match and re-run `jest -u server/src/sync/view-codec-snapshots.spec.ts`, or the
- * view-codec guardrail keeps exercising the old shape.
+ * NOT snapshots — there is no automated regeneration. When the generated Stripe schemas change
+ * (a regenerated `stripe-object-schemas.generated.ts`, or a change to `buildStripeRecordSchema`),
+ * update the matching fixture `schema.json` to match and re-run
+ * `jest -u server/src/sync/view-codec-snapshots.spec.ts`, or the view-codec guardrail keeps
+ * exercising the old shape.
  */
 export function buildStripeJsonTableSpec(id: EntityId, entityType: StripeEntityType): BaseJsonTableSpec {
-  const schema = buildSchema(entityType);
+  const schema = buildStripeRecordSchema(entityType);
 
   return {
     id,

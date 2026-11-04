@@ -5,7 +5,8 @@
       "kind": "col",
       "path": "name",
       "name": "Name",
-      "type": "string"
+      "type": "string",
+      "readonly": true
     },
     {
       "kind": "col",
@@ -18,13 +19,15 @@
       "kind": "col",
       "path": "description",
       "name": "Description",
-      "type": "string"
+      "type": "string",
+      "readonly": true
     },
     {
       "kind": "col",
       "path": "active",
       "name": "Active",
-      "type": "checkbox"
+      "type": "checkbox",
+      "readonly": true
     },
     {
       "kind": "col",
@@ -44,7 +47,8 @@
       "kind": "col",
       "path": "url",
       "name": "Url",
-      "type": "string"
+      "type": "string",
+      "readonly": true
     },
     {
       "kind": "col",
@@ -85,6 +89,13 @@
     },
     {
       "kind": "col",
+      "path": "marketing_features",
+      "name": "Marketing Features",
+      "type": "object",
+      "readonly": true
+    },
+    {
+      "kind": "col",
       "path": "metadata",
       "name": "Metadata",
       "type": "object",
@@ -97,6 +108,41 @@
       "type": "string",
       "readonly": true,
       "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "package_dimensions",
+      "name": "Package Dimensions",
+      "type": "object",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "shippable",
+      "name": "Shippable",
+      "type": "checkbox",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "statement_descriptor",
+      "name": "Statement Descriptor",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "tax_code",
+      "name": "Tax Code",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "unit_label",
+      "name": "Unit Label",
+      "type": "string",
+      "readonly": true
     },
     {
       "kind": "col",

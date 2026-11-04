@@ -6,27 +6,20 @@
   "slug": "products",
   "name": "Products",
   "schema": {
-    "$id": "stripe/products",
-    "title": "Products",
     "type": "object",
-    "required": ["id", "object", "name", "active", "created", "updated", "livemode"],
     "properties": {
-      "id": {
-        "description": "Unique identifier",
-        "x-scratch-readonly": true,
-        "type": "string"
+      "active": {
+        "type": "boolean",
+        "description": "Whether the product is currently available for purchase.",
+        "x-scratch-readonly": true
       },
-      "object": {
-        "description": "Object type",
-        "x-scratch-readonly": true,
-        "type": "string"
+      "created": {
+        "type": "integer",
+        "description": "Time at which the object was created.",
+        "x-scratch-connector-data-type": "unix-timestamp-seconds",
+        "x-scratch-readonly": true
       },
-      "name": {
-        "description": "Product name",
-        "type": "string"
-      },
-      "description": {
-        "description": "Product description",
+      "default_price": {
         "anyOf": [
           {
             "type": "string"
@@ -34,19 +27,15 @@
           {
             "type": "null"
           }
-        ]
-      },
-      "active": {
-        "description": "Whether the product is available for purchase",
-        "type": "boolean"
-      },
-      "default_price": {
-        "description": "Default price ID",
-        "x-scratch-readonly": true,
+        ],
+        "description": "The ID of the Price object that is the default price for this product.",
         "x-scratch-foreign-key": {
           "linkedTableId": "prices",
           "linkedTableRemoteId": ["prices"]
         },
+        "x-scratch-readonly": true
+      },
+      "description": {
         "anyOf": [
           {
             "type": "string"
@@ -54,28 +43,103 @@
           {
             "type": "null"
           }
-        ]
+        ],
+        "description": "The product's description, meant to be displayable to the customer.",
+        "x-scratch-readonly": true
+      },
+      "id": {
+        "type": "string",
+        "description": "Unique identifier for the object.",
+        "x-scratch-readonly": true
       },
       "images": {
-        "description": "Product image URLs",
-        "x-scratch-readonly": true,
         "type": "array",
         "items": {
           "type": "string"
-        }
+        },
+        "description": "A list of up to 8 URLs of images for this product, meant to be displayable to the customer.",
+        "x-scratch-readonly": true
+      },
+      "livemode": {
+        "type": "boolean",
+        "description": "If the object exists in live mode, the value is `true`.",
+        "x-scratch-readonly": true
+      },
+      "marketing_features": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The marketing feature name."
+            }
+          }
+        },
+        "description": "A list of up to 15 marketing features for this product.",
+        "x-scratch-readonly": true
       },
       "metadata": {
-        "description": "Key-value metadata",
-        "x-scratch-readonly": true,
         "type": "object",
-        "patternProperties": {
-          "^(.*)$": {
-            "type": "string"
-          }
-        }
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Set of key-value pairs that you can attach to an object.",
+        "x-scratch-readonly": true
       },
-      "url": {
-        "description": "Product URL",
+      "name": {
+        "type": "string",
+        "description": "The product's name, meant to be displayable to the customer.",
+        "x-scratch-readonly": true
+      },
+      "object": {
+        "type": "string",
+        "description": "String representing the object's type. One of: product.",
+        "x-scratch-readonly": true
+      },
+      "package_dimensions": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "height": {
+                "type": "number",
+                "description": "Height, in inches."
+              },
+              "length": {
+                "type": "number",
+                "description": "Length, in inches."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Weight, in ounces."
+              },
+              "width": {
+                "type": "number",
+                "description": "Width, in inches."
+              }
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The dimensions of this product for shipping purposes.",
+        "x-scratch-readonly": true
+      },
+      "shippable": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Whether this product is shipped (i.e., physical goods).",
+        "x-scratch-readonly": true
+      },
+      "statement_descriptor": {
         "anyOf": [
           {
             "type": "string"
@@ -83,31 +147,61 @@
           {
             "type": "null"
           }
-        ]
+        ],
+        "description": "Extra information about a product which will appear on your customer's credit card statement.",
+        "x-scratch-readonly": true
       },
-      "type": {
-        "description": "Product type",
-        "x-scratch-readonly": true,
-        "type": "string"
+      "tax_code": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A tax code ID.",
+        "x-scratch-readonly": true
       },
-      "created": {
-        "description": "Created timestamp (Unix)",
-        "x-scratch-connector-data-type": "unix-timestamp-seconds",
-        "x-scratch-readonly": true,
-        "type": "number"
+      "unit_label": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A label that represents units of this product.",
+        "x-scratch-readonly": true
       },
       "updated": {
-        "description": "Updated timestamp (Unix)",
+        "type": "integer",
+        "description": "Time at which the object was last updated.",
         "x-scratch-connector-data-type": "unix-timestamp-seconds",
-        "x-scratch-readonly": true,
-        "type": "number"
+        "x-scratch-readonly": true
       },
-      "livemode": {
-        "description": "Live mode flag",
-        "x-scratch-readonly": true,
-        "type": "boolean"
+      "url": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A URL of a publicly-accessible webpage for this product.",
+        "x-scratch-readonly": true
+      },
+      "type": {
+        "type": "string",
+        "description": "Whether the product is a good or a service. One of: good, service.",
+        "x-scratch-readonly": true
       }
-    }
+    },
+    "description": "Products describe the specific goods or services you offer to your customers.",
+    "$id": "stripe/products",
+    "title": "Products"
   },
   "idPath": "id",
   "titlePath": "name",

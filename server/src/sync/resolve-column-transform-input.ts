@@ -74,7 +74,8 @@ export function resolveColumnTransformInput(args: {
  * available (no drilled path / view). `fromCore` comes from the field's `suggestedInTransformer`.
  * Cardinality is what the `fromCore` pack CONSUMES (else the field's native JSON shape) — so a raw
  * Airtable options field (`string[]`, no pack) is multi and a raw text field is single. `nullable` carries
- * the field's declared nullability so the picker keeps an unset source `null` into it (DEV-11902).
+ * the field's declared nullability so the picker keeps an unset source `null` into it (DEV-11902), and
+ * `acceptsAnyJsonValue` marks a JSON-document column the picker copies a value into whole.
  */
 export function columnTransformInputFromSchemaField(field: SchemaField | undefined): ColumnTransformInput {
   const jsonType = field?.type;
@@ -86,6 +87,7 @@ export function columnTransformInputFromSchemaField(field: SchemaField | undefin
     ...(fromCore ? { fromCore } : {}),
     ...(fromCoreInputType ? { fromCoreInputType } : {}),
     ...(field?.nullable ? { nullable: true } : {}),
+    ...(field?.acceptsAnyJsonValue ? { acceptsAnyJsonValue: true } : {}),
   };
 }
 

@@ -87,10 +87,10 @@ const MYSQL_DATE_TIME_COLUMN_TYPE = 'datetime(3)';
 
 /**
  * Connector-declared capabilities consumed by the generic create-schema validator and plan generator.
- * - multiSelect is unsupported: MySQL has no list column (SET needs its members baked into the DDL). The plan
- *   generator downgrades list-shaped sources to text, as for every destination without list columns.
- * - `supportedArrayElementKinds` is omitted on purpose (= no array fields): a JSON column can't stand in for them,
- *   because it reads back as `Type.Unknown` and the transform picker would join the array into one string anyway.
+ * - multiSelect is unsupported: MySQL has no list column (SET needs its members baked into the DDL). A raw
+ *   list-shaped source gets a JSON column instead (a list a codec emits still flattens to text).
+ * - `supportedArrayElementKinds` is omitted on purpose (= no array fields): arrays land in a JSON column, which reads
+ *   back marked `jsonb`, so the transform picker copies the array in whole (`acceptsAnyJsonValue`).
  */
 export const MYSQL_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
   supportedFieldKinds: CREATE_FIELD_KINDS.filter((fieldKind) => fieldKind !== 'multiSelect'),

@@ -1,6 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import {
   getSuggestedTransform,
+  PostgresColumnType,
   X_SCRATCH_ARRAY_KEYED_BY,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
@@ -238,6 +239,24 @@ describe('columnTransformInputFromSchemaField (destination side)', () => {
 
   it('handles an undefined destination field', () => {
     expect(columnTransformInputFromSchemaField(undefined)).toEqual({ cardinality: 'single' });
+  });
+
+  it('marks a JSON-document column (a Postgres jsonb or MySQL json column) as taking any JSON value whole', () => {
+    // How the Postgres connector describes a nullable `jsonb` column it created for a Live Export.
+    const [destField] = extractSchemaFields(
+      Type.Object({ total_taxes: Type.Unknown({ [X_SCRATCH_CONNECTOR_DATA_TYPE]: PostgresColumnType.JSONB }) }),
+    );
+    expect(destField.acceptsAnyJsonValue).toBe(true);
+    expect(columnTransformInputFromSchemaField(destField)).toEqual({
+      cardinality: 'single',
+      acceptsAnyJsonValue: true,
+    });
+  });
+
+  it('does not mark an untyped column without the JSON-document annotation', () => {
+    const [destField] = extractSchemaFields(Type.Object({ 'sku-properties': Type.Unknown() }));
+    expect(destField.acceptsAnyJsonValue).toBeUndefined();
+    expect(columnTransformInputFromSchemaField(destField)).not.toHaveProperty('acceptsAnyJsonValue');
   });
 
   it('carries a nullable destination column through to the picker (DEV-11902)', () => {

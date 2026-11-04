@@ -121,6 +121,13 @@ export interface ColumnTransformInput {
    * (DEV-11902). Absent/false keeps the empty-value default, for services that don't model `null`.
    */
   nullable?: boolean;
+  /**
+   * Whether the column stores a whole JSON document — any object, array, or scalar — as it is given (a
+   * Postgres `jsonb` or MySQL `json` column). Read on the DESTINATION: the value goes in whole, so no
+   * cardinality reshape or coercion runs. Without it a JSON column reads as single-valued, and an array
+   * copied into it was comma-joined into one string of JSON fragments (Stripe `total_taxes`).
+   */
+  acceptsAnyJsonValue?: boolean;
 }
 
 const AUTO_CONVERTIBLE_TARGET_TYPES: ReadonlySet<string> = new Set<AutoConvertOptions['targetType']>([
@@ -439,6 +446,13 @@ export function getSuggestedTransform(
     // before (no double coercion). KNOWN scalar sources (number/boolean) still reach an un-declared
     // native pack un-stringified.
     transformerChain.push({ type: TransformerTypes.AutoConvert, options: { targetType: 'string' } });
+  }
+
+  // A JSON-document destination holds whatever arrives, so the value goes in whole: no collapse of an
+  // array into a joined string, and no coercion to a scalar type. Only a destination pack would still
+  // need to run, and a JSON column declares none.
+  if (destination.acceptsAnyJsonValue && !destination.fromCore) {
+    return { result: 'valid', options: [{ transformerChain }] };
   }
 
   // 2. Middle: reshape the source cardinality arm to the destination's (the only stage that knows both).

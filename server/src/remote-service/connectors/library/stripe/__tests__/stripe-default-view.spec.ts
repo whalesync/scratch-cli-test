@@ -268,35 +268,103 @@ describe('buildStripeDefaultView', () => {
     });
   });
 
-  // ── DEV-11149: prices.recurring plucks interval rather than exporting raw JSON ──
+  // ── prices.recurring: one column per subfield, so a quarterly price reads as 3 × month ──
   describe('prices.recurring', () => {
     const prices = realView('prices');
 
-    it('offers the useful inner scalars as subfields with interval preselected', () => {
-      const recurring = col(prices, 'recurring');
+    it('expands into an interval, interval count, and usage type column', () => {
+      expect(col(prices, 'recurring.interval')).toMatchObject({ name: 'Recurring (Interval)', type: 'string' });
+      expect(col(prices, 'recurring.interval_count')).toMatchObject({
+        name: 'Recurring (Interval Count)',
+        type: 'number',
+      });
+      expect(col(prices, 'recurring.usage_type')).toMatchObject({ name: 'Recurring (Usage Type)', type: 'string' });
+    });
 
-      expect(recurring?.subfields).toEqual([
-        { name: 'Interval', relativePath: 'interval', type: 'string', readonly: true },
-        { name: 'Interval Count', relativePath: 'interval_count', type: 'number', readonly: true },
-        { name: 'Usage Type', relativePath: 'usage_type', type: 'string', readonly: true },
+    // The existing warehouse export maps `recurring.interval`; it must still resolve to a column.
+    it('keeps `recurring.interval` addressable at the path the plucked column exported', () => {
+      expect(col(prices, 'recurring.interval')?.hidden).toBeUndefined();
+    });
+
+    it('keeps the raw container reachable but hidden', () => {
+      expect(col(prices, 'recurring')).toMatchObject({ name: 'Recurring (raw)', hidden: true });
+    });
+  });
+
+  // ── subscriptions: the billing period lives on the items, so the view reads it from the first one ──
+  describe('subscriptions current period', () => {
+    const subscriptions = realView('subscriptions');
+
+    it.each([
+      ['items.data.0.current_period_start', 'Current Period Start'],
+      ['items.data.0.current_period_end', 'Current Period End'],
+    ])('reads %s as a read-only datetime column', (path, name) => {
+      expect(col(subscriptions, path)).toMatchObject({
+        name,
+        type: 'string',
+        logicalType: 'datetime',
+        readonly: true,
+        displayTransformer: { type: 'epoch_to_iso', options: { unit: 'seconds' } },
+      });
+    });
+
+    it('places the period columns right after Start Date', () => {
+      const names = colNames(subscriptions);
+      const startDateIndex = names.indexOf('Start Date');
+
+      expect(names.slice(startDateIndex, startDateIndex + 3)).toEqual([
+        'Start Date',
+        'Current Period Start',
+        'Current Period End',
       ]);
-      expect(recurring?.selectedSubfield).toBe(0);
     });
 
-    it('keeps the raw container reachable rather than expanding it away', () => {
-      expect(col(prices, 'recurring')?.path).toBe('recurring');
-      expect(col(prices, 'recurring')?.hidden).toBeUndefined();
-    });
-
-    it('only offers subfields the schema actually declares', () => {
-      const view = buildStripeDefaultView(
-        Type.Object({ recurring: Type.Object({ interval: Type.String() }) }),
-        'prices',
+    it('builds fresh column objects for every view', () => {
+      expect(col(realView('subscriptions'), 'items.data.0.current_period_end')).not.toBe(
+        col(subscriptions, 'items.data.0.current_period_end'),
       );
+    });
 
-      expect(col(view, 'recurring')?.subfields).toEqual([
-        { name: 'Interval', relativePath: 'interval', type: 'string' },
-      ]);
+    it('adds no period columns to other tables', () => {
+      expect(col(realView('invoices'), 'items.data.0.current_period_start')).toBeUndefined();
+    });
+  });
+
+  describe('subscription and invoice fields added for churn and revenue reporting', () => {
+    it('keeps cancellation details whole as one object column', () => {
+      expect(col(realView('subscriptions'), 'cancellation_details')).toMatchObject({
+        name: 'Cancellation Details',
+        type: 'object',
+      });
+    });
+
+    it('shows cancel_at and next_payment_attempt as dates', () => {
+      expect(col(realView('subscriptions'), 'cancel_at')?.logicalType).toBe('datetime');
+      expect(col(realView('invoices'), 'next_payment_attempt')?.logicalType).toBe('datetime');
+    });
+
+    it.each(['lines', 'discounts', 'total_discount_amounts', 'total_taxes'])(
+      'keeps invoice %s as one object column',
+      (path) => {
+        expect(col(realView('invoices'), path)?.type).toBe('object');
+      },
+    );
+  });
+
+  describe('new tables', () => {
+    it("expands a promotion code's promotion so its coupon is a column of its own", () => {
+      expect(col(realView('promotion_codes'), 'promotion.coupon')).toMatchObject({ name: 'Promotion (Coupon)' });
+    });
+
+    it("expands a subscription schedule's current phase into start and end dates", () => {
+      const schedules = realView('subscription_schedules');
+
+      expect(col(schedules, 'current_phase.start_date')?.logicalType).toBe('datetime');
+      expect(col(schedules, 'current_phase.end_date')?.logicalType).toBe('datetime');
+    });
+
+    it('shows a balance transaction available_on as a date', () => {
+      expect(col(realView('balance_transactions'), 'available_on')?.logicalType).toBe('datetime');
     });
   });
 

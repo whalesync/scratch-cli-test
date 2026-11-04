@@ -36,6 +36,14 @@ const ENTITY_TYPES: StripeEntityType[] = [
   'invoices',
   'payment_intents',
   'charges',
+  'refunds',
+  'disputes',
+  'credit_notes',
+  'coupons',
+  'promotion_codes',
+  'balance_transactions',
+  'subscription_schedules',
+  'events',
 ];
 
 /**
@@ -49,6 +57,14 @@ const ENTITY_DISPLAY_NAMES: Record<StripeEntityType, string> = {
   invoices: 'Invoices',
   payment_intents: 'Payment Intents',
   charges: 'Charges',
+  refunds: 'Refunds',
+  disputes: 'Disputes',
+  credit_notes: 'Credit Notes',
+  coupons: 'Coupons',
+  promotion_codes: 'Promotion Codes',
+  balance_transactions: 'Balance Transactions',
+  subscription_schedules: 'Subscription Schedules',
+  events: 'Events',
 };
 
 /**
@@ -62,6 +78,14 @@ const ENTITY_DESCRIPTIONS: Record<StripeEntityType, string> = {
   invoices: 'Invoices sent to customers',
   payment_intents: 'Payment intents tracking payment lifecycle',
   charges: 'Individual charge transactions',
+  refunds: 'Refunds of charges and payment intents',
+  disputes: 'Chargebacks and inquiries filed by cardholders',
+  credit_notes: 'Credits issued against invoices',
+  coupons: 'Discounts that can be applied to subscriptions and invoices',
+  promotion_codes: 'Customer-facing codes that apply a coupon',
+  balance_transactions: 'Every movement of funds, with fees and net amounts',
+  subscription_schedules: 'Planned changes to subscriptions over time',
+  events: 'Changes to Stripe objects over the last 30 days',
 };
 
 /**
@@ -78,6 +102,14 @@ const ENTITY_DESCRIPTIONS: Record<StripeEntityType, string> = {
  * - Invoices
  * - Payment Intents
  * - Charges
+ * - Refunds
+ * - Disputes
+ * - Credit Notes
+ * - Coupons
+ * - Promotion Codes
+ * - Balance Transactions
+ * - Subscription Schedules
+ * - Events (Stripe keeps the last 30 days)
  */
 export class StripeConnector extends Connector {
   readonly service = Service.STRIPE;
@@ -121,8 +153,7 @@ export class StripeConnector extends Connector {
   }
 
   /**
-   * List available tables. Stripe has customers, products, prices, subscriptions, invoices, payment intents, and charges.
-   * All tables are read-only (creates disabled).
+   * List available tables, one per entity type in `ENTITY_TYPES`. All tables are read-only (creates disabled).
    */
   // eslint-disable-next-line @typescript-eslint/require-await
   async listTables(): Promise<TablePreview[]> {

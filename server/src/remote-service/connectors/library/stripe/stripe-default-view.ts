@@ -16,9 +16,19 @@ const PRIORITY_FIELDS: Record<StripeEntityType, string[]> = {
   customers: ['name', 'id', 'email', 'phone', 'description', 'currency', 'balance', 'delinquent', 'created'],
   products: ['name', 'id', 'description', 'active', 'type', 'default_price', 'url', 'created'],
   prices: ['nickname', 'id', 'product', 'active', 'currency', 'unit_amount', 'type', 'recurring', 'created'],
-  // No current period columns: Stripe reports the billing period per line item
-  // (`items.data[].current_period_start|end`), which this flat view can't address.
-  subscriptions: ['id', 'customer', 'status', 'currency', 'start_date', 'cancel_at_period_end', 'created'],
+  // The current period columns come after `start_date` (see COLUMNS_AFTER_FIELD).
+  subscriptions: [
+    'id',
+    'customer',
+    'status',
+    'currency',
+    'start_date',
+    'cancel_at_period_end',
+    'cancel_at',
+    'canceled_at',
+    'cancellation_details',
+    'created',
+  ],
   invoices: [
     'number',
     'id',
@@ -29,10 +39,69 @@ const PRIORITY_FIELDS: Record<StripeEntityType, string[]> = {
     'amount_paid',
     'total',
     'due_date',
+    'billing_reason',
     'created',
   ],
   payment_intents: ['id', 'customer', 'amount', 'amount_received', 'currency', 'status', 'description', 'created'],
   charges: ['id', 'customer', 'amount', 'currency', 'status', 'paid', 'captured', 'refunded', 'description', 'created'],
+  refunds: ['id', 'charge', 'payment_intent', 'customer', 'amount', 'currency', 'status', 'reason', 'created'],
+  disputes: ['id', 'charge', 'payment_intent', 'amount', 'currency', 'status', 'reason', 'created'],
+  credit_notes: ['number', 'id', 'invoice', 'customer', 'status', 'type', 'reason', 'currency', 'total', 'created'],
+  coupons: [
+    'name',
+    'id',
+    'percent_off',
+    'amount_off',
+    'currency',
+    'duration',
+    'duration_in_months',
+    'valid',
+    'created',
+  ],
+  promotion_codes: ['code', 'id', 'promotion', 'active', 'customer', 'times_redeemed', 'expires_at', 'created'],
+  balance_transactions: [
+    'id',
+    'type',
+    'reporting_category',
+    'source',
+    'amount',
+    'fee',
+    'net',
+    'currency',
+    'status',
+    'available_on',
+    'created',
+  ],
+  subscription_schedules: ['id', 'customer', 'subscription', 'status', 'end_behavior', 'current_phase', 'created'],
+  // The object an event is about comes right after `type` (see COLUMNS_AFTER_FIELD); its snapshot is hidden.
+  events: ['id', 'type', 'created'],
+};
+
+/**
+ * Columns that read one value from deep inside a field, placed right after the named field's own
+ * column(s). The records stay exactly as Stripe sent them; only the view reaches in.
+ *  - Stripe reports a subscription's billing period on each of its items, not on the subscription (the
+ *    Basil release moved it), so the subscription's period is read from its first item
+ *    (`items.data.0.…`): every item shares one billing period unless the subscription uses flexible
+ *    billing mode.
+ *  - An event's `data` snapshot is hidden (see HIDDEN_FIELDS_BY_ENTITY_TYPE), so the id and type of the
+ *    object it is about are read out of it, which is what joins an event to that object's own table.
+ *
+ * Factories rather than column objects, so every view gets its own columns.
+ */
+const COLUMNS_AFTER_FIELD: Partial<Record<StripeEntityType, Record<string, () => TableViewCol[]>>> = {
+  subscriptions: {
+    start_date: () => [
+      buildUnixTimestampCol('items.data.0.current_period_start', 'Current Period Start', true),
+      buildUnixTimestampCol('items.data.0.current_period_end', 'Current Period End', true),
+    ],
+  },
+  events: {
+    type: () => [
+      { kind: 'col', path: 'data.object.id', name: 'Object ID', type: 'string', readonly: true },
+      { kind: 'col', path: 'data.object.object', name: 'Object Type', type: 'string', readonly: true },
+    ],
+  },
 };
 
 /**
@@ -44,12 +113,38 @@ const PRIORITY_FIELDS: Record<StripeEntityType, string[]> = {
  * hold `address`, `shipping`, `billing_details`, `images`, `items`, and `metadata` — real, populated
  * customer data that could therefore never reach a destination (DEV-11148). Those are now exported:
  * the address-shaped objects expand into one column per subfield (see COMPOSITE_OBJECT_FIELDS) and
- * the list-shaped ones ride through as downgraded text, which is honest rather than silently absent.
- * `metadata` is where a Stripe account keeps its own keys (CRM ids, internal user ids, plan tags);
- * its keys are open-ended and Stripe has no endpoint that lists them, so it rides through whole as
- * one downgraded-text column rather than one column per key.
+ * the list-shaped ones ride through whole — a JSON column where the destination has one, text
+ * elsewhere — which is honest rather than silently absent. `metadata` is where a Stripe account keeps
+ * its own keys (CRM ids, internal user ids, plan tags); its keys are open-ended and Stripe has no
+ * endpoint that lists them, so it rides through whole as one column rather than one column per key.
  */
 const HIDDEN_FIELDS = new Set(['object', 'livemode', 'invoice_prefix']);
+
+/**
+ * Fields holding a client secret — a credential, not data. A payment intent's `client_secret` (and the
+ * one in an invoice's `confirmation_secret`) lets anyone holding the account's publishable key retrieve
+ * and confirm that payment, so it must never land in a destination other people can read. Hidden, which
+ * keeps it out of Live Export field selection; the record on disk still has it, as Stripe sent it.
+ */
+const CLIENT_SECRET_FIELDS = new Set(['client_secret', 'confirmation_secret']);
+
+/**
+ * Fields hidden on one table only. An event's `data` is a snapshot of whatever object changed, so it
+ * carries that object's secrets too: every `payment_intent.*` event holds the payment intent's
+ * `client_secret`. Exporting it would undo CLIENT_SECRET_FIELDS, so the snapshot stays out of the
+ * export and the event exports the id and type of its object instead (see COLUMNS_AFTER_FIELD).
+ */
+const HIDDEN_FIELDS_BY_ENTITY_TYPE: Partial<Record<StripeEntityType, ReadonlySet<string>>> = {
+  events: new Set(['data']),
+};
+
+/**
+ * Stripe API error objects — a payment intent's `last_payment_error` and an invoice's
+ * `last_finalization_error`. Their codes and message are what explain a failed payment, but an error can
+ * also embed a whole payment intent, setup intent, or source, each with its client secret. So only the
+ * error's own scalar fields become columns; the embedded objects stay in the hidden raw container.
+ */
+const API_ERROR_OBJECT_FIELDS = new Set(['last_payment_error', 'last_finalization_error']);
 
 /**
  * Nested objects flattened into one column per leaf — `address.city` as `Address (City)` — plus the
@@ -63,21 +158,22 @@ const COMPOSITE_OBJECT_FIELDS = new Set([
   'billing_details',
   'invoice_settings',
   'status_transitions',
+  // A price's billing interval and how many of them make one period: `month` × 3 is a quarterly price,
+  // so both must be columns of their own (a single plucked `interval` read a quarterly price as monthly).
+  'recurring',
+  // A promotion code's coupon, which links to the Coupons table.
+  'promotion',
+  // A subscription schedule's current phase start and end.
+  'current_phase',
 ]);
 
 /**
  * Objects where one inner scalar is what a user actually wants to see, offered as selectable
  * subfields with the most useful preselected (DEV-11149). Unlike a composite these are alternative
- * VIEWS of one value, so the user picks one rather than getting a column each — `interval` is what
- * anyone filters or groups a price by; the raw container stays available as the built-in "All"
- * option, so the full JSON is never lost.
+ * VIEWS of one value, so the user picks one rather than getting a column each; the raw container
+ * stays available as the built-in "All" option, so the full JSON is never lost.
  */
 const PLUCKED_SUBFIELDS_BY_FIELD_NAME: Record<string, { relativePath: string; name: string }[]> = {
-  recurring: [
-    { relativePath: 'interval', name: 'Interval' },
-    { relativePath: 'interval_count', name: 'Interval Count' },
-    { relativePath: 'usage_type', name: 'Usage Type' },
-  ],
   // An invoice's link to the subscription that generated it lives two levels down, where Stripe
   // reports it (`parent.subscription_details.subscription`, DEV-11144). Plucking it surfaces the
   // schema's foreign-key annotation as a real relation column; left whole, `parent` downgrades to
@@ -99,7 +195,12 @@ export function buildStripeDefaultView(schema: TSchema, entityType: StripeEntity
   const cols: TableViewCol[] = [];
 
   for (const fieldId of sorted) {
-    cols.push(...buildColsForField(fieldId, properties[fieldId]));
+    const isHidden =
+      HIDDEN_FIELDS.has(fieldId) ||
+      CLIENT_SECRET_FIELDS.has(fieldId) ||
+      HIDDEN_FIELDS_BY_ENTITY_TYPE[entityType]?.has(fieldId) === true;
+    cols.push(...buildColsForField(fieldId, properties[fieldId], isHidden));
+    cols.push(...(COLUMNS_AFTER_FIELD[entityType]?.[fieldId]?.() ?? []));
   }
 
   return { name: 'Default', cols };
@@ -304,6 +405,43 @@ function expandCompositeObjectCols(
 }
 
 /**
+ * Expand an object into one column per scalar subfield, skipping subfields that hold an object, plus the
+ * raw container hidden. Used for API error objects (see API_ERROR_OBJECT_FIELDS), whose embedded objects
+ * can carry client secrets.
+ */
+function expandScalarSubfieldCols(
+  path: string,
+  name: string,
+  properties: Record<string, TSchema>,
+  isReadonly: boolean,
+): TableViewCol[] {
+  const cols: TableViewCol[] = [];
+
+  for (const [subfieldKey, subfieldSchema] of Object.entries(properties)) {
+    if (mapType(subfieldSchema) === 'object') continue;
+    cols.push(
+      buildLeafCol(
+        `${path}.${subfieldKey}`,
+        `${name} (${formatFieldName(subfieldKey)})`,
+        subfieldSchema,
+        isReadonly || subfieldSchema?.[X_SCRATCH_READONLY] === true,
+      ),
+    );
+  }
+
+  cols.push({
+    kind: 'col',
+    path,
+    name: `${name} (raw)`,
+    type: 'object',
+    hidden: true,
+    ...(isReadonly ? { readonly: true } : {}),
+  });
+
+  return cols;
+}
+
+/**
  * A column offering the object's useful inner scalars as selectable subfields, with the first
  * preselected. Only subfields the schema actually declares are offered, so a shape change in the
  * API can't leave the view pointing at a path that isn't there. A relative path may span several
@@ -342,11 +480,11 @@ function buildPluckedSubfieldCol(
 }
 
 /** Build the column(s) a single top-level schema field contributes to the view. */
-function buildColsForField(fieldId: string, fieldSchema: TSchema): TableViewCol[] {
+function buildColsForField(fieldId: string, fieldSchema: TSchema, isHidden: boolean): TableViewCol[] {
   const name = formatFieldName(fieldId);
   const isReadonly = fieldSchema?.[X_SCRATCH_READONLY] === true;
 
-  if (HIDDEN_FIELDS.has(fieldId)) {
+  if (isHidden) {
     return [
       {
         kind: 'col',
@@ -362,6 +500,10 @@ function buildColsForField(fieldId: string, fieldSchema: TSchema): TableViewCol[
   const properties = objectPropertiesOf(fieldSchema);
 
   if (properties) {
+    if (API_ERROR_OBJECT_FIELDS.has(fieldId)) {
+      return expandScalarSubfieldCols(fieldId, name, properties, isReadonly);
+    }
+
     const pluckable = PLUCKED_SUBFIELDS_BY_FIELD_NAME[fieldId];
     if (pluckable) {
       const pluckedCol = buildPluckedSubfieldCol(fieldId, name, properties, pluckable, isReadonly);

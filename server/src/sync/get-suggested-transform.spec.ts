@@ -468,4 +468,34 @@ describe('getSuggestedTransform', () => {
       ).toEqual([autoConvert('string'), textPack]);
     });
   });
+  describe('JSON-document destination (a Postgres jsonb / MySQL json column)', () => {
+    const jsonColumn = col({ acceptsAnyJsonValue: true, nullable: true });
+
+    it('copies an array of objects in whole instead of joining it into one string', () => {
+      // Stripe `total_taxes` used to land as `{…},{…}` — not valid JSON — through a join here.
+      expect(chainOf(getSuggestedTransform(col({ cardinality: 'multi', primitiveType: 'array' }), jsonColumn))).toEqual(
+        [],
+      );
+    });
+
+    it('copies an object in whole', () => {
+      expect(chainOf(getSuggestedTransform(col({ primitiveType: 'object' }), jsonColumn))).toEqual([]);
+    });
+
+    it("still runs the source's own unpack codec, then copies its output in whole", () => {
+      const namesExtract: TransformerConfig = {
+        type: 'jsonpath',
+        options: { expression: '$[*].name', arrayHandling: 'array' },
+      };
+      expect(chainOf(getSuggestedTransform(col({ cardinality: 'multi', toCore: namesExtract }), jsonColumn))).toEqual([
+        namesExtract,
+      ]);
+    });
+
+    it('joins into a column that is NOT a JSON document, as before', () => {
+      expect(
+        chainOf(getSuggestedTransform(col({ cardinality: 'multi', primitiveType: 'array' }), col({ nullable: true }))),
+      ).toEqual([{ type: 'auto_convert', options: { targetType: 'string', preserveNull: true } }]);
+    });
+  });
 });

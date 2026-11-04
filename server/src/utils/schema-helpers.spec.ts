@@ -14,6 +14,7 @@ import {
   extractSchemaFields,
   extractSchemaPaths,
   findCreatedDestinationField,
+  resolveSchemaTypeAtPath,
   SchemaField,
   schemaFieldPropertyKey,
 } from './schema-helpers';
@@ -769,5 +770,16 @@ describe('schemaFieldPropertyKey', () => {
 
   it('falls back to the last path segment for a hand-built field', () => {
     expect(schemaFieldPropertyKey({ path: 'fields.Name' })).toBe('Name');
+  });
+});
+
+describe('resolveSchemaTypeAtPath — array position segments', () => {
+  // Plan-side type resolution must agree with save-side getSchemaAtFieldPath (the DEV-11030 symmetry lesson).
+  it('resolves the type of a field inside an array element addressed by position', () => {
+    const schema = Type.Object({
+      items: Type.Object({ data: Type.Array(Type.Object({ current_period_end: Type.Number() })) }),
+    });
+    expect(resolveSchemaTypeAtPath(schema, 'items.data.0.current_period_end')).toBe('number');
+    expect(resolveSchemaTypeAtPath(schema, 'items.data.zero.current_period_end')).toBe('unknown');
   });
 });

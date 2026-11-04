@@ -2399,8 +2399,9 @@ describe('inferLogicalFieldType — destination field-type support (DEV-11903)',
     }
   });
 
-  // A jsonb destination declares no shape, so the sync reads it as single-valued and would JOIN an array into
-  // one string before writing it — an array that can't get a list column stays text instead (review fix).
+  // A created JSON column marks itself `acceptsAnyJsonValue`, so the sync copies an array into it whole. An
+  // array that can't get a list column keeps its shape as JSON rather than being joined into text — Stripe's
+  // `total_taxes` used to land as `{…},{…}`, which isn't valid JSON.
   it.each<[string, SchemaField, DestinationFieldTypeSupport]>([
     ['an array of objects', field({ path: 'people', type: 'array', arrayItemType: 'object' }), postgresLikeSupport],
     ['an array with no declared items', field({ path: 'a', type: 'array' }), postgresLikeSupport],
@@ -2409,11 +2410,22 @@ describe('inferLogicalFieldType — destination field-type support (DEV-11903)',
       field({ path: 'tags', type: 'array', arrayItemType: 'string' }),
       { supportedFieldKinds: ['text', 'json'] },
     ],
-  ])('never gives %s a json column — it flattens to text', (_label, sourceField, support) => {
-    expect(inferLogicalFieldType(sourceField, undefined, 'HubSpot', support)).toMatchObject({
-      status: 'downgraded',
-      fieldType: { kind: 'text' },
+  ])('gives %s a json column', (_label, sourceField, support) => {
+    expect(inferLogicalFieldType(sourceField, undefined, 'HubSpot', support)).toEqual({
+      status: 'mapped',
+      fieldType: { kind: 'json' },
     });
+  });
+
+  it("gives an array of objects under an 'object' view hint a json column", () => {
+    expect(
+      inferLogicalFieldType(
+        field({ path: 'total_taxes', type: 'array', arrayItemType: 'object' }),
+        'object',
+        'Stripe',
+        postgresLikeSupport,
+      ),
+    ).toEqual({ status: 'mapped', fieldType: { kind: 'json' } });
   });
 
   it('still downgrades structured values to text when the destination has neither JSON nor list columns', () => {
@@ -2770,7 +2782,7 @@ describe('generateCreatePlanFromSources — MySQL native column types (DEV-12035
     expect(tables[0].fields.map((createdField) => createdField.name)).toContain('Order Total');
   });
 
-  it('flattens a list to text (MySQL has no list columns) but keeps an object as json', () => {
+  it('keeps a list as json (MySQL has no list columns), like an object', () => {
     expect(
       inferLogicalFieldType(
         field({ path: 'tags', type: 'array', arrayItemType: 'string' }),
@@ -2778,7 +2790,7 @@ describe('generateCreatePlanFromSources — MySQL native column types (DEV-12035
         'HubSpot',
         mySqlDestinationSupport,
       ),
-    ).toMatchObject({ status: 'downgraded', fieldType: { kind: 'text' } });
+    ).toEqual({ status: 'mapped', fieldType: { kind: 'json' } });
     expect(
       inferLogicalFieldType(field({ path: 'address', type: 'object' }), undefined, 'HubSpot', mySqlDestinationSupport),
     ).toEqual({ status: 'mapped', fieldType: { kind: 'json' } });
