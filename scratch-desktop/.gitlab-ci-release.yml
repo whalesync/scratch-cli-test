@@ -80,6 +80,23 @@ include:
       changes: !reference [.changes, release_pipeline]
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
 
+# Shared rule block for the prod variant. Prod releases no longer ride along on
+# every prod deploy (DEV-12734). They're cut by the weekly "Desktop and CLI
+# Releases" schedule on the prod branch (see .rules in gitlab-ci/common.yml), or
+# by a manual "Run pipeline" on prod with RELEASE_DESKTOP_ONLY=true, which also
+# lets you pick RELEASE_TYPE=minor/major. The bootstrap_release.sh no-op guard
+# skips the scheduled build when nothing desktop-relevant changed since the
+# last prod release. Manual runs always build.
+.prod_release_triggers:
+  release_jobs:
+    - if: !reference [.rules, desktop_and_cli_release_schedule_on_prod]
+    - if: '$CI_COMMIT_BRANCH == "prod" && $RELEASE_DESKTOP_ONLY == "true"'
+  cleanup_job:
+    - if: !reference [.rules, desktop_and_cli_release_schedule_on_prod]
+      when: always
+    - if: '$CI_COMMIT_BRANCH == "prod" && $RELEASE_DESKTOP_ONLY == "true"'
+      when: always
+
 # -----------------------------------------------------------------------------
 # BOOTSTRAP — create draft release, emit release.env dotenv
 # -----------------------------------------------------------------------------
@@ -102,12 +119,13 @@ include:
     expire_in: 1 day
   resource_group: github-releases
 
-# The prod desktop release runs automatically on every prod-branch pipeline
-# (including the scheduled master → prod auto-push) and cuts a patch release by
-# default; run a pipeline manually with RELEASE_TYPE=minor/major for a larger
-# bump. The mac Package + Upload jobs always generate and are dispatched to
-# whichever team-tagged mac shell runner (tag: team-macos-release) is online at
-# that moment — see docs/ops/local-gitlab-runner.md § macOS Shell Runner. If no
+# The prod desktop release runs on the weekly "Desktop and CLI Releases"
+# schedule (see .prod_release_triggers) and cuts a patch release by default.
+# For a larger bump, run a pipeline on prod manually with
+# RELEASE_DESKTOP_ONLY=true and RELEASE_TYPE=minor/major. The mac Package +
+# Upload jobs always generate and are dispatched to whichever team-tagged mac
+# shell runner (tag: team-macos-release) is online at that moment — see
+# docs/ops/local-gitlab-runner.md § macOS Shell Runner. If no
 # mac runner is online when the pipeline reaches the mac stage, the job sits
 # pending until one comes up or hits its timeout; Finalize blocks on the mac
 # upload, so a release never publishes without mac artifacts.
@@ -116,8 +134,7 @@ Bootstrap prod desktop release:
   extends: .bootstrap_release
   variables:
     VARIANT: 'prod'
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Bootstrap test desktop release:
   extends: .bootstrap_release
@@ -167,9 +184,8 @@ Bootstrap test desktop release:
       - scratch-git-2/cli-binaries/
     expire_in: 1 day
   script:
-    # Honor the no-op sentinel from Bootstrap: when the hourly schedule found no
-    # desktop-relevant changes, skip the expensive cross-compile. RELEASE_SKIP
-    # only reaches the test variant (prod bootstrap never sets it).
+    # Honor the no-op sentinel from Bootstrap: when a scheduled run (test or
+    # prod) found no desktop-relevant changes, skip the expensive cross-compile.
     - '[ "${RELEASE_SKIP:-}" = "true" ] && { echo "RELEASE_SKIP=true — skipping CLI build."; exit 0; }'
     - cd scratch-git-2
     # Thin LTO + many codegen units produces ~2.9k object files; lld opens them
@@ -211,10 +227,11 @@ Build CLI for prod desktop release:
   variables:
     SCRATCH_DEFAULT_URL: 'https://api.scratch.md'
   needs:
+    # artifacts: true so the RELEASE_SKIP sentinel from the bootstrap dotenv
+    # reaches this job and it can early-exit on a no-op scheduled run.
     - job: Bootstrap prod desktop release
-      artifacts: false
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+      artifacts: true
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Build CLI for test desktop release:
   extends: .build_cli_for_desktop
@@ -316,8 +333,7 @@ Package prod macOS:
       artifacts: true
     - job: Build CLI for prod desktop release
       artifacts: true
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Package prod Linux:
   extends: .package_desktop_linux
@@ -332,8 +348,7 @@ Package prod Linux:
       artifacts: true
     - job: Build CLI for prod desktop release
       artifacts: true
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Package prod Windows:
   extends: .package_desktop_windows
@@ -348,8 +363,7 @@ Package prod Windows:
       artifacts: true
     - job: Build CLI for prod desktop release
       artifacts: true
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Package test macOS:
   extends: .package_desktop_mac
@@ -417,8 +431,7 @@ Upload prod macOS assets:
       artifacts: true
     - job: Package prod macOS
       artifacts: true
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Upload prod Linux assets:
   extends: .upload_assets
@@ -427,8 +440,7 @@ Upload prod Linux assets:
       artifacts: true
     - job: Package prod Linux
       artifacts: true
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Upload prod Windows assets:
   extends: .upload_assets
@@ -437,8 +449,7 @@ Upload prod Windows assets:
       artifacts: true
     - job: Package prod Windows
       artifacts: true
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Upload test macOS assets:
   extends: .upload_assets
@@ -504,8 +515,7 @@ Finalize prod release:
     - ./scripts/finalize_release.sh
     - chmod +x scripts/update_homebrew_cask.sh
     - ./scripts/update_homebrew_cask.sh
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Finalize test release:
   extends: .finalize_release
@@ -535,6 +545,8 @@ Finalize test release:
   stage: release desktop app
   allow_failure: true
   script:
+    # Skip the "started" ping on a no-op scheduled run.
+    - '[ "${RELEASE_SKIP:-}" = "true" ] && { echo "RELEASE_SKIP=true — skipping notify."; exit 0; }'
     - |
       curl -X POST -H 'Content-type: application/json' \
       --data "{\"text\":\"${SLACK_DESKTOP_RELEASE_STARTED_PREFIX} Scratch Desktop ${SLACK_DESKTOP_RELEASE_LABEL} release build started — ${NEW_VERSION}\n>${CI_COMMIT_TITLE}\n<${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
@@ -549,14 +561,13 @@ Notify slack prod desktop release started:
   needs:
     - job: Bootstrap prod desktop release
       artifacts: true
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 .notify_slack_desktop_release_published:
   stage: release desktop app
   allow_failure: true
   script:
-    # Skip the "published" ping on a no-op hourly run (test variant only).
+    # Skip the "published" ping on a no-op scheduled run.
     - '[ "${RELEASE_SKIP:-}" = "true" ] && { echo "RELEASE_SKIP=true — skipping notify."; exit 0; }'
     - |
       RELEASE_URL="https://github.com/${GITHUB_REPO:-whalesync/scratch-desktop}/releases/tag/${NEW_VERSION}"
@@ -575,8 +586,7 @@ Notify slack prod desktop release published:
       artifacts: true
     - job: Finalize prod release
       artifacts: false
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+  rules: !reference [.prod_release_triggers, release_jobs]
 
 Notify slack test desktop release published:
   extends: .notify_slack_desktop_release_published
@@ -617,9 +627,7 @@ Cleanup prod desktop release:
   extends: .cleanup_failed_release
   dependencies:
     - Bootstrap prod desktop release
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
-      when: always
+  rules: !reference [.prod_release_triggers, cleanup_job]
 
 Cleanup test desktop release:
   extends: .cleanup_failed_release
