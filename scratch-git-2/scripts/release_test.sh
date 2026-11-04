@@ -35,7 +35,11 @@ if [[ "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORCE_RELEASE:-}" != "1" ]];
   LAST_RELEASE_SHA=$(git ls-remote --tags --sort=-v:refname "$GITHUB_REPO_URL" 'refs/tags/v*-test' 2>/dev/null \
     | grep -v '\^{}' | head -n1 | awk '{print $1}')
   if [ -n "$LAST_RELEASE_SHA" ] && git cat-file -e "${LAST_RELEASE_SHA}^{commit}" 2>/dev/null; then
-    if git diff --quiet "$LAST_RELEASE_SHA" HEAD -- scratch-git-2/; then
+    # Anchor the pathspec to the repo root with `:/` — this script runs from
+    # scratch-git-2/ (the `cd` at the top), where a bare `scratch-git-2/` would
+    # resolve to scratch-git-2/scratch-git-2/, match nothing, and make every
+    # scheduled run skip as a no-op.
+    if git diff --quiet "$LAST_RELEASE_SHA" HEAD -- :/scratch-git-2/; then
       echo "No scratch-git-2/ changes since last test release ($LAST_RELEASE_SHA). Skipping."
       exit 0
     fi

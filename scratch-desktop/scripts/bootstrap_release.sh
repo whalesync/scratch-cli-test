@@ -50,7 +50,9 @@ if [ "$VARIANT" = "prod" ]; then
   VERSION_SELECT_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
   IS_PRERELEASE=false
   FALLBACK_TAG="v0.1.0"
-  RELEASE_BODY=""
+  # Stamp the monorepo commit into the body so the next scheduled run can tell
+  # whether anything changed since this release (see the no-op guard below).
+  RELEASE_BODY="Source-Commit: ${CI_COMMIT_SHA:-unknown}"
 else
   TAG_SUFFIX="-test"
   TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-test$'
@@ -59,7 +61,7 @@ else
   # repo — electron-updater resolves via /releases/latest, which ignores prereleases (DEV-11320).
   IS_PRERELEASE=false
   FALLBACK_TAG="v0.0.0-test"
-  # Stamp the monorepo commit into the body so the next hourly run can tell
+  # Stamp the monorepo commit into the body so the next scheduled run can tell
   # whether anything changed since this release (see the no-op guard below).
   RELEASE_BODY="Test release pointing at test-api.scratch.md. Not for end users.
 Source-Commit: ${CI_COMMIT_SHA:-unknown}"
@@ -180,16 +182,19 @@ if [ "$SEMVER" = "$VERSION" ] || [ "$SEMVER" != "$GREATEST_SEMVER" ]; then
   exit 1
 fi
 
-# 2b. Hourly-schedule no-op guard (test variant only). Bootstrap is the gate for
-#     the whole desktop chain, so skipping here skips every downstream job. We
-#     compare monorepo HEAD against the Source-Commit stamped on the last test
-#     release; if nothing under the desktop app, the CLI it bundles, or
-#     shared-types changed, write a RELEASE_SKIP sentinel into release.env and
-#     exit 0 — BEFORE creating any draft, so a no-op leaves nothing to clean up.
-#     Downstream jobs read RELEASE_SKIP from the dotenv and early-exit. Fails open
-#     (builds) if the marker is missing/unreachable. FORCE_RELEASE=1 bypasses.
-if [[ "$VARIANT" == "test" && "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORCE_RELEASE:-}" != "1" ]]; then
-  # Marker = the Source-Commit of the highest-semver PUBLISHED test release.
+# 2b. Scheduled-run no-op guard, for both variants: the "Hourly Test Releases"
+#     schedule (test) and the weekly "Desktop and CLI Releases" schedule (prod).
+#     Bootstrap is the gate for the whole desktop chain, so skipping here skips
+#     every downstream job. We compare monorepo HEAD against the Source-Commit
+#     stamped on this channel's last release; if nothing under the desktop app,
+#     the CLI it bundles, or shared-types changed, write a RELEASE_SKIP sentinel
+#     into release.env and exit 0 — BEFORE creating any draft, so a no-op leaves
+#     nothing to clean up. Downstream jobs read RELEASE_SKIP from the dotenv and
+#     early-exit. Fails open (builds) if the marker is missing/unreachable, which
+#     is the case for prod releases cut before the marker was added. Manual
+#     (non-schedule) runs always build; FORCE_RELEASE=1 bypasses on a schedule.
+if [[ "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORCE_RELEASE:-}" != "1" ]]; then
+  # Marker = the Source-Commit of this channel's highest-semver PUBLISHED release.
   # Two deliberate choices, both learned from live misfires (DEV-10749):
   #   * PUBLISHED only (draft == false): a leftover draft was never actually
   #     shipped, so it must not define "the last release we cut". Counting drafts
@@ -208,8 +213,8 @@ if [[ "$VARIANT" == "test" && "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORC
         curl_releases_page "$page"
         printf '\n'
       done
-    } | jq -s 'add
-               | map(select(.draft == false and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-test$"))))
+    } | jq -s --arg tag_pattern "$TAG_PATTERN" 'add
+               | map(select(.draft == false and (.tag_name | test($tag_pattern))))
                | sort_by(.tag_name | ltrimstr("v") | rtrimstr("-test") | split(".") | map(tonumber))
                | last | .body // ""' -r \
     | sed -n 's/^Source-Commit:[[:space:]]*//p' | tr -d '\r' | head -n1)
@@ -222,11 +227,11 @@ if [[ "$VARIANT" == "test" && "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORC
     # `git diff --quiet` always saw zero changes and every scheduled run skipped
     # as a no-op (DEV-10749).
     if git diff --quiet "$LAST_RELEASE_SHA" HEAD -- :/scratch-desktop/ :/scratch-git-2/ :/packages/shared-types/; then
-      echo "No desktop-relevant changes since last test release ($LAST_RELEASE_SHA). Skipping."
+      echo "No desktop-relevant changes since last ${VARIANT} release ($LAST_RELEASE_SHA). Skipping."
       echo "RELEASE_SKIP=true" > release.env
       exit 0
     fi
-    echo "Changes since $LAST_RELEASE_SHA — proceeding with test release."
+    echo "Changes since $LAST_RELEASE_SHA — proceeding with ${VARIANT} release."
   else
     echo "No usable prior Source-Commit marker — proceeding (cannot prove a no-op)."
   fi

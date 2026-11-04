@@ -2,7 +2,9 @@
 #
 # Set either of these to "true" via the "Run pipeline" UI (or API) to restrict
 # the pipeline to just the matching release jobs. They default to "false" so
-# normal branch/MR pipelines include everything.
+# normal branch/MR pipelines include everything. On the prod branch they're also
+# how you cut a prod release by hand outside the "Desktop and CLI Releases"
+# schedule. Prod pipelines no longer release the apps on their own.
 #
 # Note: these are consumed by `include:rules:` below, which is evaluated at
 # pipeline-creation time against variables defined here or in project/UI
@@ -36,12 +38,13 @@ include:
       - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
 
   # Everything else is skipped when either *_ONLY flag is set.
-  # Also kept out of the "Hourly Test Releases" schedule — GitLab's stock
-  # secret_detection job runs on scheduled pipelines, but that schedule is for
-  # CLI/desktop test releases only and shouldn't drag in secret detection.
+  # Also kept out of the "Hourly Test Releases" and "Desktop and CLI Releases"
+  # schedules. GitLab's stock secret_detection job runs on scheduled pipelines,
+  # but those schedules only cut CLI/desktop releases and shouldn't drag in
+  # secret detection.
   - template: Security/Secret-Detection.gitlab-ci.yml
     rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true" && ($CI_PIPELINE_SOURCE != "schedule" || $PIPELINE_NAME != "Hourly Test Releases")'
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true" && ($CI_PIPELINE_SOURCE != "schedule" || ($PIPELINE_NAME != "Hourly Test Releases" && $PIPELINE_NAME != "Desktop and CLI Releases"))'
   - local: "/gitlab-ci/stages/01-build-and-test.yml"
     rules:
       - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'

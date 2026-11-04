@@ -64,6 +64,15 @@ include:
   on_merge_to_prod:
     - if: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
 
+  # The "Desktop and CLI Releases" schedule cuts the prod Desktop and CLI
+  # releases (DEV-12734). They no longer run on every prod deploy. The schedule
+  # targets the prod branch, so the apps always match the deployed API, and
+  # sets PIPELINE_NAME="Desktop and CLI Releases". Playing the schedule from
+  # CI/CD > Schedules is the manual trigger for both apps. A string (used as
+  # `if: !reference [...]`) so the desktop and CLI release files can each add
+  # their own `when:`.
+  desktop_and_cli_release_schedule_on_prod: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Desktop and CLI Releases"'
+
   # Local-runner opt-in — gates the docker-executor MR jobs in
   # gitlab-runner-users.yml to a specific user's local runner. Defined here
   # (not in local-runners.yml) so other files can reference it even when
@@ -109,7 +118,7 @@ include:
     - gitlab-ci/stages/03-push-images.yml
   scratch-desktop:
     - scratch-desktop/**/*
-    - packages/**/*
+    - packages/shared-types/**/*
   shared-types:
     - packages/shared-types/**/*
   dummy:

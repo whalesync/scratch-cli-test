@@ -545,7 +545,12 @@ build and test scratch-desktop:
     - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: !reference [.changes, scratch-desktop]
-    - !reference [.rules, on_merge_to_master]
+    # Desktop isn't under active development (DEV-12734), so on master this only
+    # runs when the merge touched the desktop app or shared-types. Merges are
+    # squashed, so a master push pipeline diffs against the previous commit,
+    # which is exactly the merged MR.
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
+      changes: !reference [.changes, scratch-desktop]
 
 # =============================================================================
 # MISC

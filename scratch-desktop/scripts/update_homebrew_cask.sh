@@ -3,6 +3,14 @@ set -e
 # Ensure we are in the scratch-desktop directory regardless of where the script is called from
 cd "$(dirname "$0")/.."
 
+# No-op sentinel threaded from the weekly prod schedule's bootstrap: when
+# nothing desktop-relevant changed since the last prod release, finalize_release.sh
+# skipped publishing, so there is no new release to point the cask at.
+if [ "${RELEASE_SKIP:-}" = "true" ]; then
+  echo "RELEASE_SKIP=true — no changes since last release. Skipping Homebrew cask update."
+  exit 0
+fi
+
 # Usage: ./scripts/update_homebrew_cask.sh
 #
 # Prod-only. Runs after finalize_release.sh has flipped the GitHub release to

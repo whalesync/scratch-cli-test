@@ -27,6 +27,28 @@ if [ -z "$LATEST_TAG" ]; then
 fi
 echo "Latest tag: $LATEST_TAG"
 
+# Weekly-schedule no-op guard: when run by the "Desktop and CLI Releases"
+# schedule, skip the whole build if nothing under scratch-git-2/ changed since
+# the last prod release. The cli-X.Y.Z tag pushed to GitLab at step 10 points at
+# the monorepo commit that release was built from, so it is the marker. Runs
+# BEFORE any build or GitHub mutation, so a skip has zero side effects. Fails
+# open (builds) if the marker is missing/unreachable. Manual runs always build;
+# FORCE_RELEASE=1 forces a build on a schedule.
+if [[ "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORCE_RELEASE:-}" != "1" ]]; then
+  if git cat-file -e "${LATEST_TAG}^{commit}" 2>/dev/null; then
+    # Anchor the pathspec to the repo root with `:/` — this script runs from
+    # scratch-git-2/ (the `cd` at the top), where a bare `scratch-git-2/` would
+    # resolve to scratch-git-2/scratch-git-2/ and never see a change.
+    if git diff --quiet "$LATEST_TAG" HEAD -- :/scratch-git-2/; then
+      echo "No scratch-git-2/ changes since last prod release ($LATEST_TAG). Skipping."
+      exit 0
+    fi
+    echo "Changes under scratch-git-2/ since $LATEST_TAG — proceeding with prod release."
+  else
+    echo "No usable prior cli-* tag marker — proceeding (cannot prove a no-op)."
+  fi
+fi
+
 VERSION=${LATEST_TAG#cli-}
 IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
 

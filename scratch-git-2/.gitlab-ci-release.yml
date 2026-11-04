@@ -18,13 +18,19 @@
     - git restore-mtime
 
 # PROD RELEASE JOBS (prod branch)
+#
+# Prod releases no longer run on every prod deploy (DEV-12734). The patch
+# variant is cut by the weekly "Desktop and CLI Releases" schedule on the prod
+# branch (see .rules in gitlab-ci/common.yml). To cut one by hand, run a
+# pipeline on prod with RELEASE_CLI_ONLY=true: all three variants then appear
+# as manual ▶︎ buttons, so a minor/major release doesn't drag a patch along.
 .release_rust_prod_job:
   extends: .release_rust_cli_zigbuild
   script:
     - chmod +x scratch-git-2/scripts/release_public.sh
     - scratch-git-2/scripts/release_public.sh $RELEASE_TYPE
   rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+    - if: '$CI_COMMIT_BRANCH == "prod" && $RELEASE_CLI_ONLY == "true"'
       when: manual
       allow_failure: true
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -33,14 +39,19 @@
       when: manual
       allow_failure: true
 
-# Auto-deploy patch release on every merge to prod
+# Auto-cut a prod patch release on the weekly schedule. The release_public.sh
+# no-op guard skips the build on the schedule when scratch-git-2/ is unchanged
+# since the last prod release (FORCE_RELEASE=1 bypasses).
 release-rust-cli-patch:
   extends: .release_rust_prod_job
   variables:
     RELEASE_TYPE: "patch"
   rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
+    - if: !reference [.rules, desktop_and_cli_release_schedule_on_prod]
       when: on_success
+    - if: '$CI_COMMIT_BRANCH == "prod" && $RELEASE_CLI_ONLY == "true"'
+      when: manual
+      allow_failure: true
 
 release-rust-cli-minor:
   extends: .release_rust_prod_job
