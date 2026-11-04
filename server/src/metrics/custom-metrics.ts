@@ -66,6 +66,9 @@ export enum CustomMetric {
   JOB_REAPED_STALE_CREATED = 'job_reaped_stale_created',
   JOB_RECONCILED_ON_FAILED_EVENT = 'job_reconciled_on_failed_event',
   ROUTINE_RUN_REAPED = 'routine_run_reaped',
+  // A subset of ROUTINE_RUN_REAPED (DEV-11274): the run's current step job was still running past the step's timeout
+  // with no driver left to enforce it, so the reaper resumed the run to cancel the job and fail the run.
+  ROUTINE_RUN_REAPED_PAST_STEP_DEADLINE = 'routine_run_reaped_past_step_deadline',
 
   // Routine step timeouts (DEV-12713). `TIMED_OUT` fires when a step's job outlives the step's timeout, so the
   // executor cancels the job and fails the run. `JOB_WAIT_ENDED_BEFORE_TIMEOUT` fires when the executor's wait on
@@ -202,6 +205,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_REAPED_STALE_CREATED:
     case CustomMetric.JOB_RECONCILED_ON_FAILED_EVENT:
     case CustomMetric.ROUTINE_RUN_REAPED:
+    case CustomMetric.ROUTINE_RUN_REAPED_PAST_STEP_DEADLINE:
     case CustomMetric.ROUTINE_STEP_TIMED_OUT:
     case CustomMetric.ROUTINE_STEP_JOB_WAIT_ENDED_BEFORE_TIMEOUT:
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
@@ -289,6 +293,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.JOB_REAPED_STALE_CREATED:
     case CustomMetric.JOB_RECONCILED_ON_FAILED_EVENT:
     case CustomMetric.ROUTINE_RUN_REAPED:
+    case CustomMetric.ROUTINE_RUN_REAPED_PAST_STEP_DEADLINE:
     case CustomMetric.ROUTINE_STEP_TIMED_OUT:
     case CustomMetric.ROUTINE_STEP_JOB_WAIT_ENDED_BEFORE_TIMEOUT:
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:

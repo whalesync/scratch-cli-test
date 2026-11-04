@@ -33,7 +33,7 @@ export const CRON_JOB_DEFINITIONS: CronJobSummaryDto[] = [
   },
   {
     slug: 'routine-run-reaper',
-    description: 'Resume routine runs stuck in the running state.',
+    description: 'Resume routine runs stuck in the running state, and fail steps that outlived their timeout.',
     schedule: 'EVERY_5_MINUTES',
   },
   {

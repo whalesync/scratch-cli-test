@@ -669,6 +669,288 @@ describe('RoutineExecutorService.execute', () => {
       expect(steps[0].error).toBe('Step job pull-job no longer exists');
       expect(run.status).toBe('failed');
     });
+
+    it('waits on a freshly claimed step for no longer than its timeout', async () => {
+      const monotonicClock = fakeMonotonicClock();
+      const waitUntilFinished = jest.fn(async () => {
+        monotonicClock.advanceByMs(STEP_TIMEOUT_MS);
+        throw new Error('Job wait pull timed out before finishing');
+      });
+      const { steps, db, bullEnqueuer, stillActivePullDbJob } = stillRunningPullStep(waitUntilFinished);
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(stillActivePullDbJob),
+        systemCancelJob: jest.fn().mockResolvedValue(undefined),
+        cancelJob: jest.fn(),
+      };
+
+      const service = makeService({ db, bullEnqueuer, jobService });
+      await service.execute(RUN_ID);
+
+      // The claim persists when the step started, which is where its timeout is counted from.
+      expect(steps[0].startedAt).toBeInstanceOf(Date);
+      const waitTtlMs = (waitUntilFinished.mock.calls[0] as unknown[])[1] as number;
+      expect(waitTtlMs).toBeGreaterThan(0);
+      expect(waitTtlMs).toBeLessThanOrEqual(STEP_TIMEOUT_MS);
+    });
+  });
+
+  describe('step deadline survives the driver (DEV-11274)', () => {
+    const STEP_TIMEOUT_SECONDS = 60;
+    const STEP_TIMEOUT_MS = STEP_TIMEOUT_SECONDS * 1000;
+    const NOW_MS = new Date('2026-11-04T12:00:00Z').getTime();
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    /**
+     * A run a reaper resumed: already `running`, its pull step claimed `startedMsBeforeNow` ago with its job recorded.
+     * `Date.now` is pinned to NOW_MS so the step's remaining timeout is exact.
+     */
+    function resumedRunWithPullStepStartedBeforeNow(startedMsBeforeNow: number, waitUntilFinished: jest.Mock) {
+      jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+      const run = baseRun({ status: 'running', startedAt: new Date(NOW_MS - startedMsBeforeNow) });
+      const steps = [
+        makeStep(0, RoutineAction.PULL, {
+          timeoutSeconds: STEP_TIMEOUT_SECONDS,
+          status: 'running',
+          jobId: 'pull-job',
+          startedAt: new Date(NOW_MS - startedMsBeforeNow),
+        }),
+      ];
+      const db = makeFakeDb(run, steps);
+      const bullEnqueuer = {
+        enqueuePullLinkedFolderFilesJob: jest.fn(),
+        getJob: jest.fn().mockResolvedValue({ id: 'pull-job', waitUntilFinished }),
+        getQueueEvents: jest.fn().mockReturnValue({}),
+      };
+      return { run, steps, db, bullEnqueuer };
+    }
+
+    const pullDbJob = (fields: { status: string; error: string | null }): DbJob =>
+      ({ id: 'job_pull', bullJobId: 'pull-job', progress: null, ...fields }) as unknown as DbJob;
+
+    it('cancels the job and fails the run straight away when re-attaching past the deadline', async () => {
+      fakeMonotonicClock();
+      const waitUntilFinished = jest.fn();
+      const { run, steps, db, bullEnqueuer } = resumedRunWithPullStepStartedBeforeNow(
+        STEP_TIMEOUT_MS + 7 * 60 * 1000,
+        waitUntilFinished,
+      );
+      const stillActivePullDbJob = pullDbJob({ status: 'active', error: null });
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(stillActivePullDbJob),
+        systemCancelJob: jest.fn().mockResolvedValue(undefined),
+        cancelJob: jest.fn(),
+      };
+
+      const enqueueForRun = jest.fn();
+      const metricsService = { logValue: jest.fn() };
+      const service = makeService({
+        db,
+        bullEnqueuer,
+        jobService,
+        whalesyncRunNotifier: { enqueueForRun },
+        metricsService,
+      });
+      await service.execute(RUN_ID);
+
+      // A spent timeout never reaches BullMQ, which would read a ttl of 0 as "wait forever".
+      expect(bullEnqueuer.getJob).not.toHaveBeenCalled();
+      expect(waitUntilFinished).not.toHaveBeenCalled();
+      expect(bullEnqueuer.enqueuePullLinkedFolderFilesJob).not.toHaveBeenCalled();
+      expect(jobService.systemCancelJob).toHaveBeenCalledWith(
+        stillActivePullDbJob,
+        'Canceled: routine step timed out after 60s',
+      );
+      expect(steps[0].status).toBe('failed');
+      expect(steps[0].error).toBe('Step timed out after 60s');
+      expect(run.status).toBe('failed');
+      expect(enqueueForRun).toHaveBeenCalledWith(RUN_ID);
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.ROUTINE_STEP_TIMED_OUT, 1);
+    });
+
+    it('waits only for what is left of the timeout when re-attaching, then cancels once it runs out', async () => {
+      const monotonicClock = fakeMonotonicClock();
+      const waitUntilFinished = jest.fn(async () => {
+        monotonicClock.advanceByMs(40_000);
+        throw new Error('Job wait pull timed out before finishing');
+      });
+      const { run, db, bullEnqueuer } = resumedRunWithPullStepStartedBeforeNow(20_000, waitUntilFinished);
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(pullDbJob({ status: 'active', error: null })),
+        systemCancelJob: jest.fn().mockResolvedValue(undefined),
+        cancelJob: jest.fn(),
+      };
+
+      const service = makeService({ db, bullEnqueuer, jobService });
+      await service.execute(RUN_ID);
+
+      expect(waitUntilFinished).toHaveBeenCalledWith(expect.anything(), 40_000);
+      expect(jobService.systemCancelJob).toHaveBeenCalledTimes(1);
+      expect(run.status).toBe('failed');
+    });
+
+    it('still leaves the run to the reaper when a re-attached wait ends before what was left of the timeout', async () => {
+      fakeMonotonicClock();
+      const waitUntilFinished = jest.fn().mockRejectedValue(new Error('Connection is closed.'));
+      const { run, steps, db, bullEnqueuer } = resumedRunWithPullStepStartedBeforeNow(20_000, waitUntilFinished);
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(pullDbJob({ status: 'active', error: null })),
+        systemCancelJob: jest.fn(),
+        cancelJob: jest.fn(),
+      };
+
+      const service = makeService({ db, bullEnqueuer, jobService });
+      await service.execute(RUN_ID);
+
+      expect(jobService.systemCancelJob).not.toHaveBeenCalled();
+      expect(steps[0].status).toBe('running');
+      expect(run.status).toBe('running');
+    });
+
+    it('records the real outcome, without cancelling, when the job finished after the deadline', async () => {
+      fakeMonotonicClock();
+      const waitUntilFinished = jest.fn();
+      const { run, steps, db, bullEnqueuer } = resumedRunWithPullStepStartedBeforeNow(
+        STEP_TIMEOUT_MS + 7 * 60 * 1000,
+        waitUntilFinished,
+      );
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(pullDbJob({ status: 'completed', error: null })),
+        systemCancelJob: jest.fn(),
+        cancelJob: jest.fn(),
+      };
+
+      const service = makeService({ db, bullEnqueuer, jobService });
+      await service.execute(RUN_ID);
+
+      expect(bullEnqueuer.getJob).not.toHaveBeenCalled();
+      expect(jobService.systemCancelJob).not.toHaveBeenCalled();
+      expect(steps[0].status).toBe('completed');
+      expect(run.status).toBe('completed');
+    });
+
+    it('fails the run, not cancels it, when another driver already cancelled the job for timing out', async () => {
+      // The driver that timed the step out cancelled its job, then died before it failed the run.
+      fakeMonotonicClock();
+      const { run, steps, db, bullEnqueuer } = resumedRunWithPullStepStartedBeforeNow(
+        STEP_TIMEOUT_MS + 7 * 60 * 1000,
+        jest.fn(),
+      );
+      const jobService = {
+        getJobByBullJobId: jest
+          .fn()
+          .mockResolvedValue(pullDbJob({ status: 'canceled', error: 'Canceled: routine step timed out after 60s' })),
+        systemCancelJob: jest.fn(),
+        cancelJob: jest.fn(),
+      };
+
+      const enqueueForRun = jest.fn();
+      const service = makeService({ db, bullEnqueuer, jobService, whalesyncRunNotifier: { enqueueForRun } });
+      await service.execute(RUN_ID);
+
+      expect(jobService.systemCancelJob).not.toHaveBeenCalled();
+      expect(steps[0].status).toBe('failed');
+      expect(steps[0].error).toBe('Step timed out after 60s');
+      expect(run.status).toBe('failed');
+      expect(enqueueForRun).toHaveBeenCalledWith(RUN_ID);
+    });
+
+    it('still marks the run cancelled when its job was cancelled for any other reason', async () => {
+      fakeMonotonicClock();
+      const waitUntilFinished = jest.fn().mockResolvedValue(undefined);
+      const { run, db, bullEnqueuer } = resumedRunWithPullStepStartedBeforeNow(20_000, waitUntilFinished);
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(pullDbJob({ status: 'canceled', error: 'Canceled by user' })),
+        systemCancelJob: jest.fn(),
+        cancelJob: jest.fn(),
+      };
+
+      const service = makeService({ db, bullEnqueuer, jobService });
+      await service.execute(RUN_ID);
+
+      expect(run.status).toBe('cancelled');
+    });
+
+    it('waits the full timeout when a re-attached step has no recorded start', async () => {
+      const monotonicClock = fakeMonotonicClock();
+      const waitUntilFinished = jest.fn(async () => {
+        monotonicClock.advanceByMs(STEP_TIMEOUT_MS);
+        throw new Error('Job wait pull timed out before finishing');
+      });
+      const { steps, db, bullEnqueuer } = resumedRunWithPullStepStartedBeforeNow(0, waitUntilFinished);
+      steps[0].startedAt = null;
+      const jobService = {
+        getJobByBullJobId: jest.fn().mockResolvedValue(pullDbJob({ status: 'active', error: null })),
+        systemCancelJob: jest.fn().mockResolvedValue(undefined),
+        cancelJob: jest.fn(),
+      };
+
+      const service = makeService({ db, bullEnqueuer, jobService });
+      await service.execute(RUN_ID);
+
+      expect(waitUntilFinished).toHaveBeenCalledWith(expect.anything(), STEP_TIMEOUT_MS);
+    });
+
+    describe('a step claimed by a driver that died before recording its job', () => {
+      function claimedStepWithoutJobStartedBeforeNow(startedMsBeforeNow: number) {
+        jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+        const run = baseRun({ status: 'running', startedAt: new Date(NOW_MS - startedMsBeforeNow) });
+        const steps = [
+          makeStep(0, RoutineAction.PULL, {
+            timeoutSeconds: STEP_TIMEOUT_SECONDS,
+            status: 'running',
+            jobId: null,
+            startedAt: new Date(NOW_MS - startedMsBeforeNow),
+          }),
+        ];
+        const db = makeFakeDb(run, steps);
+        const bullEnqueuer = {
+          enqueuePullLinkedFolderFilesJob: jest.fn(),
+          getJob: jest.fn(),
+          getQueueEvents: jest.fn().mockReturnValue({}),
+        };
+        const jobService = { getJobByBullJobId: jest.fn(), systemCancelJob: jest.fn(), cancelJob: jest.fn() };
+        return { run, steps, db, bullEnqueuer, jobService };
+      }
+
+      it('fails the step once its timeout has run out, rather than yield forever', async () => {
+        const { run, steps, db, bullEnqueuer, jobService } = claimedStepWithoutJobStartedBeforeNow(
+          STEP_TIMEOUT_MS + 7 * 60 * 1000,
+        );
+        const enqueueForRun = jest.fn();
+        const metricsService = { logValue: jest.fn() };
+        const service = makeService({
+          db,
+          bullEnqueuer,
+          jobService,
+          whalesyncRunNotifier: { enqueueForRun },
+          metricsService,
+        });
+        await service.execute(RUN_ID);
+
+        // Nothing to cancel: no job id was ever recorded. And it is never re-enqueued.
+        expect(jobService.systemCancelJob).not.toHaveBeenCalled();
+        expect(bullEnqueuer.enqueuePullLinkedFolderFilesJob).not.toHaveBeenCalled();
+        expect(steps[0].status).toBe('failed');
+        expect(steps[0].error).toBe('Step timed out after 60s');
+        expect(run.status).toBe('failed');
+        expect(enqueueForRun).toHaveBeenCalledWith(RUN_ID);
+        expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.ROUTINE_STEP_TIMED_OUT, 1);
+      });
+
+      it('yields while its timeout has not run out, since its driver may still be enqueueing it', async () => {
+        const { run, steps, db, bullEnqueuer, jobService } = claimedStepWithoutJobStartedBeforeNow(20_000);
+
+        const service = makeService({ db, bullEnqueuer, jobService });
+        await service.execute(RUN_ID);
+
+        expect(bullEnqueuer.enqueuePullLinkedFolderFilesJob).not.toHaveBeenCalled();
+        expect(steps[0].status).toBe('running');
+        expect(run.status).toBe('running');
+      });
+    });
   });
 
   it('completes a publish step WITH a warning (not a failure) when records were rejected', async () => {

@@ -43,19 +43,18 @@ import {
   RoutineReferenceValidatorService,
 } from './routine-reference-validator.service';
 import {
-  ROUTINE_STEP_TIMEOUT_MAX_SECONDS,
-  RoutineValidationContext,
-  TERMINAL_ROUTINE_RUN_STATUSES,
-} from './routine.types';
+  buildCancelReasonForTimedOutRoutineStepJob,
+  computeRoutineStepDeadline,
+  isJobCanceledBecauseRoutineStepTimedOut,
+  resolveRoutineStepTimeoutMs,
+} from './routine-step-deadline';
+import { RoutineValidationContext, TERMINAL_ROUTINE_RUN_STATUSES } from './routine.types';
 import { WhalesyncRunNotifierService } from './whalesync-run-notifier.service';
 
 /** Terminal DbJob statuses — once a step's job reaches one of these the step is done. */
 const TERMINAL_JOB_STATUSES = ['completed', 'failed', 'canceled'];
 
 /** Terminal RoutineRun statuses — the loop stops re-entering once a run reaches one. */
-
-/** Fallback per-action timeout ceiling (seconds) for an unrecognized action — defensive only. */
-const FALLBACK_STEP_TIMEOUT_SECONDS = 30 * 60;
 
 /** The outcome of running one step, used by the loop to decide whether to advance, fail, or stop. */
 type RoutineStepOutcome =
@@ -73,7 +72,7 @@ type RoutineStepOutcome =
   // Stop driving and leave the run to RoutineRunReaperService. Either another driver already owns this step (it
   // won the per-step claim) but hasn't recorded a job id yet — the reaper resumes the run if that driver dies — or
   // this driver's wait on the step's job ended before the timeout with the job unfinished, and the reaper resumes
-  // the run once that job is terminal.
+  // the run once that job is terminal or the step has outlived its timeout (DEV-11274).
   | { kind: 'yield' };
 
 /** Per-trigger overrides applied to the run's step snapshot (see {@link RoutineExecutorService.triggerRun}). */
@@ -389,7 +388,8 @@ export class RoutineExecutorService {
   /**
    * Runs a single step: claim it (so only one driver enqueues it), enqueue its action as a DbJob,
    * await the job's terminal state (timing out per the step's resolved timeout), then classify the
-   * outcome. On reaper-resume a step that already has a `jobId` is re-attached rather than re-enqueued.
+   * outcome. On reaper-resume a step that already has a `jobId` is re-attached rather than re-enqueued,
+   * and only waits for what is left of the step's timeout, counted from when the step was claimed.
    */
   private async runStep(
     run: PrismaRoutineRun,
@@ -400,10 +400,17 @@ export class RoutineExecutorService {
     liveExportRunStoreKey: string | undefined,
   ): Promise<RoutineStepOutcome> {
     let bullJobId = step.jobId;
+    // When the step was claimed, which is where its timeout starts. Read from the persisted step rather than this
+    // driver's memory, so a driver that re-attaches after the first one died keeps the same deadline (DEV-11274).
+    let stepStartedAt = step.startedAt;
+    const timeoutMs = resolveRoutineStepTimeoutMs(step);
+    const timeoutSeconds = Math.round(timeoutMs / 1000);
 
     if (!bullJobId) {
       // Per-step claim, gated on the run still being on THIS step: serializes a rare double-drive so
       // a step is enqueued at most once and a step the run has moved past is never (re)started.
+      // `step` was loaded before the claim, so keep the claim time this driver writes rather than re-reading it.
+      const stepClaimedAt = new Date();
       const claimed = await this.db.client.$transaction(async (tx) => {
         const liveRun = await tx.routineRun.findUnique({ where: { id: run.id } });
         if (!liveRun || liveRun.status !== 'running' || liveRun.currentStepIndex !== step.stepIndex) {
@@ -411,7 +418,7 @@ export class RoutineExecutorService {
         }
         const res = await tx.routineRunStep.updateMany({
           where: { id: step.id, status: 'pending' },
-          data: { status: 'running', startedAt: new Date() },
+          data: { status: 'running', startedAt: stepClaimedAt },
         });
         return res.count === 1;
       });
@@ -419,10 +426,33 @@ export class RoutineExecutorService {
       if (!claimed) {
         const latest = await this.db.client.routineRunStep.findUnique({ where: { id: step.id } });
         bullJobId = latest?.jobId ?? null;
+        stepStartedAt = latest?.startedAt ?? null;
         if (!bullJobId) {
+          if (
+            latest?.status === 'running' &&
+            latest.startedAt &&
+            computeRoutineStepDeadline(latest.startedAt, step).getTime() <= Date.now()
+          ) {
+            // The step was claimed but its job id was never recorded, and its timeout has run out: the driver that
+            // claimed it died mid-enqueue. No driver is still enqueueing it, and no job id is left to cancel, so fail
+            // the step. Yielding would leave the run holding its routine's active-run slot forever.
+            WSLogger.warn({
+              source: 'RoutineExecutorService.runStep',
+              message: `Routine step ${step.stepIndex} timed out after ${timeoutSeconds}s without a recorded job; failing run ${run.id}`,
+              runId: run.id,
+              workbookId: run.workbookId,
+              stepIndex: step.stepIndex,
+              action: step.action,
+              stepStartedAt: latest.startedAt.toISOString(),
+              timeoutSeconds,
+            });
+            this.metricsService.logValue(CustomMetric.ROUTINE_STEP_TIMED_OUT, 1);
+            return { kind: 'failed', error: `Step timed out after ${timeoutSeconds}s` };
+          }
           return { kind: 'yield' };
         }
       } else {
+        stepStartedAt = stepClaimedAt;
         let job: Job;
         try {
           job = await this.enqueueForStep(run, step, actor, context, runContext, liveExportRunStoreKey);
@@ -437,17 +467,25 @@ export class RoutineExecutorService {
       }
     }
 
-    const timeoutMs = this.resolveTimeoutMs(step);
+    // What is left of the step's timeout. A step re-attached to after its driver died gets only the rest, and one
+    // already past its deadline gets none. The wall clock is read once, here, and capped at the full timeout so clock
+    // skew between instances can never extend it. A step with a job always has `startedAt` (the claim writes it
+    // first), so the full-timeout fallback is defensive only.
+    const stepDeadline = stepStartedAt ? computeRoutineStepDeadline(stepStartedAt, step) : null;
+    const remainingTimeoutMs = stepDeadline ? Math.min(stepDeadline.getTime() - Date.now(), timeoutMs) : timeoutMs;
     // Monotonic, so a wall-clock adjustment can't make a wait that ended early pass for a timeout.
     const waitForStepJobStartedAtMs = performance.now();
-    try {
-      const job = await this.bullEnqueuer.getJob(bullJobId);
-      if (job) {
-        await job.waitUntilFinished(this.bullEnqueuer.getQueueEvents(), timeoutMs);
+    // BullMQ treats a ttl of 0 as "wait forever", so a spent timeout must skip the wait rather than pass it on.
+    if (remainingTimeoutMs > 0) {
+      try {
+        const job = await this.bullEnqueuer.getJob(bullJobId);
+        if (job) {
+          await job.waitUntilFinished(this.bullEnqueuer.getQueueEvents(), remainingTimeoutMs);
+        }
+      } catch {
+        // waitUntilFinished rejects on job failure, on its ttl, OR on a Redis error. Disambiguate via the DbJob
+        // below — the DbJob row (durable in Postgres) is the source of truth, not the evictable BullMQ object.
       }
-    } catch {
-      // waitUntilFinished rejects on job failure, on its ttl, OR on a Redis error. Disambiguate via the DbJob
-      // below — the DbJob row (durable in Postgres) is the source of truth, not the evictable BullMQ object.
     }
 
     const dbJob = await this.jobService.getJobByBullJobId(bullJobId);
@@ -456,15 +494,21 @@ export class RoutineExecutorService {
       // terminal jobs). Nothing is left to wait for or cancel, so fail the step rather than wait on it forever.
       return { kind: 'failed', error: `Step job ${bullJobId} no longer exists` };
     }
+    if (isJobCanceledBecauseRoutineStepTimedOut(dbJob)) {
+      // Another driver already timed this step out and cancelled its job, but didn't get to fail the run (it died, or
+      // is still on its way). That is a timeout, not a user's cancel, so fail the run rather than mark it cancelled.
+      return { kind: 'failed', error: `Step timed out after ${timeoutSeconds}s` };
+    }
     if (TERMINAL_JOB_STATUSES.includes(dbJob.status)) {
       return this.classifyOutcome(step, dbJob);
     }
 
     const waitForStepJobElapsedMs = performance.now() - waitForStepJobStartedAtMs;
-    if (waitForStepJobElapsedMs < timeoutMs) {
+    if (waitForStepJobElapsedMs < remainingTimeoutMs) {
       // The wait ended before the timeout with the job unfinished: a Redis error, a BullMQ job that can't be read,
       // or BullMQ failing a stalled job the worker never recorded. That is not a timeout, so never cancel a job
-      // that may still be healthy. Stop driving instead; the reaper resumes the run once the job is terminal.
+      // that may still be healthy. Stop driving instead; the reaper resumes the run once the job is terminal, or
+      // once the step outlives its timeout.
       WSLogger.warn({
         source: 'RoutineExecutorService.runStep',
         message: `Lost track of routine step ${step.stepIndex}'s job before its timeout; leaving run ${run.id} to the reaper`,
@@ -475,6 +519,7 @@ export class RoutineExecutorService {
         bullJobId,
         dbJobStatus: dbJob.status,
         waitForStepJobElapsedMs: Math.round(waitForStepJobElapsedMs),
+        remainingTimeoutMs,
       });
       this.metricsService.logValue(CustomMetric.ROUTINE_STEP_JOB_WAIT_ENDED_BEFORE_TIMEOUT, 1);
       return { kind: 'yield' };
@@ -482,8 +527,7 @@ export class RoutineExecutorService {
 
     // Timed out. ALWAYS cancel before failing the run so a long publish stops shipping rather than running on
     // past the run's failure.
-    const timeoutSeconds = Math.round(timeoutMs / 1000);
-    await this.cancelJobOfTimedOutStep(run, step, dbJob, timeoutSeconds);
+    await this.cancelJobOfTimedOutStep(run, step, dbJob, timeoutSeconds, stepDeadline);
     return { kind: 'failed', error: `Step timed out after ${timeoutSeconds}s` };
   }
 
@@ -492,13 +536,15 @@ export class RoutineExecutorService {
    * workspace permissions, so the access-checked {@link JobService.cancelJob} would always refuse it (DEV-12713).
    * Never throws — the caller fails the run either way, and a run left `running` would sit there until its job
    * finished on its own. `systemCancelJob` writes the DbJob's cancel flag before it touches Redis, so even a Redis
-   * failure after that still stops the worker at its next checkpoint.
+   * failure after that still stops the worker at its next checkpoint. The cancel reason marks the job as timed out, so
+   * a driver that re-attaches after this one dies fails the run instead of reading the cancel as the user's.
    */
   private async cancelJobOfTimedOutStep(
     run: PrismaRoutineRun,
     step: PrismaRoutineRunStep,
     dbJob: DbJob,
     timeoutSeconds: number,
+    stepDeadline: Date | null,
   ): Promise<void> {
     const timedOutStepLogFields = {
       runId: run.id,
@@ -507,6 +553,7 @@ export class RoutineExecutorService {
       action: step.action,
       bullJobId: dbJob.bullJobId,
       timeoutSeconds,
+      stepDeadline: stepDeadline?.toISOString() ?? null,
     };
     WSLogger.warn({
       source: 'RoutineExecutorService.cancelJobOfTimedOutStep',
@@ -516,7 +563,7 @@ export class RoutineExecutorService {
     this.metricsService.logValue(CustomMetric.ROUTINE_STEP_TIMED_OUT, 1);
 
     try {
-      await this.jobService.systemCancelJob(dbJob, `Canceled: routine step timed out after ${timeoutSeconds}s`);
+      await this.jobService.systemCancelJob(dbJob, buildCancelReasonForTimedOutRoutineStepJob(timeoutSeconds));
     } catch (error) {
       WSLogger.error({
         source: 'RoutineExecutorService.cancelJobOfTimedOutStep',
@@ -913,13 +960,6 @@ export class RoutineExecutorService {
     const overflow =
       failedFolders.length > MAX_NAMED_FOLDERS ? ` (+${failedFolders.length - MAX_NAMED_FOLDERS} more)` : '';
     return `Pull failed for ${failedFolders.length} folder(s) — ${namedFailures.join('; ')}${overflow}`;
-  }
-
-  /** The step's timeout in ms: the snapshotted value (or the per-action default), capped at the per-action max. */
-  private resolveTimeoutMs(step: PrismaRoutineRunStep): number {
-    const maxSeconds = ROUTINE_STEP_TIMEOUT_MAX_SECONDS[step.action as RoutineAction] ?? FALLBACK_STEP_TIMEOUT_SECONDS;
-    const seconds = step.timeoutSeconds ?? maxSeconds;
-    return Math.min(seconds, maxSeconds) * 1000;
   }
 
   // ── run/step state transitions ───────────────────────────────────────────────

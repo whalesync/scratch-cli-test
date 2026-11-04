@@ -10,7 +10,14 @@ const RUN_ID = 'rrn_stuck1234';
 
 function makeReaper(deps: {
   stuckRuns: Array<{ id: string; currentStepIndex: number; status: string }>;
-  step: { id: string; stepIndex: number; jobId: string | null } | null;
+  step: {
+    id: string;
+    stepIndex: number;
+    jobId: string | null;
+    action?: string;
+    timeoutSeconds?: number | null;
+    startedAt?: Date | null;
+  } | null;
   dbJob: { status: string; finishedOn: Date | null } | null;
   claimCount?: number;
 }) {
@@ -116,6 +123,83 @@ describe('RoutineRunReaperService', () => {
     await service.reapStuckRoutineRuns();
 
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  describe('a step whose job is still running past its timeout (DEV-11274)', () => {
+    const STEP_TIMEOUT_SECONDS = 60;
+
+    /** A stale run whose pull step (60s timeout) started `startedMinutesAgo` minutes ago and whose job is active. */
+    function activePullStepStartedMinutesAgo(startedMinutesAgo: number | null, claimCount?: number) {
+      return makeReaper({
+        stuckRuns: [{ id: RUN_ID, currentStepIndex: 0, status: 'running' }],
+        step: {
+          id: 'rrs_0',
+          stepIndex: 0,
+          jobId: 'job_0',
+          action: 'pull',
+          timeoutSeconds: STEP_TIMEOUT_SECONDS,
+          startedAt: startedMinutesAgo === null ? null : new Date(Date.now() - startedMinutesAgo * 60 * 1000),
+        },
+        dbJob: { status: 'active', finishedOn: null },
+        claimCount,
+      });
+    }
+
+    it('resumes the run once the step is past its timeout by more than the stale threshold', async () => {
+      // 1-minute timeout + 5-minute threshold: a step started 7 minutes ago has no live driver left.
+      const { service, execute, metricsService } = activePullStepStartedMinutesAgo(7);
+
+      await service.reapStuckRoutineRuns();
+
+      expect(execute).toHaveBeenCalledWith(RUN_ID);
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.ROUTINE_RUN_REAPED, 1);
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.ROUTINE_RUN_REAPED_PAST_STEP_DEADLINE, 1);
+    });
+
+    it('leaves the run to a live driver while the step is past its timeout but within the stale threshold', async () => {
+      const { service, execute } = activePullStepStartedMinutesAgo(3);
+
+      await service.reapStuckRoutineRuns();
+
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('leaves the run alone while the step is within its timeout', async () => {
+      const { service, execute } = makeReaper({
+        stuckRuns: [{ id: RUN_ID, currentStepIndex: 0, status: 'running' }],
+        // A 12 h pull started 10 minutes ago.
+        step: {
+          id: 'rrs_0',
+          stepIndex: 0,
+          jobId: 'job_0',
+          action: 'pull',
+          timeoutSeconds: null,
+          startedAt: new Date(Date.now() - 10 * 60 * 1000),
+        },
+        dbJob: { status: 'active', finishedOn: null },
+      });
+
+      await service.reapStuckRoutineRuns();
+
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('leaves the run alone when the step has no recorded start', async () => {
+      const { service, execute } = activePullStepStartedMinutesAgo(null);
+
+      await service.reapStuckRoutineRuns();
+
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('neither drives nor counts the run when the re-claim is lost', async () => {
+      const { service, execute, metricsService } = activePullStepStartedMinutesAgo(7, 0);
+
+      await service.reapStuckRoutineRuns();
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(metricsService.logValue).not.toHaveBeenCalled();
+    });
   });
 
   it('does nothing when there are no stuck runs', async () => {
