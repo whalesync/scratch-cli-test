@@ -435,7 +435,9 @@ describe('SyncDraftService', () => {
       (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ version: 1 }));
       // Only the Appointments source remains — the "contacts" source mapping was removed,
       // so the FK token can no longer resolve.
-      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([{ tableId: ['0-421'] }]);
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_appt_src', name: 'Appointments', tableId: ['0-421'] },
+      ]);
 
       const dto = {
         version: 1,
@@ -462,6 +464,10 @@ describe('SyncDraftService', () => {
       expect(error).toBeInstanceOf(UnprocessableEntityException);
       expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
         error: 'SYNC_DRAFT_FK_TARGET_MISSING',
+        // Names the field and its table so the user knows WHICH field to unmap, not just how many.
+        message:
+          'A foreign key field links to a table that is not in this draft: "Associated Contacts" in Appointments ' +
+          '(links to contacts). Unmap it — or add the linked table — before saving.',
         missingTargets: [
           {
             tableMappingRef: 'tm_appt',
@@ -471,6 +477,111 @@ describe('SyncDraftService', () => {
         ],
       });
       expect(dbService.client.syncDraft.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('names every stranded foreignKey field, its table, and its linked table in the 422 message', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ version: 1 }));
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_charges_src', name: 'Charges', tableId: ['charges'] },
+        { id: 'dfd_schedules_src', name: 'Subscription Schedules', tableId: ['subscription_schedules'] },
+      ]);
+
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_charges',
+            source: { dataFolderId: 'dfd_charges_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_charges_dst' },
+            fieldAdditions: [
+              {
+                ref: 'fa_payment_method',
+                createFieldSpec: {
+                  name: 'payment_method',
+                  fieldType: {
+                    kind: 'foreignKey',
+                    // The remote id's bare table segment is preferred over the connector token.
+                    target: { unresolvedLinkedTableId: 'pm', unresolvedLinkedTableRemoteId: ['payment_methods'] },
+                  },
+                },
+              },
+            ],
+            columnMappings: [],
+          },
+          {
+            ref: 'tm_schedules',
+            source: { dataFolderId: 'dfd_schedules_src' },
+            destination: {
+              kind: 'placeholderTable',
+              ref: 'ph_schedules',
+              connectorAccountId: 'coa_1',
+              createSpec: {
+                ref: 'spec_schedules',
+                name: 'subscription_schedules',
+                fields: [
+                  { name: 'id', fieldType: { kind: 'text' } },
+                  { name: 'test_clock', fieldType: { kind: 'foreignKey', target: { ref: 'spec_test_clocks' } } },
+                  {
+                    name: 'application',
+                    fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'applications' } },
+                  },
+                ],
+              },
+            },
+            columnMappings: [],
+          },
+        ],
+      };
+
+      const error = await service.patch(DRAFT_ID, dto as never, ACTOR).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+        error: 'SYNC_DRAFT_FK_TARGET_MISSING',
+        message:
+          '3 foreign key fields link to tables that are not in this draft: ' +
+          '"payment_method" in Charges (links to payment_methods), ' +
+          '"test_clock" in Subscription Schedules (links to a new table that isn\'t in this draft), and ' +
+          '"application" in Subscription Schedules (links to applications). ' +
+          'Unmap them — or add the linked tables — before saving.',
+      });
+      expect(dbService.client.syncDraft.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('caps the fields named in the 422 message and summarizes the rest', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ version: 1 }));
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_charges_src', name: 'Charges', tableId: ['charges'] },
+      ]);
+
+      const strandedFieldCount = 12;
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_charges',
+            source: { dataFolderId: 'dfd_charges_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_charges_dst' },
+            fieldAdditions: Array.from({ length: strandedFieldCount }, (_unused, index) => ({
+              ref: `fa_link_${index}`,
+              createFieldSpec: {
+                name: `link_${index}`,
+                fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: `missing_${index}` } },
+              },
+            })),
+            columnMappings: [],
+          },
+        ],
+      };
+
+      const error = await service.patch(DRAFT_ID, dto as never, ACTOR).catch((caught: unknown) => caught);
+      const response = (error as UnprocessableEntityException).getResponse() as {
+        message: string;
+        missingTargets: unknown[];
+      };
+      expect(response.missingTargets).toHaveLength(strandedFieldCount);
+      expect(response.message).toMatch(/^12 foreign key fields link to tables that are not in this draft: /);
+      expect(response.message).toContain('"link_9" in Charges (links to missing_9), and 2 more.');
+      expect(response.message).not.toContain('link_10');
     });
 
     it('allows the save when the foreignKey token still resolves to a mapped table', async () => {

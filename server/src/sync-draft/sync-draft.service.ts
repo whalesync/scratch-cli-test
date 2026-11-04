@@ -218,6 +218,30 @@ function remoteTableIdKey(remoteTableId: string[]): string {
   return remoteTableId.join('\u0000');
 }
 
+/** At most this many stranded foreignKey fields are named in the 422 message; the rest are summarized as "N more". */
+const MAX_STRANDED_FOREIGN_KEY_FIELDS_NAMED_IN_SAVE_ERROR = 10;
+
+/**
+ * The user-facing message for a 422 `SYNC_DRAFT_FK_TARGET_MISSING`, naming each stranded field so the user knows which
+ * one to unmap, e.g. `A foreign key field links to a table that is not in this draft: "payment_method" in Charges
+ * (links to payment_methods). Unmap it — or add the linked table — before saving.`
+ */
+function buildForeignKeyTargetMissingMessage(strandedForeignKeyFieldDescriptions: string[]): string {
+  const isSingleStrandedField = strandedForeignKeyFieldDescriptions.length === 1;
+  const namedFieldDescriptions = strandedForeignKeyFieldDescriptions.slice(
+    0,
+    MAX_STRANDED_FOREIGN_KEY_FIELDS_NAMED_IN_SAVE_ERROR,
+  );
+  const unnamedFieldCount = strandedForeignKeyFieldDescriptions.length - namedFieldDescriptions.length;
+  const listedFieldDescriptions =
+    unnamedFieldCount > 0 ? [...namedFieldDescriptions, `${unnamedFieldCount} more`] : namedFieldDescriptions;
+  const fieldList = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(listedFieldDescriptions);
+
+  return isSingleStrandedField
+    ? `A foreign key field links to a table that is not in this draft: ${fieldList}. Unmap it — or add the linked table — before saving.`
+    : `${strandedForeignKeyFieldDescriptions.length} foreign key fields link to tables that are not in this draft: ${fieldList}. Unmap them — or add the linked tables — before saving.`;
+}
+
 /** Every foreignKey field across a draft's placeholder create-specs and field additions. */
 function collectDraftForeignKeyReferences(tableMappings: DraftTableMapping[]): DraftForeignKeyReference[] {
   const references: DraftForeignKeyReference[] = [];
@@ -1364,7 +1388,7 @@ export class SyncDraftService {
     const sourceFolderIds = [...new Set(tableMappings.map((tableMapping) => tableMapping.source.dataFolderId))];
     const folders = await this.db.client.dataFolder.findMany({
       where: { id: { in: sourceFolderIds } },
-      select: { tableId: true },
+      select: { id: true, name: true, tableId: true },
     });
     const draftSourceRemoteTableIdLookupKeys = new Set<string>();
     for (const folder of folders) {
@@ -1373,7 +1397,24 @@ export class SyncDraftService {
       }
     }
 
+    // Name each stranded field's table the way the user sees it in the editor (the source table's
+    // name), so the 422 says WHICH field to unmap rather than only how many.
+    const sourceFolderNameByFolderId = new Map(folders.map((folder) => [folder.id, folder.name]));
+    const tableDisplayNameByTableMappingRef = new Map<string, string>();
+    for (const tableMapping of tableMappings) {
+      const sourceFolderName = sourceFolderNameByFolderId.get(tableMapping.source.dataFolderId);
+      const placeholderTableName =
+        tableMapping.destination.kind === 'placeholderTable' ? tableMapping.destination.createSpec.name : undefined;
+      tableDisplayNameByTableMappingRef.set(
+        tableMapping.ref,
+        sourceFolderName || placeholderTableName || tableMapping.ref,
+      );
+    }
+    const describeMissingForeignKeyTarget = (reference: DraftForeignKeyReference, linkedTableLabel: string): string =>
+      `"${reference.fieldName}" in ${tableDisplayNameByTableMappingRef.get(reference.tableMappingRef) ?? reference.tableMappingRef} (links to ${linkedTableLabel})`;
+
     const missingTargets: SyncDraftMissingForeignKeyTarget[] = [];
+    const missingTargetDescriptions: string[] = [];
     for (const reference of foreignKeyReferences) {
       if ('ref' in reference.target) {
         if (!placeholderCreateSpecRefs.has(reference.target.ref)) {
@@ -1382,6 +1423,12 @@ export class SyncDraftService {
             fieldName: reference.fieldName,
             target: { ref: reference.target.ref },
           });
+          // A `{ ref }` names a new (placeholder) table being created in this draft, and none carries
+          // this ref — it was removed, or (a create-mode plan's self-reference copied onto an existing
+          // table) it was never in the draft — so there is no name to show.
+          missingTargetDescriptions.push(
+            describeMissingForeignKeyTarget(reference, "a new table that isn't in this draft"),
+          );
         }
       } else if ('unresolvedLinkedTableId' in reference.target) {
         const bindsToADraftSourceTable = linkedTableIdLookupKeysForPendingForeignKeyTarget(reference.target).some(
@@ -1393,6 +1440,12 @@ export class SyncDraftService {
             fieldName: reference.fieldName,
             target: { unresolvedLinkedTableId: reference.target.unresolvedLinkedTableId },
           });
+          // The linked table isn't in the draft, so there's no folder name to show: use the bare
+          // table segment of its remote id, or the connector's token when that's all it gave us.
+          const linkedTableRemoteId = reference.target.unresolvedLinkedTableRemoteId;
+          const linkedTableLabel =
+            linkedTableRemoteId?.[linkedTableRemoteId.length - 1] ?? reference.target.unresolvedLinkedTableId;
+          missingTargetDescriptions.push(describeMissingForeignKeyTarget(reference, linkedTableLabel));
         }
       }
       // `existingRemoteTableId` always resolves — the remote table exists regardless of the draft.
@@ -1401,7 +1454,7 @@ export class SyncDraftService {
     if (missingTargets.length > 0) {
       throw new UnprocessableEntityException({
         error: 'SYNC_DRAFT_FK_TARGET_MISSING',
-        message: `${missingTargets.length} foreign key field(s) point at a table that is not in this draft. Unmap them — or restore the target table — before saving.`,
+        message: buildForeignKeyTargetMissingMessage(missingTargetDescriptions),
         missingTargets,
       });
     }
