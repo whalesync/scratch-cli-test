@@ -1264,7 +1264,8 @@ export class ConnectorAccountService {
    *
    * Before anything is written, the edit is checked against exactly what it would store: one that points the
    * connection at a new target must send the connection's secrets again (DEV-12723). A refused edit throws inside the
-   * lock's transaction, so nothing is stored.
+   * lock's transaction, so nothing is stored. A parser that handles edits gets the same check on the edit as entered
+   * before it runs, so it can't send a stored secret to a new target either (DEV-12747).
    */
   private async storeCredentialEditUnderConnectionLock(
     workbookId: WorkbookId,
@@ -1376,6 +1377,11 @@ export class ConnectorAccountService {
    * complete set, which REPLACES them (a rejected edit throws before anything is written), together with the stored
    * credentials it was parsed against. Returns `null` for every other service, whose edit is merged into the stored
    * credentials instead. Runs before the credentials lock is taken, because a parser may call the service.
+   *
+   * Because a parser may call the service, the edit as entered is checked against the stored targets first: one that
+   * points the connection at a new target without its secrets is refused before the parser can send a stored secret
+   * there (WordPress discovers its endpoint on the site URL an edit sends, DEV-12747). The check under the lock runs
+   * again on what the parser returns.
    */
   private async parseCredentialEditBeforeTakingLockIfParserHandlesEdits(
     accountReadBeforeEdit: ConnectorAccount,
@@ -1392,6 +1398,16 @@ export class ConnectorAccountService {
     const storedCredentialsTheParserRead = await this.credentialEncryptionService.decryptCredentials(
       accountReadBeforeEdit.encryptedCredentials as unknown as EncryptedData,
     );
+    assertEditResendsSecretsWhenItAddsAConnectionTarget({
+      credentialFieldsByAuthMethod: getServiceCredentialFields(service),
+      authType: accountReadBeforeEdit.authType,
+      connectionStateBeforeEdit: { credentials: storedCredentialsTheParserRead, extras: accountReadBeforeEdit.extras },
+      connectionStateAfterEdit: {
+        credentials: { ...storedCredentialsTheParserRead, ...userProvidedParamsFromEdit },
+        extras: accountReadBeforeEdit.extras,
+      },
+      userProvidedParamsFromEdit,
+    });
     const { credentials: parsedCredentialsFromEdit } = await this.runAuthParserWithUserFriendlyErrors(
       authParser,
       {

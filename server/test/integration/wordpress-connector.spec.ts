@@ -31,6 +31,7 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
   getServiceDisplayName: (service: string) => service,
 }));
 
+import { WordPressAuthParser } from 'src/remote-service/connectors/library/wordpress/wordpress-auth-parser';
 import { WordPressConnector } from 'src/remote-service/connectors/library/wordpress/wordpress-connector';
 import { WORDPRESS_POLLING_PAGE_SIZE } from 'src/remote-service/connectors/library/wordpress/wordpress-constants';
 import { WordPressHttpClient } from 'src/remote-service/connectors/library/wordpress/wordpress-http-client';
@@ -131,12 +132,13 @@ function assertHealthyScan(result: FullScanResult, label: string): void {
 describeIfCreds('WordPressConnector — live API (pagination)', () => {
   let connector: WordPressConnector;
   let tables: TablePreview[];
+  let resolvedEndpoint: string;
 
   beforeAll(async () => {
     // Resolve the endpoint exactly as production does (accepts a bare domain or
     // a /wp-json/ base) so the test is forgiving about the URL form provided.
     const client = new WordPressHttpClient(ENDPOINT, USERNAME, APPLICATION_PASSWORD);
-    const resolvedEndpoint = await client.discoverAndValidateEndpoint();
+    resolvedEndpoint = await client.discoverAndValidateEndpoint();
     connector = new WordPressConnector(USERNAME, APPLICATION_PASSWORD, resolvedEndpoint);
     tables = await connector.listTables();
   });
@@ -153,6 +155,25 @@ describeIfCreds('WordPressConnector — live API (pagination)', () => {
     it('rejects an invalid application password', async () => {
       const badConnector = new WordPressConnector(USERNAME, 'not-a-real-application-password', ENDPOINT);
       await expect(badConnector.testConnection()).rejects.toThrow();
+    });
+
+    it('an edit that re-enters the site URL stores the discovered endpoint, and the connection still connects (DEV-12747)', async () => {
+      const { credentials: credentialsAfterEdit } = await new WordPressAuthParser().parseUserProvidedParams({
+        userProvidedParams: { endpoint: ENDPOINT },
+        existingCredentials: { username: USERNAME, password: APPLICATION_PASSWORD, endpoint: resolvedEndpoint },
+      });
+
+      expect(credentialsAfterEdit).toEqual({
+        username: USERNAME,
+        password: APPLICATION_PASSWORD,
+        endpoint: resolvedEndpoint,
+      });
+      const connectorAfterEdit = new WordPressConnector(
+        credentialsAfterEdit.username,
+        credentialsAfterEdit.password,
+        credentialsAfterEdit.endpoint,
+      );
+      await expect(connectorAfterEdit.testConnection()).resolves.toBeUndefined();
     });
   });
 

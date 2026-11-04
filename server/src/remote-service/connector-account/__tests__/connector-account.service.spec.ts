@@ -19,11 +19,14 @@ import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import type { AuthParser } from '../../connectors/connector';
 import { ConnectorsService } from '../../connectors/connectors.service';
+import { ConnectorAuthError } from '../../connectors/error';
 import { MySqlAuthParser } from '../../connectors/library/mysql/mysql-auth-parser';
 import {
   MySqlCredentialProblem,
   MySqlCredentialsInvalidError,
 } from '../../connectors/library/mysql/mysql-credential-errors';
+import { WordPressAuthParser } from '../../connectors/library/wordpress/wordpress-auth-parser';
+import { WordPressHttpClient } from '../../connectors/library/wordpress/wordpress-http-client';
 import { ConnectorAccountService } from '../connector-account.service';
 
 const WORKBOOK_ID = 'wkb_test' as WorkbookId;
@@ -308,10 +311,25 @@ describe('ConnectorAccountService', () => {
       return credentialEncryptionService.encryptCredentials.mock.calls[0][0];
     }
 
+    /** WordPress's endpoint discovery; it rejects unless a test says what it finds, so no test reaches the network. */
+    let discoverAndValidateEndpoint: jest.SpyInstance<Promise<string>, []>;
+
     beforeEach(() => {
-      connectorsService.getAuthParser.mockImplementation(({ service: requestedService }) =>
-        requestedService === 'MYSQL' ? new MySqlAuthParser() : undefined,
+      // The parsers that handle edits; every other service merges an edit into its stored credentials.
+      const authParserByService: Partial<Record<string, AuthParser>> = {
+        MYSQL: new MySqlAuthParser(),
+        WORDPRESS: new WordPressAuthParser(),
+      };
+      connectorsService.getAuthParser.mockImplementation(
+        ({ service: requestedService }) => authParserByService[requestedService],
       );
+      discoverAndValidateEndpoint = jest
+        .spyOn(WordPressHttpClient.prototype, 'discoverAndValidateEndpoint')
+        .mockRejectedValue(new Error('This test did not expect WordPress endpoint discovery to run'));
+    });
+
+    afterEach(() => {
+      discoverAndValidateEndpoint.mockRestore();
     });
 
     it('MySQL: a connection string replaces the stored host, port, database, username and password, and is never stored', async () => {
@@ -469,6 +487,8 @@ describe('ConnectorAccountService', () => {
             ACTOR,
           ),
         ).rejects.toThrow(new BadRequestException(secretRequiredMessage('Application password', 'WordPress URL')));
+        // Refused before the parser's discovery could send the stored password to the new site (DEV-12747).
+        expect(discoverAndValidateEndpoint).not.toHaveBeenCalled();
         expectNothingStored();
       });
 
@@ -483,11 +503,13 @@ describe('ConnectorAccountService', () => {
             ACTOR,
           ),
         ).rejects.toThrow(BadRequestException);
+        expect(discoverAndValidateEndpoint).not.toHaveBeenCalled();
         expectNothingStored();
       });
 
       it('WordPress: a site URL change that sends the password again is stored, and the audit log records the new target', async () => {
         mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+        discoverAndValidateEndpoint.mockResolvedValue('https://new-site.example/wp-json/');
 
         await service.update(
           WORKBOOK_ID,
@@ -510,6 +532,7 @@ describe('ConnectorAccountService', () => {
 
       it('WordPress: re-sending the stored site URL needs no password and records no new target', async () => {
         mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+        discoverAndValidateEndpoint.mockResolvedValue('https://site.example/wp-json/');
 
         await service.update(
           WORKBOOK_ID,
@@ -526,43 +549,49 @@ describe('ConnectorAccountService', () => {
         );
       });
 
-      it('checks the edit against the credentials re-read under the lock', async () => {
-        // Another writer moved the site URL after the edit's first read. Re-sending the URL stored now adds no target.
+      it('checks a merged edit against the credentials re-read under the lock', async () => {
+        // Another writer moved the base URL after the edit's first read. Re-sending the URL stored now adds no target.
+        // (A service whose parser handles edits, like WordPress, refuses this with a 409 instead.)
+        const storedGongCredentials: DecryptedCredentials = {
+          gongAccessKey: 'access-key',
+          gongAccessKeySecret: 'stored-secret',
+          gongBaseUrl: 'https://us-1.api.gong.io',
+        };
         (dbService.client.connectorAccount.findUnique as jest.Mock)
           .mockResolvedValueOnce(
             createMockAccount({
-              service: 'WORDPRESS',
+              service: 'GONG',
               encryptedCredentials: { encrypted: 'read-before-edit' },
             } as Partial<ConnectorAccount>),
           )
           .mockResolvedValueOnce(
             createMockAccount({
-              service: 'WORDPRESS',
+              service: 'GONG',
               encryptedCredentials: { encrypted: 'written-meanwhile' },
             } as Partial<ConnectorAccount>),
           );
         (dbService.client.connectorAccount.update as jest.Mock).mockResolvedValue(
-          createMockAccount({ service: 'WORDPRESS' } as Partial<ConnectorAccount>),
+          createMockAccount({ service: 'GONG' } as Partial<ConnectorAccount>),
         );
         (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({ organizationId: 'org_test' });
         credentialEncryptionService.decryptCredentials.mockImplementation((encryptedCredentials) =>
           Promise.resolve(
             encryptedCredentials.encrypted === 'written-meanwhile'
-              ? { ...STORED_WORDPRESS_CREDENTIALS, endpoint: 'https://moved-site.example/wp-json/' }
-              : { ...STORED_WORDPRESS_CREDENTIALS },
+              ? { ...storedGongCredentials, gongBaseUrl: 'https://us-2.api.gong.io' }
+              : { ...storedGongCredentials },
           ),
         );
 
         await service.update(
           WORKBOOK_ID,
           ACCOUNT_ID,
-          { userProvidedParams: { endpoint: 'https://moved-site.example/wp-json/' } },
+          { userProvidedParams: { gongBaseUrl: 'https://us-2.api.gong.io' } },
           ACTOR,
         );
 
         expect(credentialsPassedToEncryption()).toEqual({
-          ...STORED_WORDPRESS_CREDENTIALS,
-          endpoint: 'https://moved-site.example/wp-json/',
+          ...storedGongCredentials,
+          gongBaseUrl: 'https://us-2.api.gong.io',
         });
       });
 
@@ -727,7 +756,100 @@ describe('ConnectorAccountService', () => {
             ACTOR,
           ),
         ).rejects.toThrow(new BadRequestException(secretRequiredMessage('Application password', 'WordPress URL')));
+        expect(discoverAndValidateEndpoint).not.toHaveBeenCalled();
         expectNothingStored();
+      });
+
+      describe('WordPress edits run endpoint discovery (DEV-12747)', () => {
+        it('an edit with the site URL stores the endpoint discovery finds, not the URL as typed', async () => {
+          mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+          discoverAndValidateEndpoint.mockResolvedValue('https://site.example/wp-json/');
+
+          await service.update(
+            WORKBOOK_ID,
+            ACCOUNT_ID,
+            { userProvidedParams: { endpoint: 'https://site.example' } },
+            ACTOR,
+          );
+
+          expect(discoverAndValidateEndpoint).toHaveBeenCalledTimes(1);
+          expect(credentialsPassedToEncryption()).toEqual(STORED_WORDPRESS_CREDENTIALS);
+          expect(auditLogService.logEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              context: expect.not.objectContaining({ addedConnectionTargets: expect.anything() as unknown }) as unknown,
+            }),
+          );
+        });
+
+        it('a password-only edit keeps the stored endpoint, with no discovery', async () => {
+          mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+
+          await service.update(
+            WORKBOOK_ID,
+            ACCOUNT_ID,
+            { userProvidedParams: { password: 'rotated-app-password' } },
+            ACTOR,
+          );
+
+          expect(discoverAndValidateEndpoint).not.toHaveBeenCalled();
+          expect(credentialsPassedToEncryption()).toEqual({
+            ...STORED_WORDPRESS_CREDENTIALS,
+            password: 'rotated-app-password',
+          });
+        });
+
+        it('a host change without the password is refused before discovery makes any request to the new host', async () => {
+          mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+
+          await expect(
+            service.update(
+              WORKBOOK_ID,
+              ACCOUNT_ID,
+              { userProvidedParams: { endpoint: 'https://other-site.example', username: 'editor' } },
+              ACTOR,
+            ),
+          ).rejects.toThrow(new BadRequestException(secretRequiredMessage('Application password', 'WordPress URL')));
+          expect(discoverAndValidateEndpoint).not.toHaveBeenCalled();
+          expect(oauthService.runWhileHoldingConnectionCredentialsLock).not.toHaveBeenCalled();
+          expectNothingStored();
+        });
+
+        it('a URL that fails discovery is refused with the same message as on create, and nothing is stored', async () => {
+          mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+          const discoveryFailure = new ConnectorAuthError(
+            'Could not find a valid WordPress REST API endpoint.',
+            'Could not find a valid WordPress REST API endpoint. Please verify your WordPress URL and credentials.',
+            'WORDPRESS',
+          );
+          discoverAndValidateEndpoint.mockRejectedValue(discoveryFailure);
+
+          await expect(
+            service.update(
+              WORKBOOK_ID,
+              ACCOUNT_ID,
+              { userProvidedParams: { endpoint: 'https://site.example/not-wordpress/' } },
+              ACTOR,
+            ),
+          ).rejects.toBe(discoveryFailure);
+          expect(oauthService.runWhileHoldingConnectionCredentialsLock).not.toHaveBeenCalled();
+          expectNothingStored();
+        });
+
+        it('an endpoint discovery finds on another host is refused under the lock when the edit did not send the password', async () => {
+          mockStoredAccount('WORDPRESS', STORED_WORDPRESS_CREDENTIALS);
+          // The site's own Link header can point discovery somewhere else; the check under the lock reads what it found.
+          discoverAndValidateEndpoint.mockResolvedValue('https://elsewhere.example/wp-json/');
+
+          await expect(
+            service.update(
+              WORKBOOK_ID,
+              ACCOUNT_ID,
+              { userProvidedParams: { endpoint: 'https://site.example' } },
+              ACTOR,
+            ),
+          ).rejects.toThrow(new BadRequestException(secretRequiredMessage('Application password', 'WordPress URL')));
+          expectNothingStored();
+        });
       });
     });
 
