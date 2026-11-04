@@ -112,7 +112,19 @@ The `scratchmd` CLI and the Scratch Desktop app cut **test** releases (pointing 
 
 A scheduled pipeline named **`Hourly Test Releases`** (variable `PIPELINE_NAME="Hourly Test Releases"`, target branch `master`, hourly cron) runs the CLI test patch release and the Desktop test release. Each run **no-ops in seconds** when nothing under `scratch-git-2/`, `scratch-desktop/`, or `packages/shared-types/` changed since the last test release; set `FORCE_RELEASE=1` on a manual run of the schedule to force a build. Create/edit it in [Gitlab Pipeline Schedules](https://gitlab.com/whalesync/spinner/-/pipeline_schedules) (leave `RELEASE_DESKTOP_ONLY` / `RELEASE_CLI_ONLY` at their `false` defaults).
 
-To cut an **immediate** test release without waiting for the next hourly tick, open the latest `master` pipeline and play the manual `release-rust-cli-test-patch` job (CLI) and/or `Bootstrap test desktop release` job (Desktop) — they appear as manual ▶︎ buttons and never auto-run on merge. Prod releases are unchanged: they run automatically on the `prod` branch.
+To cut an **immediate** test release without waiting for the next hourly tick, open the latest `master` pipeline and play the manual `release-rust-cli-test-patch` job (CLI) and/or `Bootstrap test desktop release` job (Desktop) — they appear as manual ▶︎ buttons and never auto-run on merge.
+
+### Prod releases of the CLI & Desktop apps (weekly)
+
+Prod deploys no longer release the CLI or the Desktop app (DEV-12734). Those apps aren't under active development, so a separate scheduled pipeline cuts their **prod** releases (pointing at `api.scratch.md`) once a week.
+
+A scheduled pipeline named **`Desktop and CLI Releases`** (variable `PIPELINE_NAME="Desktop and CLI Releases"`, target branch **`prod`**, cron `0 10 * * 3` in `America/Los_Angeles`, i.e. Wednesdays at 10:00 PT) runs the CLI prod patch release (`release-rust-cli-patch`) and the Desktop prod release (`Bootstrap prod desktop release` and everything downstream). It targets `prod` rather than `master` so the apps always match the API that's deployed. Each app **no-ops in seconds** when nothing relevant changed since its last prod release: `scratch-git-2/` for the CLI, and `scratch-desktop/`, `scratch-git-2/`, or `packages/shared-types/` for Desktop. Set `FORCE_RELEASE=1` on the schedule to force a build. Create/edit it in [Gitlab Pipeline Schedules](https://gitlab.com/whalesync/spinner/-/pipeline_schedules) (leave `RELEASE_DESKTOP_ONLY` / `RELEASE_CLI_ONLY` at their `false` defaults). A team mac runner must be online during the window. See [scratch-desktop/BUILDS.md](scratch-desktop/BUILDS.md#cutting-a-release).
+
+To cut a prod release **by hand**:
+
+- **Both apps (patch):** press ▶︎ **Play** on the `Desktop and CLI Releases` schedule. The no-op guard still applies.
+- **Desktop only:** **CI/CD → Pipelines → Run pipeline** on `prod` with `RELEASE_DESKTOP_ONLY=true`. Optionally set `RELEASE_TYPE` to `minor` or `major` (it defaults to `patch`). This always builds.
+- **CLI only:** **Run pipeline** on `prod` with `RELEASE_CLI_ONLY=true`, then play the `release-rust-cli-patch`, `-minor`, or `-major` manual job. This always builds.
 
 ## Upgrading Node
 
