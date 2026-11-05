@@ -149,7 +149,7 @@ Hosts: `connect.squareup.com` (production), `connect.squareupsandbox.com` (sandb
 - **The main-location default is real:** with no `location_id`, ListPayments returned 68 of 204 sandbox payments (main location only). The per-location walk returns all 204.
 - **Refunds create orders.** Square writes a system order (no `reference_id`, no line items, source "Sandbox for <app id>") for every refund, so Orders has 12 more rows than the orders we created.
 - **Date-only fields churn on Postgres/Supabase destinations.** `invoices.sale_or_service_date` (`YYYY-MM-DD`) lands correctly in a `date` column, but the destination's own pull reads it back as a full timestamp (node-postgres parses DATE into a JS Date — see `pg-type-mapping.ts`), so every run re-publishes every invoice. Destination-side (pg-common), not Square.
-- **Arrays of objects export as non-JSON text.** `line_items`, `taxes`, `tenders`, `processing_fee`, `payment_requests` arrive as `{...}, {...}` (comma-joined, no brackets) — no data lost, but not castable to jsonb without wrapping in `[...]`. Objects export as real `jsonb`. Live Export packer behavior, not Square.
+- **Arrays of objects** (`line_items`, `taxes`, `discounts`, `tenders`, `fulfillments`, `returns`, `processing_fee`, `payment_requests`) export as `jsonb` columns on Postgres/Supabase (and `json` on MySQL), copied in whole. A destination with no JSON column (Airtable, Notion, Google Sheets) gets them as text holding one valid JSON array, `[{...},{...}]`. They used to arrive as comma-joined `{...}, {...}` fragments that weren't valid JSON (DEV-12572). An export created before the fix keeps its existing text column: remove the field from the export, drop the column, and re-add it to get `jsonb`.
 
 ## Gotchas
 

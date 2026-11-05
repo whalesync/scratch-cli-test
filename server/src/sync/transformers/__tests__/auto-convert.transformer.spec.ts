@@ -138,9 +138,35 @@ describe('autoConvertTransformer', () => {
       expect(result).toEqual({ success: true, value: JSON.stringify(featuredImage) });
     });
 
-    it('should JSON-stringify object elements in an array rather than emitting [object Object]', async () => {
-      const result = await autoConvertTransformer.transform(createContext([{ a: 1 }, { b: 2 }], opts));
-      expect(result).toEqual({ success: true, value: '{"a":1}, {"b":2}' });
+    // DEV-12572: Square order `line_items` landed in a text column as `{…}, {…}`, which isn't valid JSON.
+    it('should serialize an array of objects as one JSON array', async () => {
+      const lineItems = [
+        { uid: 'a', name: 'Printed Programme', quantity: '1' },
+        { uid: 'b', name: '東京 Jazz Night — 日本語', quantity: '2' },
+      ];
+      const result = await autoConvertTransformer.transform(createContext(lineItems, opts));
+      expect(result).toEqual({ success: true, value: JSON.stringify(lineItems) });
+      expect(JSON.parse(result.success ? String(result.value) : '')).toEqual(lineItems);
+    });
+
+    it('should keep the brackets on a one-element array of objects', async () => {
+      const result = await autoConvertTransformer.transform(createContext([{ a: 1 }], opts));
+      expect(result).toEqual({ success: true, value: '[{"a":1}]' });
+    });
+
+    it('should serialize the whole array as JSON when only some elements are objects', async () => {
+      const result = await autoConvertTransformer.transform(createContext(['x', null, { a: 1 }], opts));
+      expect(result).toEqual({ success: true, value: '["x",null,{"a":1}]' });
+    });
+
+    it('should serialize an array of arrays as JSON', async () => {
+      const result = await autoConvertTransformer.transform(createContext([[1, 2], [3]], opts));
+      expect(result).toEqual({ success: true, value: '[[1,2],[3]]' });
+    });
+
+    it('should still join an array of scalars with commas', async () => {
+      const result = await autoConvertTransformer.transform(createContext(['a', 1, true, null], opts));
+      expect(result).toEqual({ success: true, value: 'a, 1, true, null' });
     });
 
     it('should not throw on a circular object (falls back to String)', async () => {

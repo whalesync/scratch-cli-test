@@ -112,10 +112,15 @@ function convertToString(value: unknown): TransformResult {
     if (value.length === 0) {
       return { success: true, value: '' };
     }
-    if (value.length === 1) {
-      return { success: true, value: stringifyElement(value[0]) };
+    // An array holding any object or nested array becomes one JSON array, brackets included, at every
+    // length. Joining its elements with ", " gave `{…}, {…}`: every element was there, but the text wasn't
+    // valid JSON, so a SQL `::jsonb` cast or a JSON parser couldn't read it back (DEV-12572: Square order
+    // `line_items` exported to a text column).
+    if (value.some(isJsonContainer)) {
+      return { success: true, value: safeJsonStringify(value) };
     }
-    return { success: true, value: value.map(stringifyElement).join(', ') };
+    // An array of scalars joins its elements' text with ", " (a single element is just its own text).
+    return { success: true, value: value.map((element) => String(element)).join(', ') };
   }
   // Objects (and any other non-scalar) get a JSON string rather than failing the
   // record — a non-string value going into a string/text column should always
@@ -125,9 +130,9 @@ function convertToString(value: unknown): TransformResult {
   return { success: true, value: safeJsonStringify(value) };
 }
 
-/** Stringify one array element: scalars via `String`, objects as JSON (so an array of objects doesn't become "[object Object]"). */
-function stringifyElement(value: unknown): string {
-  return value !== null && typeof value === 'object' ? safeJsonStringify(value) : String(value);
+/** Whether a value is a JSON object or array (not `null`), which only serializes faithfully as JSON. */
+function isJsonContainer(value: unknown): boolean {
+  return value !== null && typeof value === 'object';
 }
 
 /** `JSON.stringify`, but never throws (e.g. on a circular reference) — falls back to `String(value)`. */

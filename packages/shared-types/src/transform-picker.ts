@@ -331,8 +331,8 @@ function selectCardinalityReshape(
       destinationLogicalType === undefined || TEXT_LIKE_DESTINATION_LOGICAL_TYPES.has(destinationLogicalType);
     if (joinAllValues) {
       // `auto_convert(string)` joins string elements with `", "` AND degrades an un-extracted object
-      // array (a raw multi_select before a codec extracts its names) to JSON rather than FAILING the way
-      // jsonpath `join_comma` would — so an un-enhanced column keeps landing exactly as today, and only a
+      // array (a raw multi_select before a codec extracts its names) to one JSON array rather than
+      // FAILING the way jsonpath `join_comma` would — so an un-enhanced column still lands, and only a
       // column whose `toCore` already yields clean strings gets the tidy join. Total either way.
       return {
         transformers: [
