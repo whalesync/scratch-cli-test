@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { TableView, connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -55,9 +56,9 @@ export class SquareConnector extends Connector<string, SquarePullProgress> {
     base: 'account',
     bases: 'accounts',
     logo: 'https://static.scratch.md/connector-icons/square.svg',
-    // Hidden in Scratch's own connector pickers until a live Square account has been pulled end to
-    // end. Live Export doesn't read this flag — it offers sources from LIVE_EXPORT_SOURCE_SERVICES.
-    visible: false,
+    // Shown in Scratch's own connector pickers. Live Export doesn't read this flag — it offers sources from
+    // LIVE_EXPORT_SOURCE_SERVICES.
+    visible: true,
     // Signing in authorizes Whalesync's Square app on the seller's account: its sandbox app on test, its production
     // app in production. A pasted personal access token is the alternative, and the only way to connect a sandbox
     // account in production (or a production one on test).
@@ -90,20 +91,48 @@ export class SquareConnector extends Connector<string, SquarePullProgress> {
     await this.client.validateCredentials();
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
+  /**
+   * Every Square table. A table whose permission the connection wasn't granted is listed but can't be picked: an
+   * OAuth connection keeps the scopes it was signed in with, so one made before the table existed lacks it until
+   * the seller reconnects.
+   */
   async listTables(): Promise<TablePreview[]> {
+    const grantedScopesIfKnown = await this.retrieveGrantedScopesIfKnown();
     return SQUARE_ENTITY_TYPES.map((entityType) => {
       const entityConfig = SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE[entityType];
+      const connectionLacksTableScope =
+        grantedScopesIfKnown !== undefined && !grantedScopesIfKnown.has(entityConfig.oauthReadScope);
       return {
         id: { wsId: entityType, remoteId: [entityType] },
         displayName: entityConfig.displayName,
+        ...(connectionLacksTableScope ? { disabled: true as const } : {}),
         disabledCreates: true as const,
         disabledUpdates: true as const,
         disabledDeletes: true as const,
-        disabledReason: 'The Square connector is read-only',
+        disabledReason: connectionLacksTableScope
+          ? `This connection doesn't have Square's ${entityConfig.oauthReadScope} permission. ` +
+            `Reconnect Square to add ${entityConfig.displayName}.`
+          : 'The Square connector is read-only',
         metadata: { description: entityConfig.description, entityType },
       };
     });
+  }
+
+  /**
+   * The token's granted scopes, or `undefined` when Square won't say. Not knowing leaves every table pickable: a
+   * table that does lack its scope then fails its pull with Square's own permission error.
+   */
+  private async retrieveGrantedScopesIfKnown(): Promise<Set<string> | undefined> {
+    try {
+      return await this.client.retrieveGrantedScopes();
+    } catch (error) {
+      WSLogger.warn({
+        source: 'SquareConnector',
+        message: 'Could not read the Square token status; listing every table as pickable',
+        error,
+      });
+      return undefined;
+    }
   }
 
   override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {

@@ -58,7 +58,7 @@ describe('SquareOAuthProvider', () => {
         client_id: 'sq0idp-production-app',
         scope:
           'MERCHANT_PROFILE_READ CUSTOMERS_READ ITEMS_READ ORDERS_READ PAYMENTS_READ INVOICES_READ EMPLOYEES_READ ' +
-          'PAYOUTS_READ',
+          'PAYOUTS_READ GIFTCARDS_READ SUBSCRIPTIONS_READ',
         redirect_uri: 'https://app.whalesync.com/oauth-callback/connector/square',
         state: 'STATE',
         session: 'false',

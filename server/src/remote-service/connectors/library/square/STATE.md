@@ -19,36 +19,36 @@
 
 - **Type:** STATIC (record shapes generated from Square's OpenAPI spec — Square has no schema-introspection endpoint)
 - **Template version:** 2026-06-18
-- **Last run:** 2026-10-26 · sandbox seed + local Live Export (audit harness) · Tester: agent
+- **Last run:** 2026-11-05 · four new tables seeded and pulled live, integration spec, `enforce_schema` dry-run on every record · Tester: agent
 
 Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 
 ## Milestones — where this connector is in the build
 
-| #   | Milestone                                                 | Status | Notes                                                                                           |
-| --- | --------------------------------------------------------- | :----: | ----------------------------------------------------------------------------------------------- |
-| 1   | **Account ready**                                         |   ✅   | 2026-10-26 — Developer account + Default Test Account; sandbox token verified (200 sandbox / 401 production) |
-| 2   | **Connected**                                             |   ✅   | 2026-10-26 via the local server (AuthParser detected sandbox; health ok)                         |
-| 3   | **First fetch** (+ `enforce_schema` validation)           |   🔄   | All 14 tables pulled 2026-10-26; `enforce_schema` dry-run still to do                              |
-| 4   | **All entities seeded & fetched**                         |   ✅   | `tools/live-export-audit/seeds/square/seed.mjs`; every table except Payouts (sandbox never settles) |
-| 5   | **Full write CRUD**                                       |   ➖   | Read-only connector (Live Export source)                                                        |
-| 6   | **Foreign keys tested**                                   |   ➖   | Read-only; FK _reads_ verified 2026-10-26 (17 FK constraints on Postgres, joins resolve)        |
-| 7   | **Edge cases & quirks tested**                            |   ⬜   |                                                                                                 |
-| 8   | **View(s) built**                                         |   🔄   | Default view drove the 2026-10-26 SQUARE → POSTGRES Live Export on live sandbox data (551 records, 17 FKs); Supabase/Notion audit still to do |
-| 9   | **OAuth**                                                 |   ✅   | 2026-11-04 — signed in on test (sandbox seller) and exported 552/552 to Postgres; no production sign-in yet |
-| 10  | **Integration test**                                      |   ⬜   |                                                                                                 |
+| #   | Milestone                                       | Status | Notes                                                                                                                                                                                                                |
+| --- | ----------------------------------------------- | :----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Account ready**                               |   ✅   | 2026-10-26 — Developer account + Default Test Account; sandbox token verified (200 sandbox / 401 production)                                                                                                         |
+| 2   | **Connected**                                   |   ✅   | 2026-10-26 via the local server (AuthParser detected sandbox; health ok)                                                                                                                                             |
+| 3   | **First fetch** (+ `enforce_schema` validation) |   ✅   | All 18 tables pulled live 2026-11-05. `enforce_schema` dry-run over every pulled record (650): 0 errors, 0 warnings (see Edge cases)                                                                                 |
+| 4   | **All entities seeded & fetched**               |   ✅   | `tools/live-export-audit/seeds/square/seed.mjs` seeds every table but Payouts; the sandbox settled one payout on its own (80 entries)                                                                                |
+| 5   | **Full write CRUD**                             |   ➖   | Read-only connector (Live Export source)                                                                                                                                                                             |
+| 6   | **Foreign keys tested**                         |   ➖   | Read-only; FK _reads_ verified 2026-10-26 (17 FK constraints on Postgres, joins resolve)                                                                                                                             |
+| 7   | **Edge cases & quirks tested**                  |   ⬜   |                                                                                                                                                                                                                      |
+| 8   | **View(s) built**                               |   ✅   | Default view drove a full Live Export audit to a local Postgres 2026-11-05 (all 18 tables, 650/650, 22 FKs, CRUD and drift pass; see `LIVE_EXPORT_AUDIT.md`). Supabase and Notion not yet audited (no test accounts) |
+| 9   | **OAuth**                                       |   ✅   | 2026-11-04 — signed in on test (sandbox seller) and exported 552/552 to Postgres; no production sign-in yet                                                                                                          |
+| 10  | **Integration test**                            |   ✅   | `server/test/integration/square-connector.spec.ts`, 27 tests green against the sandbox 2026-11-05; not run in CI                                                                                                     |
 
 ## TODOs — known pending tasks
 
 - [x] Provision a Square Developer account (2026-10-26; token in GCP secret `square`).
 - [x] Seed the sandbox (`tools/live-export-audit/seeds/square/seed.mjs`) and pull every table (2026-10-26).
-- [ ] `enforce_schema` dry-run on one record per table.
+- [x] `enforce_schema` dry-run: every pulled record of every table (650), 0 problems, 2026-11-05 (see Edge cases).
 - [x] `begin_time=2009-01-01T00:00:00Z` is accepted by ListPayments / ListRefunds / ListPayouts (sandbox, 2026-10-26: 200).
 - [x] SearchOrders accepts `DRAFT` in `state_filter` alongside the other states (sandbox, 2026-10-26: 200).
 - [x] First Live Export, SQUARE → POSTGRES (local, 2026-10-26): 551/551 records published, 0 failures, row counts equal the source, all 17 FKs created as real constraints and joins resolve. Second run NOT a no-op: 6 Invoices re-publish every run (Postgres `date` round-trip, a pg-common dest-pack issue — see Edge cases).
-- [ ] Full `/test-live-export SQUARE SUPABASE,NOTION` → `LIVE_EXPORT_AUDIT.md`.
+- [x] Live Export audit → `LIVE_EXPORT_AUDIT.md`, against a local Postgres as the stand-in for Supabase (2026-11-05). Supabase and Notion still to do: no test account for either.
 - [x] Upload the logo: `gs://spv1eu-production-static/connector-icons/square.svg` (Simple Icons `square`; serving 200 as of 2026-10-27).
-- [ ] Flip `visible` to true once a live account has been pulled end to end.
+- [x] Flip `visible` to true (2026-11-05, after the Postgres audit; Supabase and Notion runs still open).
 - [x] OAuth (Whalesync-owned Square app) so customers don't have to create a Developer app. Merged as !3457 and in production since 2026-11-02; terraform applied in both envs. Verified on test 2026-11-04 (see [OAuth](#oauth-final-milestone)). A production sign-in is still untried.
 - [ ] Incremental pull (every table has `updated_at`; Payments/Refunds list endpoints take `updated_at_begin_time`, Orders/Customers search take an `updated_at` filter). Live Export source pulls are always FULL today, so this only matters for Scratch-side scheduled pulls.
 
@@ -58,46 +58,50 @@ Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 
 **Record path:** `/{table}/{record}.json` — a Square seller account is one flat namespace; locations are a table, not a path segment (most objects carry `location_id`).
 
-| Structural entity       | Role                              | Path segment or `parentPath` grouping? |
-| ----------------------- | --------------------------------- | -------------------------------------- |
-| Merchant (seller)       | the connection (one per token)    | discovery-only (`GET /v2/merchants/me`) |
-| Table (fixed per type)  | the table (its records are files) | path segment                           |
+| Structural entity      | Role                              | Path segment or `parentPath` grouping?  |
+| ---------------------- | --------------------------------- | --------------------------------------- |
+| Merchant (seller)      | the connection (one per token)    | discovery-only (`GET /v2/merchants/me`) |
+| Table (fixed per type) | the table (its records are files) | path segment                            |
 
 ### 2. Main entities
 
-| Entity                     | Scratch table              | Pull | Create→Push | Edit→Push | Delete | FK  | Status  |
-| -------------------------- | -------------------------- | :--: | :---------: | :-------: | :----: | :-: | ------- |
-| Location                   | `locations`                | ✅ |     ➖      |    ➖     |   ➖   | ➖  | built   |
-| Customer                   | `customers`                | ✅ |     ➖      |    ➖     |   ➖   | ➖  | built   |
-| CatalogObject ITEM         | `catalog_items`            | ✅ |     ➖      |    ➖     |   ➖   | ✅ | built   |
-| CatalogObject ITEM_VARIATION | `catalog_item_variations` | ✅ |     ➖      |    ➖     |   ➖   | ✅ | built   |
-| CatalogObject CATEGORY     | `catalog_categories`       | ✅ |     ➖      |    ➖     |   ➖   | ➖  | built   |
-| CatalogObject MODIFIER_LIST | `catalog_modifier_lists`  | ✅ |     ➖      |    ➖     |   ➖   | ➖  | built   |
-| CatalogObject TAX          | `catalog_taxes`            | ✅ |     ➖      |    ➖     |   ➖   | ➖  | built   |
-| CatalogObject DISCOUNT     | `catalog_discounts`        | ✅ |     ➖      |    ➖     |   ➖   | ➖  | built   |
-| Order                      | `orders`                   | ✅ |     ➖      |    ➖     |   ➖   | ✅ | built   |
-| Payment                    | `payments`                 | ✅ |     ➖      |    ➖     |   ➖   | ✅ | built   |
-| PaymentRefund              | `refunds`                  | ✅ |     ➖      |    ➖     |   ➖   | ✅ | built   |
-| Invoice                    | `invoices`                 | ✅ |     ➖      |    ➖     |   ➖   | ✅ | built   |
-| TeamMember                 | `team_members`             | ✅ |     ➖      |    ➖     |   ➖   | ➖  | built   |
-| Payout                     | `payouts`                  | ✅ (0 rows: the sandbox never settles) |     ➖      |    ➖     |   ➖   | ⬜  | built   |
-| Gift card, Loyalty account, Subscription, Booking, Dispute, Shift | — | — | — | — | — | — | planned |
+| Entity                                   | Scratch table             |                        Pull                         | Create→Push | Edit→Push | Delete | FK  | Status           |
+| ---------------------------------------- | ------------------------- | :-------------------------------------------------: | :---------: | :-------: | :----: | :-: | ---------------- |
+| Location                                 | `locations`               |                         ✅                          |     ➖      |    ➖     |   ➖   | ➖  | built            |
+| Customer                                 | `customers`               |                         ✅                          |     ➖      |    ➖     |   ➖   | ➖  | built            |
+| CatalogObject ITEM                       | `catalog_items`           |                         ✅                          |     ➖      |    ➖     |   ➖   | ✅  | built            |
+| CatalogObject ITEM_VARIATION             | `catalog_item_variations` |                         ✅                          |     ➖      |    ➖     |   ➖   | ✅  | built            |
+| CatalogObject CATEGORY                   | `catalog_categories`      |                         ✅                          |     ➖      |    ➖     |   ➖   | ➖  | built            |
+| CatalogObject MODIFIER_LIST              | `catalog_modifier_lists`  |                         ✅                          |     ➖      |    ➖     |   ➖   | ➖  | built            |
+| CatalogObject TAX                        | `catalog_taxes`           |                         ✅                          |     ➖      |    ➖     |   ➖   | ➖  | built            |
+| CatalogObject DISCOUNT                   | `catalog_discounts`       |                         ✅                          |     ➖      |    ➖     |   ➖   | ➖  | built            |
+| Order                                    | `orders`                  |                         ✅                          |     ➖      |    ➖     |   ➖   | ✅  | built            |
+| Payment                                  | `payments`                |                         ✅                          |     ➖      |    ➖     |   ➖   | ✅  | built            |
+| PaymentRefund                            | `refunds`                 |                         ✅                          |     ➖      |    ➖     |   ➖   | ✅  | built            |
+| Invoice                                  | `invoices`                |                         ✅                          |     ➖      |    ➖     |   ➖   | ✅  | built            |
+| TeamMember                               | `team_members`            |                         ✅                          |     ➖      |    ➖     |   ➖   | ➖  | built            |
+| Payout                                   | `payouts`                 | ✅ (1 row: the sandbox settles on its own schedule) |     ➖      |    ➖     |   ➖   | ➖  | built            |
+| PayoutEntry                              | `payout_entries`          |              ✅ (80 rows, one payout)               |     ➖      |    ➖     |   ➖   | ✅  | built 2026-11-05 |
+| GiftCard                                 | `gift_cards`              |                         ✅                          |     ➖      |    ➖     |   ➖   | ➖  | built 2026-11-05 |
+| GiftCardActivity                         | `gift_card_activities`    |                         ✅                          |     ➖      |    ➖     |   ➖   | ✅  | built 2026-11-05 |
+| Subscription                             | `subscriptions`           |                         ✅                          |     ➖      |    ➖     |   ➖   | ✅  | built 2026-11-05 |
+| Loyalty account, Booking, Dispute, Shift | —                         |                          —                          |      —      |     —     |   —    |  —  | planned          |
 
 ### 3. Scoped / non-top-level entities
 
-| Entity                          | Why not top-level                                         | How we reach it                              | Status  |
-| ------------------------------- | --------------------------------------------------------- | -------------------------------------------- | ------- |
-| Order line items / taxes / tenders | **scoped** — embedded in the Order, no ids of their own (`uid` only) | stored inside each Order record (JSON column on export) | built   |
-| Item variations (inside an ITEM)  | also listed top-level as ITEM_VARIATION                 | embedded in `item_data.variations` **and** own table | built   |
-| Inventory counts                | **weird** — keyed by (variation, location, state), no record id | `POST /v2/inventory/counts/batch-retrieve`   | planned |
-| Payout entries                  | **scoped** — `GET /v2/payouts/{id}/payout-entries`        | per-payout fan-out                           | planned |
+| Entity                             | Why not top-level                                                    | How we reach it                                         | Status                                                                                      |
+| ---------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Order line items / taxes / tenders | **scoped** — embedded in the Order, no ids of their own (`uid` only) | stored inside each Order record (JSON column on export) | built                                                                                       |
+| Item variations (inside an ITEM)   | also listed top-level as ITEM_VARIATION                              | embedded in `item_data.variations` **and** own table    | built                                                                                       |
+| Inventory counts                   | **weird** — keyed by (variation, location, state), no record id      | `POST /v2/inventory/counts/batch-retrieve`              | not built: a record needs an id, and adding one would break the Prime Directive (DEV-12741) |
+| Payout entries                     | **scoped** — `GET /v2/payouts/{id}/payout-entries`                   | per-payout fan-out; now its own table, `payout_entries` | built 2026-11-05                                                                            |
 
 ## Bulk operation limits / pagination
 
-| Operation   | Max per request | Mechanism (endpoint / cursor)                                       | Notes |
-| ----------- | --------------- | ------------------------------------------------------------------- | ----- |
-| Read (list) | 100 (payments, refunds, payouts, customers, team members); 200 (invoices); 100 fixed (catalog); 500 of max 1000 (orders) | opaque `cursor` | ListLocations is unpaginated |
-| Create / Update / Delete | ➖ | — | read-only |
+| Operation                | Max per request                                                                                                                                                                           | Mechanism (endpoint / cursor) | Notes                        |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ---------------------------- |
+| Read (list)              | 100 (payments, refunds, payouts, payout entries, gift card activities, customers, team members, subscriptions); 200 (invoices, gift cards); 100 fixed (catalog); 500 of max 1000 (orders) | opaque `cursor`               | ListLocations is unpaginated |
+| Create / Update / Delete | ➖                                                                                                                                                                                        | —                             | read-only                    |
 
 Rate limits: Square publishes no fixed quota (adaptive; 429 `RATE_LIMITED`, no `Retry-After`). We pace at 10 req/s per connection and back off on 429.
 
@@ -114,79 +118,96 @@ Rate limits: Square publishes no fixed quota (adaptive; 429 `RATE_LIMITED`, no `
 - **Schema source:** `square-entity-schemas.generated.ts`, produced by `server/scripts/generate-square-entity-schemas.mjs` from Square's OpenAPI `api.json` (`$ref`s inlined 3 object levels deep; deeper levels opaque).
 - **Currency verdict:** up to date.
 
-| Entity / area           | Op   | Method + path                         | Note |
-| ----------------------- | ---- | ------------------------------------- | ---- |
-| Merchant                | auth | `GET /v2/merchants/me`                | token check + environment detection |
-| Locations               | list | `GET /v2/locations`                   | all statuses, one call |
-| Customers               | list | `GET /v2/customers?limit=100`         | |
-| Catalog (per type)      | list | `GET /v2/catalog/list?types=<TYPE>`   | excludes deleted objects |
-| Orders                  | list | `POST /v2/orders/search`              | ≤10 `location_ids` per request; all 4 states; sort CREATED_AT ASC |
-| Payments                | list | `GET /v2/payments?location_id=…&begin_time=2009-…` | **per location** — default is main location + last year only |
-| Refunds                 | list | `GET /v2/refunds?begin_time=2009-…`   | all locations by default; last-year default overridden |
-| Invoices                | list | `GET /v2/invoices?location_id=…`      | `location_id` required |
-| Team members            | list | `POST /v2/team-members/search`        | no query → every status |
-| Payouts                 | list | `GET /v2/payouts?location_id=…&begin_time=2009-…` | per location, last-year default overridden |
-| every table             | get  | `GET /v2/<resource>/{id}` (catalog: `/v2/catalog/object/{id}`) | single-record envelope stripped |
+| Entity / area        | Op   | Method + path                                                     | Note                                                                                                                                             |
+| -------------------- | ---- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Merchant             | auth | `GET /v2/merchants/me`                                            | token check + environment detection                                                                                                              |
+| Locations            | list | `GET /v2/locations`                                               | all statuses, one call                                                                                                                           |
+| Customers            | list | `GET /v2/customers?limit=100`                                     |                                                                                                                                                  |
+| Catalog (per type)   | list | `GET /v2/catalog/list?types=<TYPE>`                               | excludes deleted objects                                                                                                                         |
+| Orders               | list | `POST /v2/orders/search`                                          | ≤10 `location_ids` per request; all 4 states; sort CREATED_AT ASC                                                                                |
+| Payments             | list | `GET /v2/payments?location_id=…&begin_time=2009-…`                | **per location** — default is main location + last year only                                                                                     |
+| Refunds              | list | `GET /v2/refunds?begin_time=2009-…`                               | all locations by default; last-year default overridden                                                                                           |
+| Invoices             | list | `GET /v2/invoices?location_id=…`                                  | `location_id` required                                                                                                                           |
+| Team members         | list | `POST /v2/team-members/search`                                    | no query → every status                                                                                                                          |
+| Payouts              | list | `GET /v2/payouts?location_id=…&begin_time=2009-…`                 | per location, last-year default overridden                                                                                                       |
+| Payout entries       | list | `GET /v2/payouts/{payout_id}/payout-entries`                      | **per payout**: lists every payout first, walks them oldest first                                                                                |
+| Gift cards           | list | `GET /v2/gift-cards?limit=200`                                    | every type and state by default                                                                                                                  |
+| Gift card activities | list | `GET /v2/gift-cards/activities?begin_time=2009-…&end_time=2100-…` | all locations by default; needs both times or neither (see Gotchas)                                                                              |
+| Subscriptions        | list | `POST /v2/subscriptions/search`                                   | no query → every status at every location                                                                                                        |
+| Token                | auth | `POST /oauth2/token/status`                                       | the token's granted scopes, for listing tables                                                                                                   |
+| every table but two  | get  | `GET /v2/<resource>/{id}` (catalog: `/v2/catalog/object/{id}`)    | single-record envelope stripped. Payout entries and gift card activities have no such endpoint, so a by-id pull of them fails with a clear error |
 
 Hosts: `connect.squareup.com` (production), `connect.squareupsandbox.com` (sandbox). Auth: `Authorization: Bearer <token>`.
 
 ## Foreign keys / associations
 
-| FK field → target table                                   | Read (pull) | Write via CLI | Notes |
-| --------------------------------------------------------- | :---------: | :-----------: | ----- |
-| `*.location_id` → `locations`                             | ✅ |      ➖       | orders, payments, refunds, invoices, payouts |
-| `orders.customer_id`, `payments.customer_id` → `customers` | ✅ |      ➖       | |
-| `payments.order_id`, `refunds.order_id`, `invoices.order_id` → `orders` | ✅ | ➖ | |
-| `refunds.payment_id` → `payments`                         | ✅ |      ➖       | |
-| `payments.team_member_id`, `refunds.team_member_id`, `invoices.creator_team_member_id` → `team_members` | ✅ | ➖ | |
-| `catalog_item_variations.item_variation_data.item_id` → `catalog_items` | ✅ | ➖ | view-declared (nested) |
-| `catalog_items.item_data.reporting_category.id` → `catalog_categories` | ✅ | ➖ | view-declared (nested) |
-| `invoices.primary_recipient.customer_id` → `customers`    | ✅ |      ➖       | view-declared (nested) |
+| FK field → target table                                                                                 | Read (pull) | Write via CLI | Notes                                                                             |
+| ------------------------------------------------------------------------------------------------------- | :---------: | :-----------: | --------------------------------------------------------------------------------- |
+| `*.location_id` → `locations`                                                                           |     ✅      |      ➖       | orders, payments, refunds, invoices, payouts, gift card activities, subscriptions |
+| `payout_entries.payout_id` → `payouts`                                                                  |     ✅      |      ➖       |                                                                                   |
+| `gift_card_activities.gift_card_id` → `gift_cards`                                                      |     ✅      |      ➖       |                                                                                   |
+| `subscriptions.customer_id` → `customers`                                                               |     ✅      |      ➖       |                                                                                   |
+| `orders.customer_id`, `payments.customer_id` → `customers`                                              |     ✅      |      ➖       |                                                                                   |
+| `payments.order_id`, `refunds.order_id`, `invoices.order_id` → `orders`                                 |     ✅      |      ➖       |                                                                                   |
+| `refunds.payment_id` → `payments`                                                                       |     ✅      |      ➖       |                                                                                   |
+| `payments.team_member_id`, `refunds.team_member_id`, `invoices.creator_team_member_id` → `team_members` |     ✅      |      ➖       |                                                                                   |
+| `catalog_item_variations.item_variation_data.item_id` → `catalog_items`                                 |     ✅      |      ➖       | view-declared (nested)                                                            |
+| `catalog_items.item_data.reporting_category.id` → `catalog_categories`                                  |     ✅      |      ➖       | view-declared (nested)                                                            |
+| `invoices.primary_recipient.customer_id` → `customers`                                                  |     ✅      |      ➖       | view-declared (nested)                                                            |
 
 ## Edge cases discovered
 
 - **List endpoints lag writes.** Right after seeding, ListPayments returned 202 of 204 payments and ListRefunds 11 of 12; a few minutes later both were complete. A pull taken seconds after a burst of writes can miss the newest records — the next run picks them up.
 - **The main-location default is real:** with no `location_id`, ListPayments returned 68 of 204 sandbox payments (main location only). The per-location walk returns all 204.
 - **Refunds create orders.** Square writes a system order (no `reference_id`, no line items, source "Sandbox for <app id>") for every refund, so Orders has 12 more rows than the orders we created.
-- **Date-only fields churn on Postgres/Supabase destinations.** `invoices.sale_or_service_date` (`YYYY-MM-DD`) lands correctly in a `date` column, but the destination's own pull reads it back as a full timestamp (node-postgres parses DATE into a JS Date — see `pg-type-mapping.ts`), so every run re-publishes every invoice. Destination-side (pg-common), not Square.
+- **Date-only fields churn on Postgres/Supabase destinations.** `invoices.sale_or_service_date` (`YYYY-MM-DD`) lands correctly in a `date` column, but the destination's own pull reads it back as a full timestamp (node-postgres parses DATE into a JS Date — see `pg-type-mapping.ts`), so every run re-published every invoice. Destination-side (pg-common), not Square; fixed in DEV-12576 (`ddc1f6d7a`), which reads `date` columns as `YYYY-MM-DD` text.
 - **Arrays of objects** (`line_items`, `taxes`, `discounts`, `tenders`, `fulfillments`, `returns`, `processing_fee`, `payment_requests`) export as `jsonb` columns on Postgres/Supabase (and `json` on MySQL), copied in whole. A destination with no JSON column (Airtable, Notion, Google Sheets) gets them as text holding one valid JSON array, `[{...},{...}]`. They used to arrive as comma-joined `{...}, {...}` fragments that weren't valid JSON (DEV-12572). An export created before the fix keeps its existing text column: remove the field from the export, drop the column, and re-add it to get `jsonb`.
+
+- **`enforce_schema` dry-run, 2026-11-05:** the integration spec dumped every table's spec and every pulled record (650 records, 18 tables; `SQUARE_TEST_RECORD_DUMP_DIR`), and `scratchmd validation dry-run` with `enforce_schema` (record passed as its own master) reported nothing for any of them. Negative controls confirmed it enforces the generated schemas: a string money amount, a numeric `start_date`, a numeric `payout_id`, and an object `created_at` were each flagged. So the schemas generated from Square's spec aren't stricter than what Square returns.
+- **Square reorders `segment_ids` between calls.** A customer's segments come back in a different order from one ListCustomers call to the next (21 of 27 multi-segment sandbox customers across 6 calls), so every pull rewrites those customers and every Live Export run re-publishes them. Stored verbatim (Prime Directive), so the fix belongs in the sync's comparison: [DEV-12753](https://linear.app/whalesync/issue/DEV-12753).
+- **Subscriptions create invoices and orders.** Square invoices each subscription billing period itself, so seeding subscriptions grows Invoices and Orders after a delay.
 
 ## Gotchas
 
 - **Two silent-data-loss defaults** on Square list endpoints: ListPayments/ListPayouts return only the **main location** without `location_id`, and ListPayments/ListRefunds/ListPayouts return only the **last 12 months** without `begin_time`. Both are overridden; keep it that way.
+- **ListGiftCardActivities needs `begin_time` and `end_time` together, or neither.** Either one alone gets HTTP 400 "Time range provided is not valid" (sandbox, 2026-11-05), and neither means the last year only. The full-history pull sends `2009-01-01` to `2100-01-01`; the end is fixed rather than "now" so a resumed pull's cursor still matches its query.
+- **A connection keeps the OAuth scopes it was signed in with.** The four 2026-11-05 tables added `GIFTCARDS_READ` and `SUBSCRIPTIONS_READ` to the sign-in. A connection made before then lacks them, so the table list (which reads the token's scopes from RetrieveTokenStatus) shows Gift Cards, Gift Card Activities, and Subscriptions as unpickable, with "Reconnect Square to add …" as the reason. If Square won't report the scopes, every table stays pickable and a table without its scope fails its pull with Square's own permission error. Payout entries use `PAYOUTS_READ`, which every connection already has.
 - Square's spec references two schemas it never defines (`AppFeeAllocation`, `CurrencyExchange`); the generator leaves those values untyped.
 - Money is `{ amount, currency }` with `amount` in the **smallest currency unit** (cents). Stored as-is; the view splits it into an Amount and a Currency column.
 - Customer `birthday` may be year-less (`0000-MM-DD`), so it is deliberately not typed as a date.
 
 ## Integration tests
 
-- **Live spec:** none yet — ❌.
-- **Runs in CI pipeline:** ❌.
-- **Capabilities covered:** schemas ❌ · pull ❌ · publish ➖ · error handling ❌ (unit specs cover all of these against mocked HTTP: `__tests__/`).
+- **Live spec:** `server/test/integration/square-connector.spec.ts` — ✅ 27 tests green 2026-11-05 against the seeded sandbox. Needs `SQUARE_TEST_ACCESS_TOKEN` (the `square` secret's `SQUARE_SANDBOX_ACCESS_TOKEN`); skips without it. Run: `cd server && SQUARE_TEST_ACCESS_TOKEN=… yarn test:integration -- square-connector`.
+- **Runs in CI pipeline:** ❌ (the token isn't a GitLab variable).
+- **Capabilities covered:** schemas ✅ · pull ✅ (every table, with links checked) · by-id pull ✅ · publish ➖ · error handling: unit specs against mocked HTTP (`__tests__/`).
 
 ## Open issues
 
 - Launch ticket: [DEV-12570](https://linear.app/whalesync/issue/DEV-12570/live-export-launch-square)
-- [DEV-12571](https://linear.app/whalesync/issue/DEV-12571) — Postgres/Supabase date-only columns read back as timestamps → invoices re-publish every run (pg-common, not Square)
-- [DEV-12572](https://linear.app/whalesync/issue/DEV-12572) — arrays of objects (order line items, …) export as comma-joined JSON fragments instead of jsonb arrays (picker/plan generator, not Square)
+- [DEV-12740](https://linear.app/whalesync/issue/DEV-12740) — Supabase and Notion destination audit (the `enforce_schema` dry-run, a local Postgres audit, and `visible: true` are done)
+- [DEV-12753](https://linear.app/whalesync/issue/DEV-12753) — `segment_ids` order churn re-publishes customers every run (Medium)
+- [DEV-12754](https://linear.app/whalesync/issue/DEV-12754) — a link to a deleted record warns "left the field untouched" every run, though the delete cleared it (Low)
+- [DEV-12741](https://linear.app/whalesync/issue/DEV-12741) — payout entries, gift cards, gift card activities, and subscriptions tables (built 2026-11-05; inventory counts left out, see Scoped entities)
+- Fixed: [DEV-12576](https://linear.app/whalesync/issue/DEV-12576) (date-only columns re-published on non-UTC hosts; DEV-12571 was its duplicate) and [DEV-12572](https://linear.app/whalesync/issue/DEV-12572) (arrays of objects as JSON fragments)
 
 ## OAuth (final milestone)
 
 - **App:** Whalesync's Square application (created by Curtis; credentials in 1Password). Its Sandbox id/secret are `SQUARE_CLIENT_ID` / `SQUARE_CLIENT_SECRET` in spv1eu-test, its Production ones in spv1eu-production. Production OAuth needs no review for read scopes.
 - **Redirect URLs** (one per environment on the app's OAuth page; registered 2026-10-31): Sandbox `https://test.whalesync.com/oauth-callback/connector/square`, Production `https://app.whalesync.com/oauth-callback/connector/square` (`REDIRECT_URI_WHALESYNC` + `/oauth-callback/connector/square`).
 - **How it works** (`server/src/oauth/providers/square-oauth.provider.ts`): the code flow (client secret, no PKCE). The app id picks the host: a `sandbox-` id signs in, exchanges, and refreshes at `connect.squareupsandbox.com`, any other at `connect.squareup.com` (with `session=false`, which Square requires in production). That environment is stored in `oauthWorkspaceId` and the connector sends API calls to the matching host. Square returns `expires_at` (ISO), not `expires_in`; tokens last 30 days but are recorded as expiring after at most 7, the refresh interval Square asks for. The code flow's refresh token never expires and comes back unchanged from a refresh. The connector re-reads the access token on every request.
-- **Scopes (read-only):** each table declares its `oauthReadScope` in `square-types.ts`; the sign-in asks for their union plus `MERCHANT_PROFILE_READ`: `MERCHANT_PROFILE_READ CUSTOMERS_READ ITEMS_READ ORDERS_READ PAYMENTS_READ INVOICES_READ EMPLOYEES_READ PAYOUTS_READ`.
+- **Scopes (read-only):** each table declares its `oauthReadScope` in `square-types.ts`; the sign-in asks for their union plus `MERCHANT_PROFILE_READ`: `MERCHANT_PROFILE_READ CUSTOMERS_READ ITEMS_READ ORDERS_READ PAYMENTS_READ INVOICES_READ EMPLOYEES_READ PAYOUTS_READ GIFTCARDS_READ SUBSCRIPTIONS_READ` (the last two since 2026-11-05; see Gotchas for connections made before).
 - **Sandbox sign-in:** open the sandbox seller's dashboard from the Developer Console (Sandbox test accounts → Open in Square Dashboard) in the same browser first; the sandbox authorize page signs in through that session.
 - **Not handled:** the `oauth.authorization.revoked` webhook. A revoked connection fails its next refresh and has to be reconnected.
 - **Status:** in production since the 2026-11-02 promotion. Verified on test 2026-11-04: signed in through test.whalesync.com/exports with the Default Test Account sandbox seller (connection `coa_biDEOfAfBk`), then Live Export run `rrn_mblCJQkn5n` pulled and published 552/552 records into the test Postgres (schema `square_oauth_test_2026_11_04`: 14 tables, row counts equal to the seeded sandbox, 17 foreign keys, every payment joins to its order). No production sign-in yet.
 
 ## UI quick-links
 
-| Where                          | URL |
-| ------------------------------ | --- |
-| Sign-in (Cloudflare-gated: headless is blocked, use `browse --headed`; needs Playwright `chromium` installed, not just the headless shell) | https://app.squareup.com/login?return_to=https%3A%2F%2Fdeveloper.squareup.com%2Fapps |
-| Developer Dashboard (apps, tokens) | https://developer.squareup.com/apps |
-| Sandbox credentials (toggle Sandbox at top) | https://developer.squareup.com/console/en/apps/sq0idp-ZHpinsDbqDXf6TtElZAQqg/credentials |
-| Sandbox seller Dashboard       | https://app.squareupsandbox.com/dashboard |
-| Items library                  | https://app.squareup.com/dashboard/items/library |
-| Transactions                   | https://app.squareup.com/dashboard/sales/transactions |
+| Where                                                                                                                                      | URL                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Sign-in (Cloudflare-gated: headless is blocked, use `browse --headed`; needs Playwright `chromium` installed, not just the headless shell) | https://app.squareup.com/login?return_to=https%3A%2F%2Fdeveloper.squareup.com%2Fapps     |
+| Developer Dashboard (apps, tokens)                                                                                                         | https://developer.squareup.com/apps                                                      |
+| Sandbox credentials (toggle Sandbox at top)                                                                                                | https://developer.squareup.com/console/en/apps/sq0idp-ZHpinsDbqDXf6TtElZAQqg/credentials |
+| Sandbox seller Dashboard                                                                                                                   | https://app.squareupsandbox.com/dashboard                                                |
+| Items library                                                                                                                              | https://app.squareup.com/dashboard/items/library                                         |
+| Transactions                                                                                                                               | https://app.squareup.com/dashboard/sales/transactions                                    |

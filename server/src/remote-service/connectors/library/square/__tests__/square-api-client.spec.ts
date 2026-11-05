@@ -8,7 +8,12 @@ import {
   isSquareRateLimitError,
 } from '../square-api-client';
 import { SQUARE_ENTITY_SCHEMAS_SQUARE_VERSION } from '../square-entity-schemas.generated';
-import { SQUARE_ALL_ORDER_STATES, SQUARE_FULL_HISTORY_BEGIN_TIME, SquareEntityType } from '../square-types';
+import {
+  SQUARE_ALL_ORDER_STATES,
+  SQUARE_FULL_HISTORY_BEGIN_TIME,
+  SQUARE_FULL_HISTORY_END_TIME,
+  SquareEntityType,
+} from '../square-types';
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();
@@ -206,6 +211,92 @@ describe('SquareApiClient', () => {
     });
   });
 
+  describe('per-payout listing (payout entries)', () => {
+    /**
+     * Route payouts per location, then each payout's entries (two pages for P-A). Oldest first is P-B, P-C, P-A,
+     * which is not id order. `newerPayout` adds a payout created after all of them.
+     */
+    function mockPayoutsAndEntries(newerPayout?: { id: string; created_at: string }) {
+      mockLocationsThen(['L1', 'L2'], (path, config) => {
+        if (path === '/v2/payouts') {
+          const locationId = (config as { params: { location_id: string } }).params.location_id;
+          const payouts =
+            locationId === 'L1'
+              ? [
+                  { id: 'P-B', created_at: '2026-01-01T00:00:00Z' },
+                  { id: 'P-A', created_at: '2026-03-01T00:00:00Z' },
+                ]
+              : [{ id: 'P-C', created_at: '2026-02-01T00:00:00Z' }, ...(newerPayout ? [newerPayout] : [])];
+          return { data: { payouts } };
+        }
+        const cursor = (config as { params: { cursor?: string } }).params.cursor;
+        if (path === '/v2/payouts/P-A/payout-entries' && !cursor) {
+          return { data: { payout_entries: [{ id: 'E-A1', payout_id: 'P-A' }], cursor: 'c-A' } };
+        }
+        if (path === '/v2/payouts/P-A/payout-entries') {
+          return { data: { payout_entries: [{ id: 'E-A2', payout_id: 'P-A' }] } };
+        }
+        const payoutId = path.split('/')[3];
+        return { data: { payout_entries: [{ id: `E-${payoutId}`, payout_id: payoutId }] } };
+      });
+    }
+
+    it("walks every payout of every location, oldest first, recording where it is in each payout's entries", async () => {
+      mockPayoutsAndEntries();
+
+      const pages = await collectPages(client, 'payout_entries');
+
+      expect(pages).toEqual([
+        { records: [{ id: 'E-P-B', payout_id: 'P-B' }], progressAfterPage: { payoutIndex: 1 } },
+        { records: [{ id: 'E-P-C', payout_id: 'P-C' }], progressAfterPage: { payoutIndex: 2 } },
+        { records: [{ id: 'E-A1', payout_id: 'P-A' }], progressAfterPage: { payoutIndex: 2, cursor: 'c-A' } },
+        { records: [{ id: 'E-A2', payout_id: 'P-A' }], progressAfterPage: { payoutIndex: 3 } },
+      ]);
+      expect(mockGet).toHaveBeenCalledWith('/v2/payouts', {
+        params: { begin_time: SQUARE_FULL_HISTORY_BEGIN_TIME, sort_order: 'ASC', limit: 100, location_id: 'L2' },
+      });
+      expect(mockGet).toHaveBeenCalledWith('/v2/payouts/P-B/payout-entries', {
+        params: { sort_order: 'ASC', limit: 100 },
+      });
+    });
+
+    it('resumes mid-payout from the saved cursor', async () => {
+      mockPayoutsAndEntries();
+
+      const pages = await collectPages(client, 'payout_entries', { payoutIndex: 2, cursor: 'c-A' });
+
+      expect(pages.flatMap((page) => page.records.map((record) => record.id))).toEqual(['E-A2']);
+    });
+
+    // Payout ids are random, so a new payout's id can sort before the saved one; ordering by age puts it last.
+    it('resumes at the same payout when a newer payout appeared in between, then walks the newer one', async () => {
+      mockPayoutsAndEntries({ id: 'P-0', created_at: '2026-04-01T00:00:00Z' });
+
+      const pages = await collectPages(client, 'payout_entries', { payoutIndex: 2, cursor: 'c-A' });
+
+      expect(pages.flatMap((page) => page.records.map((record) => record.id))).toEqual(['E-A2', 'E-P-0']);
+    });
+  });
+
+  describe('gift card activities', () => {
+    // ListGiftCardActivities returns only the last year unless given a time range, and refuses a
+    // begin_time sent without an end_time.
+    it('asks for the full history as a closed time range, oldest first', async () => {
+      mockGet.mockResolvedValueOnce({ data: { gift_card_activities: [{ id: 'GA1' }] } });
+
+      await collectPages(client, 'gift_card_activities');
+
+      expect(mockGet).toHaveBeenCalledWith('/v2/gift-cards/activities', {
+        params: {
+          begin_time: SQUARE_FULL_HISTORY_BEGIN_TIME,
+          end_time: SQUARE_FULL_HISTORY_END_TIME,
+          sort_order: 'ASC',
+          limit: 100,
+        },
+      });
+    });
+  });
+
   describe('orders search', () => {
     it('searches every state, in batches of at most 10 locations', async () => {
       const locationIds = Array.from({ length: 12 }, (_unused, index) => `L${String(index).padStart(2, '0')}`);
@@ -234,7 +325,16 @@ describe('SquareApiClient', () => {
     });
   });
 
-  describe('team members search', () => {
+  describe('cursor search (team members, subscriptions)', () => {
+    it('sends no query, so subscriptions of every status are returned', async () => {
+      mockPost.mockResolvedValueOnce({ data: { subscriptions: [{ id: 'S1', status: 'CANCELED' }] } });
+
+      const pages = await collectPages(client, 'subscriptions');
+
+      expect(pages.flatMap((page) => page.records)).toEqual([{ id: 'S1', status: 'CANCELED' }]);
+      expect(mockPost).toHaveBeenCalledWith('/v2/subscriptions/search', { limit: 100 });
+    });
+
     it('sends no query, so team members of every status are returned', async () => {
       mockPost
         .mockResolvedValueOnce({ data: { team_members: [{ id: 'T1' }], cursor: 'next' } })
@@ -266,6 +366,23 @@ describe('SquareApiClient', () => {
       mockGet.mockResolvedValueOnce({ data: { object: { id: 'X1', type: 'ITEM' } } });
 
       await expect(client.retrieveEntity('catalog_taxes', 'X1')).resolves.toBeNull();
+    });
+
+    // Answering null would tell the pull the record was deleted.
+    it('refuses a table Square has no single-record endpoint for', async () => {
+      await expect(client.retrieveEntity('gift_card_activities', 'GA1')).rejects.toThrow(
+        "Square can't fetch a single Gift Card Activities record. Pull the whole table to refresh it.",
+      );
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retrieveGrantedScopes', () => {
+    it("reads the token's scopes from RetrieveTokenStatus", async () => {
+      mockPost.mockResolvedValueOnce({ data: { scopes: ['ITEMS_READ', 'PAYMENTS_READ'], merchant_id: 'M1' } });
+
+      await expect(client.retrieveGrantedScopes()).resolves.toEqual(new Set(['ITEMS_READ', 'PAYMENTS_READ']));
+      expect(mockPost).toHaveBeenCalledWith('/oauth2/token/status', {});
     });
   });
 

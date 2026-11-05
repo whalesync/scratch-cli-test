@@ -24,7 +24,11 @@
  *   and custom-amount line items, modifiers, order-level tax and discounts, ticket names, metadata.
  * - refunds: full and partial refunds of a slice of the card payments.
  * - invoices: 6 invoices on unpaid orders, 4 published and 2 left as drafts.
- * - payouts: not seedable — the sandbox never settles funds to a bank.
+ * - gift cards: 4 digital cards with their activities — activated, loaded, one redeemed, one
+ *   adjusted up, one deactivated — two of them linked to customers.
+ * - subscriptions: one monthly plan, and 4 subscriptions to it — paid by card, invoiced by email,
+ *   canceled, and starting in the future. Square creates their invoices and orders itself.
+ * - payouts / payout entries: not seedable — the sandbox settles funds only on its own schedule.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -555,6 +559,156 @@ async function ensureInvoices(context) {
   return { created };
 }
 
+// ── Gift cards ───────────────────────────────────────────────────────────────
+
+const GIFT_CARD_COUNT = 4;
+
+async function ensureGiftCards(locationIds, currency, customers) {
+  if (VERIFY_ONLY) return { created: 0 };
+  const existing = await listAllWithCursor('/v2/gift-cards', 'gift_cards', { limit: '200' });
+  let created = 0;
+  // Gift cards carry no name to match on, so the count is what converges.
+  for (let index = existing.length; index < GIFT_CARD_COUNT; index++) {
+    const locationId = locationIds[index % locationIds.length];
+    const { gift_card: giftCard } = await square('POST', '/v2/gift-cards', {
+      idempotency_key: `fable_qa-gift-card-${index}-v1`,
+      location_id: locationId,
+      gift_card: { type: 'DIGITAL' },
+    });
+    const recordActivity = (type, details) =>
+      square('POST', '/v2/gift-cards/activities', {
+        idempotency_key: `fable_qa-gift-card-${index}-${type}-v1`,
+        gift_card_activity: { type, location_id: locationId, gift_card_id: giftCard.id, ...details },
+      });
+    const externalPayment = { buyer_payment_instrument_ids: ['fable_qa-external-payment'] };
+    await recordActivity('ACTIVATE', {
+      activate_activity_details: {
+        amount_money: { amount: 5000 + index * 1000, currency },
+        reference_id: `fable_qa-gift-card-${index}`,
+        ...externalPayment,
+      },
+    });
+    if (index !== 3) {
+      await recordActivity('LOAD', { load_activity_details: { amount_money: { amount: 2500, currency }, ...externalPayment } });
+    }
+    if (index === 1) {
+      await recordActivity('REDEEM', {
+        redeem_activity_details: { amount_money: { amount: 1234, currency }, reference_id: 'fable_qa-redemption' },
+      });
+    }
+    if (index === 2) {
+      await recordActivity('ADJUST_INCREMENT', {
+        adjust_increment_activity_details: { amount_money: { amount: 500, currency }, reason: 'COMPLIMENTARY' },
+      });
+    }
+    if (index === 3) {
+      await recordActivity('DEACTIVATE', { deactivate_activity_details: { reason: 'SUSPICIOUS_ACTIVITY' } });
+    }
+    if (index < 2) {
+      await square('POST', `/v2/gift-cards/${giftCard.id}/link-customer`, { customer_id: customers[index].id });
+    }
+    created++;
+  }
+  return { created };
+}
+
+// ── Subscriptions ────────────────────────────────────────────────────────────
+
+const SUBSCRIPTION_PLAN_NAME = 'fable_qa Membership';
+const SUBSCRIPTION_PLAN_VARIATION_NAME = 'fable_qa Monthly Membership';
+
+async function ensureSubscriptionPlanVariation(currency) {
+  const existing = await listAllWithCursor('/v2/catalog/list', 'objects', {
+    types: 'SUBSCRIPTION_PLAN,SUBSCRIPTION_PLAN_VARIATION',
+  });
+  const existingVariation = existing.find(
+    (object) =>
+      object.type === 'SUBSCRIPTION_PLAN_VARIATION' &&
+      object.subscription_plan_variation_data?.name === SUBSCRIPTION_PLAN_VARIATION_NAME,
+  );
+  if (existingVariation) return existingVariation;
+  const plan =
+    existing.find((object) => object.type === 'SUBSCRIPTION_PLAN' && object.subscription_plan_data?.name === SUBSCRIPTION_PLAN_NAME) ??
+    (
+      await square('POST', '/v2/catalog/object', {
+        idempotency_key: 'fable_qa-subscription-plan-v1',
+        object: { type: 'SUBSCRIPTION_PLAN', id: '#plan', subscription_plan_data: { name: SUBSCRIPTION_PLAN_NAME } },
+      })
+    ).catalog_object;
+  const { catalog_object: variation } = await square('POST', '/v2/catalog/object', {
+    idempotency_key: 'fable_qa-subscription-plan-variation-v1',
+    object: {
+      type: 'SUBSCRIPTION_PLAN_VARIATION',
+      id: '#variation',
+      subscription_plan_variation_data: {
+        name: SUBSCRIPTION_PLAN_VARIATION_NAME,
+        subscription_plan_id: plan.id,
+        phases: [{ cadence: 'MONTHLY', ordinal: 0, pricing: { type: 'STATIC', price_money: { amount: 1500, currency } } }],
+      },
+    },
+  });
+  return variation;
+}
+
+async function searchAllSubscriptions() {
+  const subscriptions = [];
+  let cursor;
+  do {
+    const page = await square('POST', '/v2/subscriptions/search', { limit: 100, ...(cursor ? { cursor } : {}) });
+    subscriptions.push(...(page.subscriptions ?? []));
+    cursor = page.cursor;
+  } while (cursor);
+  return subscriptions;
+}
+
+async function ensureSubscriptions(locationIds, currency, customers) {
+  if (VERIFY_ONLY) return { created: 0 };
+  const planVariation = await ensureSubscriptionPlanVariation(currency);
+  const existing = await searchAllSubscriptions();
+  // Invoiced subscriptions email the customer, so every subscriber needs an email address.
+  const subscribers = customers.filter((customer) => customer.email_address).slice(2, 6);
+  const inThirtyDays = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  const fixtures = [
+    { key: 'card', subscriber: subscribers[0], payByCard: true },
+    { key: 'invoice', subscriber: subscribers[1], payByCard: false },
+    { key: 'canceled', subscriber: subscribers[2], payByCard: true, cancel: true },
+    { key: 'future', subscriber: subscribers[3], payByCard: false, startDate: inThirtyDays },
+  ];
+  let created = 0;
+  for (const fixture of fixtures) {
+    const alreadySubscribed = existing.some(
+      (subscription) =>
+        subscription.customer_id === fixture.subscriber.id && subscription.plan_variation_id === planVariation.id,
+    );
+    if (alreadySubscribed) continue;
+    let cardId;
+    if (fixture.payByCard) {
+      const { cards } = await square('GET', `/v2/cards?customer_id=${fixture.subscriber.id}`);
+      cardId =
+        cards?.[0]?.id ??
+        (
+          await square('POST', '/v2/cards', {
+            idempotency_key: `fable_qa-subscription-card-${fixture.key}-v1`,
+            // Square's sandbox test nonce for a card that always succeeds.
+            source_id: 'cnon:card-nonce-ok',
+            card: { customer_id: fixture.subscriber.id, cardholder_name: fixture.subscriber.given_name ?? 'fable_qa' },
+          })
+        ).card.id;
+    }
+    const { subscription } = await square('POST', '/v2/subscriptions', {
+      idempotency_key: `fable_qa-subscription-${fixture.key}-v1`,
+      location_id: locationIds[0],
+      plan_variation_id: planVariation.id,
+      customer_id: fixture.subscriber.id,
+      ...(cardId ? { card_id: cardId } : {}),
+      ...(fixture.startDate ? { start_date: fixture.startDate } : {}),
+    });
+    if (fixture.cancel) await square('POST', `/v2/subscriptions/${subscription.id}/cancel`);
+    created++;
+  }
+  return { created };
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 const locations = await ensureLocations();
@@ -580,6 +734,12 @@ log('refunds this run:', JSON.stringify(refundResult));
 const invoiceResult = await ensureInvoices({ locationIds, catalog, customers, currency });
 log('invoices this run:', JSON.stringify(invoiceResult));
 
+const giftCardResult = await ensureGiftCards(locationIds, currency, customers);
+log('gift cards this run:', JSON.stringify(giftCardResult));
+
+const subscriptionResult = await ensureSubscriptions(locationIds, currency, customers);
+log('subscriptions this run:', JSON.stringify(subscriptionResult));
+
 // Final read-back, through the same endpoints the connector uses.
 const finalOrders = await searchAllOrders(locationIds);
 const stateCounts = finalOrders.reduce((counts, order) => ({ ...counts, [order.state]: (counts[order.state] ?? 0) + 1 }), {});
@@ -599,6 +759,15 @@ console.log(
       payments: refundResult.paymentCount,
       refunds: finalRefunds.length,
       invoices: finalInvoices.length,
+      giftCards: (await listAllWithCursor('/v2/gift-cards', 'gift_cards', { limit: '200' })).length,
+      giftCardActivities: (
+        await listAllWithCursor('/v2/gift-cards/activities', 'gift_card_activities', {
+          begin_time: '2009-01-01T00:00:00Z',
+          end_time: '2100-01-01T00:00:00Z',
+          limit: '100',
+        })
+      ).length,
+      subscriptions: (await searchAllSubscriptions()).length,
     },
     null,
     2,

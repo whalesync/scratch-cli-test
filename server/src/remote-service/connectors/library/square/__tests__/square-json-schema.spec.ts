@@ -39,6 +39,10 @@ describe('buildSquareRecordSchema', () => {
     expect(nonNullArmOf(topLevelProperties('payments').delayed_until)?.format).toBe('date-time');
     expect(nonNullArmOf(topLevelProperties('payouts').arrival_date)?.format).toBe('date');
     expect(nonNullArmOf(topLevelProperties('invoices').sale_or_service_date)?.format).toBe('date');
+    expect(nonNullArmOf(topLevelProperties('payout_entries').effective_at)?.format).toBe('date-time');
+    for (const subscriptionDateFieldName of ['start_date', 'canceled_date', 'charged_through_date', 'completed_date']) {
+      expect(nonNullArmOf(topLevelProperties('subscriptions')[subscriptionDateFieldName])?.format).toBe('date');
+    }
   });
 
   // Square allows a year-less `0000-MM-DD` birthday, which no date column can hold.
@@ -66,6 +70,31 @@ describe('buildSquareRecordSchema', () => {
   it('links refunds to their payment', () => {
     expect(topLevelProperties('refunds').payment_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toMatchObject({
       linkedTableId: 'payments',
+    });
+  });
+
+  it('links payout entries to their payout, and gift card activities to their gift card and location', () => {
+    expect(topLevelProperties('payout_entries').payout_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'payouts',
+      linkedTableRemoteId: ['payouts'],
+      isSingleValued: true,
+    });
+    const giftCardActivityProperties = topLevelProperties('gift_card_activities');
+    expect(giftCardActivityProperties.gift_card_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toMatchObject({
+      linkedTableId: 'gift_cards',
+    });
+    expect(giftCardActivityProperties.location_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toMatchObject({
+      linkedTableId: 'locations',
+    });
+  });
+
+  it('links subscriptions to their customer and location', () => {
+    const subscriptionProperties = topLevelProperties('subscriptions');
+    expect(subscriptionProperties.customer_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toMatchObject({
+      linkedTableId: 'customers',
+    });
+    expect(subscriptionProperties.location_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toMatchObject({
+      linkedTableId: 'locations',
     });
   });
 

@@ -41,6 +41,10 @@ const ROOT_OBJECT_SCHEMA_NAMES = [
   'Invoice',
   'TeamMember',
   'Payout',
+  'PayoutEntry',
+  'GiftCard',
+  'GiftCardActivity',
+  'Subscription',
 ];
 
 /** Root properties are depth 1; objects nested deeper than this become opaque `{ type: 'object' }`. */

@@ -63,7 +63,9 @@ export type SquareOAuthReadScope =
   | 'PAYMENTS_READ'
   | 'INVOICES_READ'
   | 'EMPLOYEES_READ'
-  | 'PAYOUTS_READ';
+  | 'PAYOUTS_READ'
+  | 'GIFTCARDS_READ'
+  | 'SUBSCRIPTIONS_READ';
 
 /** The tables the Square connector exposes. Values are the Scratch table ids (`EntityId.wsId`). */
 export type SquareEntityType =
@@ -80,7 +82,11 @@ export type SquareEntityType =
   | 'refunds'
   | 'invoices'
   | 'team_members'
-  | 'payouts';
+  | 'payouts'
+  | 'payout_entries'
+  | 'gift_cards'
+  | 'gift_card_activities'
+  | 'subscriptions';
 
 /**
  * How a table's records are listed. Each strategy mirrors a quirk of the Square endpoint behind it:
@@ -90,16 +96,21 @@ export type SquareEntityType =
  * - `cursor-per-location`: a GET that only covers ONE location per call — ListPayments and
  *   ListPayouts default to the seller's *main* location, and ListInvoices requires `location_id` —
  *   so a full pull walks every location in turn.
+ * - `cursor-per-payout`: a GET that only covers ONE payout per call (ListPayoutEntries takes the
+ *   payout id in its path), so a full pull lists every payout first and then walks each in turn,
+ *   oldest first.
  * - `orders-search`: SearchOrders requires `location_ids`, at most 10 per request, so a full pull
  *   walks the locations in batches of 10.
- * - `team-members-search`: SearchTeamMembers, a POST walked by `cursor`.
+ * - `cursor-search`: a search POST sent with no query, which Square answers with every record of
+ *   every status at every location, walked by `cursor` (SearchTeamMembers, SearchSubscriptions).
  */
 export type SquareListingStrategy =
   | 'single-request'
   | 'cursor'
   | 'cursor-per-location'
+  | 'cursor-per-payout'
   | 'orders-search'
-  | 'team-members-search';
+  | 'cursor-search';
 
 export interface SquareEntityConfig {
   displayName: string;
@@ -113,16 +124,18 @@ export interface SquareEntityConfig {
   /** For catalog tables: the one `<type>_data` property a CatalogObject of this type carries. */
   catalogTypeDataPropertyName?: string;
   listingStrategy: SquareListingStrategy;
-  /** The list (or search) endpoint path. */
+  /** The list (or search) endpoint path. For `cursor-per-payout`, it holds a `{payout_id}` placeholder. */
   listEndpointPath: string;
   /** The key the list response carries its page of records under, e.g. `payments`. */
   listResponseRecordsKey: string;
   /** Extra query params a full pull needs so Square doesn't silently omit records. */
   listQueryParams?: Record<string, string | number>;
-  /** The retrieve-one endpoint, `{id}` substituted. */
-  retrieveEndpointPathTemplate: string;
-  /** The key the retrieve response carries its record under, e.g. `payment`. */
-  retrieveResponseRecordKey: string;
+  /**
+   * The endpoint that fetches one record, `{id}` substituted, and the key its response carries the
+   * record under (e.g. `payment`). Absent when Square has no such endpoint (payout entries, gift card
+   * activities): those tables can only be pulled whole.
+   */
+  retrieveOneRecord?: { endpointPathTemplate: string; responseRecordKey: string };
   /** Dot path of the record's human-readable title. */
   titlePath: string;
   /** Dot path used to suggest record file names (falls back to the id). */
@@ -133,10 +146,18 @@ export interface SquareEntityConfig {
 
 /**
  * The earliest `begin_time` we ask for on the endpoints that default to "the last year only"
- * (ListPayments, ListRefunds, ListPayouts). Square was founded in 2009, so nothing predates it; an
+ * (ListPayments, ListRefunds, ListPayouts, ListGiftCardActivities). Square was founded in 2009, so nothing predates it; an
  * explicit early bound is what turns "the last 12 months" into the full history.
  */
 export const SQUARE_FULL_HISTORY_BEGIN_TIME = '2009-01-01T00:00:00Z';
+
+/**
+ * The `end_time` sent alongside {@link SQUARE_FULL_HISTORY_BEGIN_TIME} where Square refuses a `begin_time` on its own.
+ * ListGiftCardActivities answers "Time range provided is not valid" (HTTP 400) unless it gets both or neither, and
+ * neither means the last year only. The value is fixed rather than "now" so a resumed pull sends the same query its
+ * saved cursor came from.
+ */
+export const SQUARE_FULL_HISTORY_END_TIME = '2100-01-01T00:00:00Z';
 
 /** SearchOrders accepts at most 10 location ids per request. */
 export const SQUARE_ORDERS_SEARCH_MAX_LOCATION_IDS = 10;
@@ -165,8 +186,7 @@ function catalogEntityConfig(params: {
     listEndpointPath: '/v2/catalog/list',
     listResponseRecordsKey: 'objects',
     listQueryParams: { types: params.catalogObjectType },
-    retrieveEndpointPathTemplate: '/v2/catalog/object/{id}',
-    retrieveResponseRecordKey: 'object',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/catalog/object/{id}', responseRecordKey: 'object' },
     titlePath: `${params.catalogTypeDataPropertyName}.name`,
     slugPath: params.slugPath ?? `${params.catalogTypeDataPropertyName}.name`,
     dashboardPath: 'items/library',
@@ -182,8 +202,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     listingStrategy: 'single-request',
     listEndpointPath: '/v2/locations',
     listResponseRecordsKey: 'locations',
-    retrieveEndpointPathTemplate: '/v2/locations/{id}',
-    retrieveResponseRecordKey: 'location',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/locations/{id}', responseRecordKey: 'location' },
     titlePath: 'name',
     slugPath: 'name',
   },
@@ -196,8 +215,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     listEndpointPath: '/v2/customers',
     listResponseRecordsKey: 'customers',
     listQueryParams: { limit: 100 },
-    retrieveEndpointPathTemplate: '/v2/customers/{id}',
-    retrieveResponseRecordKey: 'customer',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/customers/{id}', responseRecordKey: 'customer' },
     titlePath: 'given_name',
     slugPath: 'given_name',
     dashboardPath: 'customers/directory',
@@ -248,8 +266,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     listingStrategy: 'orders-search',
     listEndpointPath: '/v2/orders/search',
     listResponseRecordsKey: 'orders',
-    retrieveEndpointPathTemplate: '/v2/orders/{id}',
-    retrieveResponseRecordKey: 'order',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/orders/{id}', responseRecordKey: 'order' },
     titlePath: 'id',
     slugPath: 'id',
     dashboardPath: 'orders/overview',
@@ -263,8 +280,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     listEndpointPath: '/v2/payments',
     listResponseRecordsKey: 'payments',
     listQueryParams: { begin_time: SQUARE_FULL_HISTORY_BEGIN_TIME, sort_order: 'ASC', limit: 100 },
-    retrieveEndpointPathTemplate: '/v2/payments/{id}',
-    retrieveResponseRecordKey: 'payment',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/payments/{id}', responseRecordKey: 'payment' },
     titlePath: 'id',
     slugPath: 'id',
     dashboardPath: 'sales/transactions',
@@ -279,8 +295,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     listEndpointPath: '/v2/refunds',
     listResponseRecordsKey: 'refunds',
     listQueryParams: { begin_time: SQUARE_FULL_HISTORY_BEGIN_TIME, sort_order: 'ASC', limit: 100 },
-    retrieveEndpointPathTemplate: '/v2/refunds/{id}',
-    retrieveResponseRecordKey: 'refund',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/refunds/{id}', responseRecordKey: 'refund' },
     titlePath: 'id',
     slugPath: 'id',
   },
@@ -293,8 +308,7 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     listEndpointPath: '/v2/invoices',
     listResponseRecordsKey: 'invoices',
     listQueryParams: { limit: 200 },
-    retrieveEndpointPathTemplate: '/v2/invoices/{id}',
-    retrieveResponseRecordKey: 'invoice',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/invoices/{id}', responseRecordKey: 'invoice' },
     titlePath: 'invoice_number',
     slugPath: 'invoice_number',
     dashboardPath: 'invoices',
@@ -304,11 +318,10 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     description: 'Team members of every status',
     squareObjectName: 'TeamMember',
     oauthReadScope: 'EMPLOYEES_READ',
-    listingStrategy: 'team-members-search',
+    listingStrategy: 'cursor-search',
     listEndpointPath: '/v2/team-members/search',
     listResponseRecordsKey: 'team_members',
-    retrieveEndpointPathTemplate: '/v2/team-members/{id}',
-    retrieveResponseRecordKey: 'team_member',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/team-members/{id}', responseRecordKey: 'team_member' },
     titlePath: 'given_name',
     slugPath: 'given_name',
   },
@@ -321,8 +334,62 @@ export const SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE: Record<SquareEntityType, Squar
     listEndpointPath: '/v2/payouts',
     listResponseRecordsKey: 'payouts',
     listQueryParams: { begin_time: SQUARE_FULL_HISTORY_BEGIN_TIME, sort_order: 'ASC', limit: 100 },
-    retrieveEndpointPathTemplate: '/v2/payouts/{id}',
-    retrieveResponseRecordKey: 'payout',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/payouts/{id}', responseRecordKey: 'payout' },
+    titlePath: 'id',
+    slugPath: 'id',
+  },
+  payout_entries: {
+    displayName: 'Payout Entries',
+    description: 'The individual charges, refunds, and fees that make up each payout',
+    squareObjectName: 'PayoutEntry',
+    oauthReadScope: 'PAYOUTS_READ',
+    listingStrategy: 'cursor-per-payout',
+    listEndpointPath: '/v2/payouts/{payout_id}/payout-entries',
+    listResponseRecordsKey: 'payout_entries',
+    listQueryParams: { sort_order: 'ASC', limit: 100 },
+    titlePath: 'id',
+    slugPath: 'id',
+  },
+  gift_cards: {
+    displayName: 'Gift Cards',
+    description: 'Gift cards of every type and state',
+    squareObjectName: 'GiftCard',
+    oauthReadScope: 'GIFTCARDS_READ',
+    listingStrategy: 'cursor',
+    listEndpointPath: '/v2/gift-cards',
+    listResponseRecordsKey: 'gift_cards',
+    listQueryParams: { limit: 200 },
+    retrieveOneRecord: { endpointPathTemplate: '/v2/gift-cards/{id}', responseRecordKey: 'gift_card' },
+    titlePath: 'gan',
+    slugPath: 'id',
+  },
+  gift_card_activities: {
+    displayName: 'Gift Card Activities',
+    description: 'Every load, redemption, and adjustment of every gift card, across the full history',
+    squareObjectName: 'GiftCardActivity',
+    oauthReadScope: 'GIFTCARDS_READ',
+    // ListGiftCardActivities covers every location by default, but only the last year unless given a time range.
+    listingStrategy: 'cursor',
+    listEndpointPath: '/v2/gift-cards/activities',
+    listResponseRecordsKey: 'gift_card_activities',
+    listQueryParams: {
+      begin_time: SQUARE_FULL_HISTORY_BEGIN_TIME,
+      end_time: SQUARE_FULL_HISTORY_END_TIME,
+      sort_order: 'ASC',
+      limit: 100,
+    },
+    titlePath: 'id',
+    slugPath: 'id',
+  },
+  subscriptions: {
+    displayName: 'Subscriptions',
+    description: 'Customer subscriptions to subscription plans, in every status',
+    squareObjectName: 'Subscription',
+    oauthReadScope: 'SUBSCRIPTIONS_READ',
+    listingStrategy: 'cursor-search',
+    listEndpointPath: '/v2/subscriptions/search',
+    listResponseRecordsKey: 'subscriptions',
+    retrieveOneRecord: { endpointPathTemplate: '/v2/subscriptions/{id}', responseRecordKey: 'subscription' },
     titlePath: 'id',
     slugPath: 'id',
   },
@@ -348,10 +415,13 @@ export function isSquareEntityType(value: string): value is SquareEntityType {
 
 /**
  * Pull progress persisted between pages so a stalled job resumes where it stopped. `locationIndex`
- * is only used by the per-location strategies (for orders it is the first location of the batch).
+ * is only used by the per-location strategies (for orders it is the first location of the batch),
+ * and `payoutIndex` only by the per-payout one.
  */
 export interface SquarePullProgress {
   locationIndex?: number;
+  /** For `cursor-per-payout`: the position in the payout ids, ordered oldest first. */
+  payoutIndex?: number;
   cursor?: string;
   [key: string]: number | string | undefined;
 }

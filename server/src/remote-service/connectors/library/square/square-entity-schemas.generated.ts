@@ -14,7 +14,11 @@ export type SquareObjectName =
   | 'PaymentRefund'
   | 'Invoice'
   | 'TeamMember'
-  | 'Payout';
+  | 'Payout'
+  | 'PayoutEntry'
+  | 'GiftCard'
+  | 'GiftCardActivity'
+  | 'Subscription';
 
 /**
  * One self-contained JSON Schema per Square object, keyed by Square's own object name. Deliberately
@@ -11872,5 +11876,2058 @@ export const SQUARE_ENTITY_SCHEMAS_BY_SQUARE_OBJECT_NAME: Record<SquareObjectNam
     },
     description:
       'An accounting of the amount owed the seller and record of the actual transfer to their external bank account or to the Square balance.',
+  },
+  PayoutEntry: {
+    type: 'object',
+    properties: {
+      id: {
+        type: 'string',
+        description: 'A unique ID for the payout entry.',
+      },
+      payout_id: {
+        type: 'string',
+        description: 'The ID of the payout entries’ associated payout.',
+      },
+      effective_at: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The timestamp of when the payout entry affected the balance, in RFC 3339 format.',
+      },
+      type: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The type of activity associated with this payout entry.',
+      },
+      gross_amount_money: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount: {
+                anyOf: [
+                  {
+                    type: 'integer',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+              },
+              currency: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The type of currency, in __ISO 4217 format__.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The amount of money involved in this payout entry.',
+      },
+      fee_amount_money: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount: {
+                anyOf: [
+                  {
+                    type: 'integer',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+              },
+              currency: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The type of currency, in __ISO 4217 format__.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The amount of Square fees associated with this payout entry.',
+      },
+      net_amount_money: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount: {
+                anyOf: [
+                  {
+                    type: 'integer',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+              },
+              currency: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The type of currency, in __ISO 4217 format__.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The net proceeds from this transaction after any fees.',
+      },
+      type_app_fee_revenue_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+              location_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the location of the merchant associated with the payment activity',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of any developer app fee revenue generated on a payment.',
+      },
+      type_app_fee_refund_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+              refund_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the refund associated with this activity.',
+              },
+              location_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the location of the merchant associated with the payment refund activity',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of a refund for an app fee on a payment.',
+      },
+      type_automatic_savings_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+              payout_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payout associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Details of any automatic transfer from the payment processing balance to the Square Savings account.',
+      },
+      type_automatic_savings_reversed_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+              payout_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payout associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Details of any automatic transfer from the Square Savings account back to the processing balance.',
+      },
+      type_charge_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of credit card payment captures.',
+      },
+      type_deposit_fee_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payout_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payout that triggered this deposit fee activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of any fees involved with deposits such as for instant deposits.',
+      },
+      type_deposit_fee_reversed_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payout_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payout that triggered this deposit fee activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of any reversal or refund of fees involved with deposits such as for instant deposits.',
+      },
+      type_dispute_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+              dispute_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the dispute associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of any balance change due to a dispute event.',
+      },
+      type_fee_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The ID of the payment associated with this activity This will only be populated when a principal LedgerEntryToken is also populated.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of adjustments due to the Square processing fee.',
+      },
+      type_free_processing_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Square offers Free Payments Processing for a variety of business scenarios including seller referral or when Square wants to apologize for a bug, customer service, repricing complication, and so on.',
+      },
+      type_hold_adjustment_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of any adjustment made by Square related to the holding or releasing of a payment.',
+      },
+      type_open_dispute_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+              dispute_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the dispute associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of any open disputes.',
+      },
+      type_other_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of any other type that does not belong in the rest of the types.',
+      },
+      type_other_adjustment_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: "Details of any other type of adjustments that don't fall under existing types.",
+      },
+      type_refund_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+              refund_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the refund associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of a refund for an existing card payment.',
+      },
+      type_release_adjustment_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of fees released for adjustments.',
+      },
+      type_reserve_hold_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of fees paid for funding risk reserve.',
+      },
+      type_reserve_release_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of fees released from risk reserve.',
+      },
+      type_square_capital_payment_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of capital merchant cash advance (MCA) assessments.',
+      },
+      type_square_capital_reversed_payment_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of capital merchant cash advance (MCA) assessment refunds.',
+      },
+      type_tax_on_fee_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+              tax_rate_description: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The description of the tax rate being applied.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of tax paid on fee amounts.',
+      },
+      type_third_party_fee_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of fees collected by a 3rd party platform.',
+      },
+      type_third_party_fee_refund_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+              refund_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The public refund id associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of refunded fees from a 3rd party platform.',
+      },
+      type_square_payroll_transfer_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Details of a payroll payment that was transferred to a team member’s bank account.',
+      },
+      type_square_payroll_transfer_reversed_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              payment_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the payment associated with this activity.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Details of a payroll payment to a team member’s bank account that was deposited back to the seller’s account by Square.',
+      },
+    },
+    description: 'One or more PayoutEntries that make up a Payout.',
+  },
+  GiftCard: {
+    type: 'object',
+    properties: {
+      id: {
+        type: 'string',
+        description: 'The Square-assigned ID of the gift card.',
+      },
+      type: {
+        type: 'string',
+        description: 'The gift card type.',
+      },
+      gan_source: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The source that generated the gift card account number (GAN).',
+      },
+      state: {
+        type: 'string',
+        description: 'The current gift card state.',
+      },
+      balance_money: {
+        type: 'object',
+        properties: {
+          amount: {
+            anyOf: [
+              {
+                type: 'integer',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            description: 'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+          },
+          currency: {
+            anyOf: [
+              {
+                type: 'string',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            description: 'The type of currency, in __ISO 4217 format__.',
+          },
+        },
+        description: 'The current gift card balance.',
+      },
+      gan: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The gift card account number (GAN).',
+      },
+      created_at: {
+        type: 'string',
+        description: 'The timestamp when the gift card was created, in RFC 3339 format.',
+      },
+      customer_ids: {
+        type: 'array',
+        items: {
+          type: 'string',
+        },
+        description: 'The IDs of the customer profiles to whom this gift card is linked.',
+      },
+    },
+    description: 'Represents a Square gift card.',
+  },
+  GiftCardActivity: {
+    type: 'object',
+    properties: {
+      id: {
+        type: 'string',
+        description: 'The Square-assigned ID of the gift card activity.',
+      },
+      type: {
+        type: 'string',
+        description: 'The type of gift card activity.',
+      },
+      location_id: {
+        type: 'string',
+        description: 'The ID of the business location where the activity occurred.',
+      },
+      created_at: {
+        type: 'string',
+        description: 'The timestamp when the gift card activity was created, in RFC 3339 format.',
+      },
+      gift_card_id: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The gift card ID.',
+      },
+      gift_card_gan: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The gift card account number (GAN).',
+      },
+      gift_card_balance_money: {
+        type: 'object',
+        properties: {
+          amount: {
+            anyOf: [
+              {
+                type: 'integer',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            description: 'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+          },
+          currency: {
+            anyOf: [
+              {
+                type: 'string',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            description: 'The type of currency, in __ISO 4217 format__.',
+          },
+        },
+        description: 'The final balance on the gift card after the action is completed.',
+      },
+      load_activity_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount_money: {
+                anyOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      amount: {
+                        anyOf: [
+                          {
+                            type: 'integer',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                        description:
+                          'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+                      },
+                      currency: {
+                        anyOf: [
+                          {
+                            type: 'string',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                        description: 'The type of currency, in __ISO 4217 format__.',
+                      },
+                    },
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The amount added to the gift card.',
+              },
+              order_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the order that contains the `GIFT_CARD` line item.',
+              },
+              line_item_uid: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The UID of the `GIFT_CARD` line item in the order that represents the additional funds for the gift card.',
+              },
+              reference_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'A client-specified ID that associates the gift card activity with an entity in another system.',
+              },
+              buyer_payment_instrument_ids: {
+                anyOf: [
+                  {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The payment instrument IDs used to process the order for the additional funds, such as a credit card ID or bank account ID.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Additional details about a `LOAD` activity, which is used to reload money onto a gift card.',
+      },
+      activate_activity_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount_money: {
+                anyOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      amount: {
+                        anyOf: [
+                          {
+                            type: 'integer',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                        description:
+                          'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+                      },
+                      currency: {
+                        anyOf: [
+                          {
+                            type: 'string',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                        description: 'The type of currency, in __ISO 4217 format__.',
+                      },
+                    },
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The amount added to the gift card.',
+              },
+              order_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the order that contains the `GIFT_CARD` line item.',
+              },
+              line_item_uid: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The UID of the `GIFT_CARD` line item in the order that represents the gift card purchase.',
+              },
+              reference_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'A client-specified ID that associates the gift card activity with an entity in another system.',
+              },
+              buyer_payment_instrument_ids: {
+                anyOf: [
+                  {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The payment instrument IDs used to process the gift card purchase, such as a credit card ID or bank account ID.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Additional details about an `ACTIVATE` activity, which is used to activate a gift card with an initial balance.',
+      },
+      redeem_activity_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount_money: {
+                type: 'object',
+                properties: {
+                  amount: {
+                    anyOf: [
+                      {
+                        type: 'integer',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+                  },
+                  currency: {
+                    anyOf: [
+                      {
+                        type: 'string',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description: 'The type of currency, in __ISO 4217 format__.',
+                  },
+                },
+                description: 'The amount deducted from the gift card for the redemption.',
+              },
+              payment_id: {
+                type: 'string',
+                description: 'The ID of the payment that represents the gift card redemption.',
+              },
+              reference_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'A client-specified ID that associates the gift card activity with an entity in another system.',
+              },
+              status: {
+                type: 'string',
+                description: 'The status of the gift card redemption.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Additional details about a `REDEEM` activity, which is used to redeem a gift card for a purchase.',
+      },
+      clear_balance_activity_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              reason: {
+                type: 'string',
+                description: 'The reason the gift card balance was cleared.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Additional details about a `CLEAR_BALANCE` activity, which is used to set the balance of a gift card to zero.',
+      },
+      deactivate_activity_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              reason: {
+                type: 'string',
+                description: 'The reason the gift card was deactivated.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Additional details about a `DEACTIVATE` activity, which is used to deactivate a gift card.',
+      },
+      adjust_increment_activity_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount_money: {
+                type: 'object',
+                properties: {
+                  amount: {
+                    anyOf: [
+                      {
+                        type: 'integer',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+                  },
+                  currency: {
+                    anyOf: [
+                      {
+                        type: 'string',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description: 'The type of currency, in __ISO 4217 format__.',
+                  },
+                },
+                description: 'The amount added to the gift card balance.',
+              },
+              reason: {
+                type: 'string',
+                description: 'The reason the gift card balance was adjusted.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Additional details about an `ADJUST_INCREMENT` activity, which is used to add money to a gift card outside of a typical `ACTIVATE`, `LOAD`, or `REFUND` activity flow.',
+      },
+      adjust_decrement_activity_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount_money: {
+                type: 'object',
+                properties: {
+                  amount: {
+                    anyOf: [
+                      {
+                        type: 'integer',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+                  },
+                  currency: {
+                    anyOf: [
+                      {
+                        type: 'string',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description: 'The type of currency, in __ISO 4217 format__.',
+                  },
+                },
+                description: 'The amount deducted from the gift card balance.',
+              },
+              reason: {
+                type: 'string',
+                description: 'The reason the gift card balance was adjusted.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Additional details about an `ADJUST_DECREMENT` activity, which is used to deduct money from a gift card outside of a typical `REDEEM` activity flow.',
+      },
+      refund_activity_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              redeem_activity_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The ID of the refunded `REDEEM` gift card activity.',
+              },
+              amount_money: {
+                anyOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      amount: {
+                        anyOf: [
+                          {
+                            type: 'integer',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                        description:
+                          'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+                      },
+                      currency: {
+                        anyOf: [
+                          {
+                            type: 'string',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                        description: 'The type of currency, in __ISO 4217 format__.',
+                      },
+                    },
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The amount added to the gift card for the refund.',
+              },
+              reference_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'A client-specified ID that associates the gift card activity with an entity in another system.',
+              },
+              payment_id: {
+                type: 'string',
+                description: 'The ID of the refunded payment.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Additional details about a `REFUND` activity, which is used to add money to a gift card when refunding a payment.',
+      },
+      unlinked_activity_refund_activity_details: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount_money: {
+                type: 'object',
+                properties: {
+                  amount: {
+                    anyOf: [
+                      {
+                        type: 'integer',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description:
+                      'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+                  },
+                  currency: {
+                    anyOf: [
+                      {
+                        type: 'string',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                    description: 'The type of currency, in __ISO 4217 format__.',
+                  },
+                },
+                description: 'The amount added to the gift card for the refund.',
+              },
+              reference_id: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'A client-specified ID that associates the gift card activity with an entity in another system.',
+              },
+              payment_id: {
+                type: 'string',
+                description: 'The ID of the refunded payment.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'Additional details about an `UNLINKED_ACTIVITY_REFUND` activity.',
+      },
+      import_activity_details: {
+        type: 'object',
+        properties: {
+          amount_money: {
+            type: 'object',
+            properties: {
+              amount: {
+                anyOf: [
+                  {
+                    type: 'integer',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+              },
+              currency: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The type of currency, in __ISO 4217 format__.',
+              },
+            },
+            description: 'The balance amount on the imported gift card.',
+          },
+        },
+        description:
+          'Additional details about an `IMPORT` activity, which Square uses to import a third-party gift card with a balance.',
+      },
+      block_activity_details: {
+        type: 'object',
+        properties: {
+          reason: {
+            type: 'string',
+            description: 'The reason the gift card was blocked.',
+          },
+        },
+        description: 'Additional details about a `BLOCK` activity, which Square uses to temporarily block a gift card.',
+      },
+      unblock_activity_details: {
+        type: 'object',
+        properties: {
+          reason: {
+            type: 'string',
+            description: 'The reason the gift card was unblocked.',
+          },
+        },
+        description: 'Additional details about an `UNBLOCK` activity, which Square uses to unblock a gift card.',
+      },
+      import_reversal_activity_details: {
+        type: 'object',
+        properties: {
+          amount_money: {
+            type: 'object',
+            properties: {
+              amount: {
+                anyOf: [
+                  {
+                    type: 'integer',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+              },
+              currency: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The type of currency, in __ISO 4217 format__.',
+              },
+            },
+            description: 'The amount of money cleared from the third-party gift card when the import was reversed.',
+          },
+        },
+        description:
+          'Additional details about an `IMPORT_REVERSAL` activity, which Square uses to reverse the import of a third-party gift card.',
+      },
+      transfer_balance_to_activity_details: {
+        type: 'object',
+        properties: {
+          transfer_from_gift_card_id: {
+            type: 'string',
+            description: 'The ID of the gift card from which the specified amount was transferred.',
+          },
+          amount_money: {
+            type: 'object',
+            properties: {
+              amount: {
+                anyOf: [
+                  {
+                    type: 'integer',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+              },
+              currency: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The type of currency, in __ISO 4217 format__.',
+              },
+            },
+            description: 'The amount added to the gift card balance for the transfer.',
+          },
+        },
+        description:
+          'Additional details about a `TRANSFER_BALANCE_TO` activity, which Square uses to add money to a gift card as the result of a transfer from another gift card.',
+      },
+      transfer_balance_from_activity_details: {
+        type: 'object',
+        properties: {
+          transfer_to_gift_card_id: {
+            type: 'string',
+            description: 'The ID of the gift card to which the specified amount was transferred.',
+          },
+          amount_money: {
+            type: 'object',
+            properties: {
+              amount: {
+                anyOf: [
+                  {
+                    type: 'integer',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+              },
+              currency: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The type of currency, in __ISO 4217 format__.',
+              },
+            },
+            description: 'The amount deducted from the gift card for the transfer.',
+          },
+        },
+        description:
+          'Additional details about a `TRANSFER_BALANCE_FROM` activity, which Square uses to deduct money from a gift as the result of a transfer to another gift card.',
+      },
+    },
+    description: 'Represents an action performed on a gift card that affects its state or balance.',
+  },
+  Subscription: {
+    type: 'object',
+    properties: {
+      id: {
+        type: 'string',
+        description: 'The Square-assigned ID of the subscription.',
+      },
+      location_id: {
+        type: 'string',
+        description: 'The ID of the location associated with the subscription.',
+      },
+      plan_variation_id: {
+        type: 'string',
+        description: 'The ID of the subscribed-to subscription plan variation.',
+      },
+      customer_id: {
+        type: 'string',
+        description: 'The ID of the subscribing customer profile.',
+      },
+      start_date: {
+        type: 'string',
+        description: 'The `YYYY-MM-DD`-formatted date (for example, 2013-01-15) to start the subscription.',
+      },
+      canceled_date: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'The `YYYY-MM-DD`-formatted date (for example, 2013-01-15) to cancel the subscription, when the subscription status changes to `CANCELED` and the subscription billing stops.',
+      },
+      charged_through_date: {
+        type: 'string',
+        description: 'The `YYYY-MM-DD`-formatted date up to when the subscriber is invoiced for the subscription.',
+      },
+      status: {
+        type: 'string',
+        description: 'The current status of the subscription.',
+      },
+      tax_percentage: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The tax amount applied when billing the subscription.',
+      },
+      invoice_ids: {
+        type: 'array',
+        items: {
+          type: 'string',
+        },
+        description:
+          'The IDs of the invoices created for the subscription, listed in order when the invoices were created (newest invoices appear first).',
+      },
+      price_override_money: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              amount: {
+                anyOf: [
+                  {
+                    type: 'integer',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The amount of money, in the smallest denomination of the currency indicated by `currency`.',
+              },
+              currency: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description: 'The type of currency, in __ISO 4217 format__.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'A custom price which overrides the cost of a subscription plan variation with `STATIC` pricing.',
+      },
+      version: {
+        type: 'integer',
+        description: 'The version of the object.',
+      },
+      created_at: {
+        type: 'string',
+        description: 'The timestamp when the subscription was created, in RFC 3339 format.',
+      },
+      card_id: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: "The ID of the subscriber's card used to charge for the subscription.",
+      },
+      timezone: {
+        type: 'string',
+        description: 'Timezone that will be used in date calculations for the subscription.',
+      },
+      source: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              name: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'The name used to identify the place (physical or digital) that a subscription originates.',
+              },
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The origination details of the subscription.',
+      },
+      actions: {
+        anyOf: [
+          {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: {
+                  type: 'string',
+                  description: 'The ID of an action scoped to a subscription.',
+                },
+                type: {
+                  anyOf: [
+                    {
+                      type: 'string',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                  description: 'The type of the action.',
+                },
+                effective_date: {
+                  anyOf: [
+                    {
+                      type: 'string',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                  description: 'The `YYYY-MM-DD`-formatted date when the action occurs on the subscription.',
+                },
+                monthly_billing_anchor_date: {
+                  anyOf: [
+                    {
+                      type: 'integer',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                  description: 'The new billing anchor day value, for a `CHANGE_BILLING_ANCHOR_DATE` action.',
+                },
+                phases: {
+                  anyOf: [
+                    {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          uid: {
+                            anyOf: [
+                              {
+                                type: 'string',
+                              },
+                              {
+                                type: 'null',
+                              },
+                            ],
+                            description: 'id of subscription phase',
+                          },
+                          ordinal: {
+                            anyOf: [
+                              {
+                                type: 'integer',
+                              },
+                              {
+                                type: 'null',
+                              },
+                            ],
+                            description: 'index of phase in total subscription plan',
+                          },
+                          order_template_id: {
+                            anyOf: [
+                              {
+                                type: 'string',
+                              },
+                              {
+                                type: 'null',
+                              },
+                            ],
+                            description: 'id of order to be used in billing',
+                          },
+                          plan_phase_uid: {
+                            anyOf: [
+                              {
+                                type: 'string',
+                              },
+                              {
+                                type: 'null',
+                              },
+                            ],
+                            description: "the uid from the plan's phase in catalog",
+                          },
+                        },
+                        description: 'Represents a phase, which can override subscription phases as defined by plan_id',
+                      },
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                  description: 'A list of Phases, to pass phase-specific information used in the swap.',
+                },
+                new_plan_variation_id: {
+                  anyOf: [
+                    {
+                      type: 'string',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                  description:
+                    'The target subscription plan variation that a subscription switches to, for a `SWAP_PLAN` action.',
+                },
+              },
+              description: 'Represents an action as a pending change to a subscription.',
+            },
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The list of scheduled actions on this subscription.',
+      },
+      monthly_billing_anchor_date: {
+        type: 'integer',
+        description: 'The day of the month on which the subscription will issue invoices and publish orders.',
+      },
+      phases: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            uid: {
+              anyOf: [
+                {
+                  type: 'string',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+              description: 'id of subscription phase',
+            },
+            ordinal: {
+              anyOf: [
+                {
+                  type: 'integer',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+              description: 'index of phase in total subscription plan',
+            },
+            order_template_id: {
+              anyOf: [
+                {
+                  type: 'string',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+              description: 'id of order to be used in billing',
+            },
+            plan_phase_uid: {
+              anyOf: [
+                {
+                  type: 'string',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+              description: "the uid from the plan's phase in catalog",
+            },
+          },
+          description: 'Represents a phase, which can override subscription phases as defined by plan_id',
+        },
+        description: 'array of phases for this subscription',
+      },
+      completed_date: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description: 'The `YYYY-MM-DD`-formatted date when the subscription enters a terminal state.',
+      },
+    },
+    description: 'Represents a subscription purchased by a customer.',
   },
 };

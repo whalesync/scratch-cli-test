@@ -54,7 +54,8 @@ export function isSquareRateLimitError(error: unknown): boolean {
 
 /**
  * Retry policy for every Square call. Safe because every call this connector makes is a read:
- * GETs, plus the two search POSTs (SearchOrders, SearchTeamMembers), which have no side effects.
+ * GETs, plus POSTs with no side effects (SearchOrders, SearchTeamMembers, SearchSubscriptions, and
+ * RetrieveTokenStatus).
  */
 export const SQUARE_RETRY_OPTS: WithRetryOpts = {
   isRateLimited: isSquareRateLimitError,
@@ -170,6 +171,18 @@ export class SquareApiClient {
   }
 
   /**
+   * The permissions the access token was granted, from RetrieveTokenStatus. An OAuth connection keeps the scopes it
+   * was signed in with, so one made before a table was added may lack that table's scope.
+   *
+   * https://developer.squareup.com/reference/square/o-auth-api/retrieve-token-status
+   */
+  async retrieveGrantedScopes(): Promise<Set<string>> {
+    const response = await this.request(() => this.httpClient.post<{ scopes?: unknown }>('/oauth2/token/status', {}));
+    const scopes = Array.isArray(response.data.scopes) ? response.data.scopes : [];
+    return new Set(scopes.filter((scope): scope is string => typeof scope === 'string'));
+  }
+
+  /**
    * Every location id of the seller (active and inactive), sorted so a resumed pull walks them in
    * the same order as the run that saved its progress. Fetched once per client.
    */
@@ -204,11 +217,14 @@ export class SquareApiClient {
       case 'cursor-per-location':
         yield* this.listCursorPagesPerLocation(entityConfig, resumeFromProgress);
         return;
+      case 'cursor-per-payout':
+        yield* this.listCursorPagesPerPayout(entityConfig, resumeFromProgress);
+        return;
       case 'orders-search':
         yield* this.listOrdersSearchPages(entityConfig, resumeFromProgress);
         return;
-      case 'team-members-search':
-        yield* this.listTeamMembersSearchPages(entityConfig, resumeFromProgress?.cursor);
+      case 'cursor-search':
+        yield* this.listCursorSearchPages(entityConfig, resumeFromProgress?.cursor);
         return;
       default:
         assertUnreachable(entityConfig.listingStrategy);
@@ -234,12 +250,13 @@ export class SquareApiClient {
     extraQueryParams: Record<string, string> = {},
     progressForCursor: (nextCursor: string | undefined) => SquarePullProgress = (nextCursor) =>
       nextCursor ? { cursor: nextCursor } : {},
+    listEndpointPath: string = entityConfig.listEndpointPath,
   ): AsyncGenerator<SquareRecordPage, void> {
     let cursor = resumeCursor;
     do {
       const params = { ...entityConfig.listQueryParams, ...extraQueryParams, ...(cursor ? { cursor } : {}) };
       const response = await this.request(() =>
-        this.httpClient.get<SquareCursorPageResponse>(entityConfig.listEndpointPath, { params }),
+        this.httpClient.get<SquareCursorPageResponse>(listEndpointPath, { params }),
       );
       const records = this.recordsFromResponse(entityConfig, response.data);
       cursor = typeof response.data.cursor === 'string' && response.data.cursor ? response.data.cursor : undefined;
@@ -261,6 +278,51 @@ export class SquareApiClient {
         resumeCursor,
         { location_id: sortedLocationIds[locationIndex] },
         (nextCursor) => (nextCursor ? { locationIndex, cursor: nextCursor } : { locationIndex: locationIndex + 1 }),
+      );
+    }
+  }
+
+  /**
+   * Every payout id of the seller, across every location and the full history, oldest first (ties by id). A resumed
+   * pull walks them in the same order as the run that saved its progress, and a payout created in between lands at
+   * the end, so the saved position still points at the same payout. (Payout ids are random, so ordering by id
+   * would let a new payout shift every later one.)
+   */
+  private async listAllPayoutIdsOldestFirst(): Promise<string[]> {
+    const payoutsWithCreationTime: { payoutId: string; createdAtEpochMilliseconds: number }[] = [];
+    for await (const payoutPage of this.listCursorPagesPerLocation(SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE.payouts, {})) {
+      for (const payout of payoutPage.records) {
+        if (typeof payout.id !== 'string') continue;
+        const createdAtEpochMilliseconds = Date.parse(String(payout.created_at));
+        payoutsWithCreationTime.push({
+          payoutId: payout.id,
+          createdAtEpochMilliseconds: Number.isNaN(createdAtEpochMilliseconds) ? 0 : createdAtEpochMilliseconds,
+        });
+      }
+    }
+    return payoutsWithCreationTime
+      .sort(
+        (first, second) =>
+          first.createdAtEpochMilliseconds - second.createdAtEpochMilliseconds ||
+          first.payoutId.localeCompare(second.payoutId),
+      )
+      .map(({ payoutId }) => payoutId);
+  }
+
+  private async *listCursorPagesPerPayout(
+    entityConfig: SquareEntityConfig,
+    resumeFromProgress: SquarePullProgress | undefined,
+  ): AsyncGenerator<SquareRecordPage, void> {
+    const payoutIdsOldestFirst = await this.listAllPayoutIdsOldestFirst();
+    const firstPayoutIndex = resumeFromProgress?.payoutIndex ?? 0;
+    for (let payoutIndex = firstPayoutIndex; payoutIndex < payoutIdsOldestFirst.length; payoutIndex++) {
+      const resumeCursor = payoutIndex === firstPayoutIndex ? resumeFromProgress?.cursor : undefined;
+      yield* this.listCursorPages(
+        entityConfig,
+        resumeCursor,
+        {},
+        (nextCursor) => (nextCursor ? { payoutIndex, cursor: nextCursor } : { payoutIndex: payoutIndex + 1 }),
+        entityConfig.listEndpointPath.replace('{payout_id}', encodeURIComponent(payoutIdsOldestFirst[payoutIndex])),
       );
     }
   }
@@ -310,13 +372,13 @@ export class SquareApiClient {
     }
   }
 
-  private async *listTeamMembersSearchPages(
+  private async *listCursorSearchPages(
     entityConfig: SquareEntityConfig,
     resumeCursor: string | undefined,
   ): AsyncGenerator<SquareRecordPage, void> {
     let cursor = resumeCursor;
     do {
-      // No `query`: Square then includes team members of every status at every location.
+      // No `query`: Square then includes records of every status at every location.
       const requestBody = { limit: 100, ...(cursor ? { cursor } : {}) };
       const response = await this.request(() =>
         this.httpClient.post<SquareCursorPageResponse>(entityConfig.listEndpointPath, requestBody),
@@ -331,13 +393,22 @@ export class SquareApiClient {
    * Fetch one record by id, exactly as Square returns it. Returns `null` when Square has no such
    * record — or, for a catalog table, when the id belongs to a catalog object of a different type,
    * since that object is not a record of this table.
+   *
+   * Throws for a table Square has no single-record endpoint for: answering `null` there would read
+   * as "this record was deleted".
    */
   async retrieveEntity(entityType: SquareEntityType, recordId: string): Promise<Record<string, unknown> | null> {
     const entityConfig = SQUARE_ENTITY_CONFIG_BY_ENTITY_TYPE[entityType];
-    const retrievePath = entityConfig.retrieveEndpointPathTemplate.replace('{id}', encodeURIComponent(recordId));
+    const { retrieveOneRecord } = entityConfig;
+    if (!retrieveOneRecord) {
+      throw new SquareError(
+        `Square can't fetch a single ${entityConfig.displayName} record. Pull the whole table to refresh it.`,
+      );
+    }
+    const retrievePath = retrieveOneRecord.endpointPathTemplate.replace('{id}', encodeURIComponent(recordId));
     try {
       const response = await this.request(() => this.httpClient.get<Record<string, unknown>>(retrievePath));
-      const record = response.data[entityConfig.retrieveResponseRecordKey];
+      const record = response.data[retrieveOneRecord.responseRecordKey];
       if (!record || typeof record !== 'object') return null;
       const typedRecord = record as Record<string, unknown>;
       if (entityConfig.catalogObjectType && typedRecord.type !== entityConfig.catalogObjectType) return null;

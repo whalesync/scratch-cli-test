@@ -33,10 +33,19 @@ export const SQUARE_FOREIGN_KEY_TARGET_ENTITY_TYPE_BY_TOP_LEVEL_FIELD_NAME: Reco
   payment_id: 'payments',
   team_member_id: 'team_members',
   creator_team_member_id: 'team_members',
+  payout_id: 'payouts',
+  gift_card_id: 'gift_cards',
 };
 
 /** String fields Square documents as a calendar date (`YYYY-MM-DD`) rather than a timestamp. */
-const SQUARE_DATE_ONLY_FIELD_NAMES = new Set(['sale_or_service_date', 'arrival_date']);
+const SQUARE_DATE_ONLY_FIELD_NAMES = new Set([
+  'sale_or_service_date',
+  'arrival_date',
+  'start_date',
+  'canceled_date',
+  'charged_through_date',
+  'completed_date',
+]);
 
 /**
  * Whether Square documents this string field as an RFC 3339 timestamp. Square names every

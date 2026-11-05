@@ -41,7 +41,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [Salesforce](../server/src/remote-service/connectors/library/salesforce/STATE.md) | ✅ | ❌ | 🟠 | ✅ | 🔒 | Free dev | ✅ | ❌ | |
 | [Sanity](../server/src/remote-service/connectors/library/sanity/STATE.md) | ❌ | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | 2026-08-01 |
 | [Shopify](../server/src/remote-service/connectors/library/shopify/STATE.md) | ❌ | ✅ | 🟠 | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
-| [Square](../server/src/remote-service/connectors/library/square/STATE.md) | ✅ | ✅ | ❌ | 🟠 | 🔒 | Free dev | ❌ | ❌ | 2026-10-26 |
+| [Square](../server/src/remote-service/connectors/library/square/STATE.md) | ✅ | ✅ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | 2026-10-26 |
 | [Stripe](../server/src/remote-service/connectors/library/stripe/STATE.md) | ✅ | ✅ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
 | [Supabase](../server/src/remote-service/connectors/library/supabase/STATE.md) | ✅ | ✅ | ✅ | ✅ | 👁️ | Free tier | ❌ | ❌ | |
 | [Webflow](../server/src/remote-service/connectors/library/webflow/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ✅ | |

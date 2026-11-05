@@ -9,7 +9,7 @@ import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import { SquareApiClient } from '../square-api-client';
 import { SquareConnector } from '../square-connector';
-import { SQUARE_ENTITY_TYPES, SquarePullProgress } from '../square-types';
+import { SQUARE_ENTITY_TYPES, SQUARE_OAUTH_READ_SCOPES, SquarePullProgress } from '../square-types';
 
 jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'Square'),
@@ -18,6 +18,7 @@ jest.mock('../../../display-names', () => ({
 const mockValidateCredentials = jest.fn();
 const mockListEntityPages = jest.fn();
 const mockRetrieveEntity = jest.fn();
+const mockRetrieveGrantedScopes = jest.fn();
 
 jest.mock('../square-api-client', () => {
   const actual = jest.requireActual<typeof import('../square-api-client')>('../square-api-client');
@@ -28,6 +29,7 @@ jest.mock('../square-api-client', () => {
       validateCredentials: mockValidateCredentials,
       listEntityPages: mockListEntityPages,
       retrieveEntity: mockRetrieveEntity,
+      retrieveGrantedScopes: mockRetrieveGrantedScopes,
     })),
   };
 });
@@ -126,6 +128,7 @@ describe('SquareConnector', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRetrieveGrantedScopes.mockResolvedValue(new Set(SQUARE_OAUTH_READ_SCOPES));
     connector = new SquareConnector({ accessToken: 't', environment: 'production' });
   });
 
@@ -135,13 +138,38 @@ describe('SquareConnector', () => {
     expect(tables.map((table) => table.id.wsId)).toEqual(SQUARE_ENTITY_TYPES);
     for (const table of tables) {
       expect(table).toMatchObject({ disabledCreates: true, disabledUpdates: true, disabledDeletes: true });
+      expect(table.disabled).toBeUndefined();
     }
   });
 
-  it('rejects an unknown table', async () => {
-    await expect(connector.fetchJsonTableSpec({ wsId: 'gift_cards', remoteId: ['gift_cards'] })).rejects.toThrow(
-      "Square has no table 'gift_cards'",
+  it('lists a table the connection lacks the permission for as unpickable, saying how to fix it', async () => {
+    // A connection signed in before the gift card tables existed.
+    mockRetrieveGrantedScopes.mockResolvedValue(
+      new Set(SQUARE_OAUTH_READ_SCOPES.filter((scope) => scope !== 'GIFTCARDS_READ')),
     );
+
+    const tables = await connector.listTables();
+
+    const unpickableTableIds = tables.filter((table) => table.disabled).map((table) => table.id.wsId);
+    expect(unpickableTableIds).toEqual(['gift_cards', 'gift_card_activities']);
+    expect(tables.find((table) => table.id.wsId === 'gift_cards')?.disabledReason).toBe(
+      "This connection doesn't have Square's GIFTCARDS_READ permission. Reconnect Square to add Gift Cards.",
+    );
+  });
+
+  it("leaves every table pickable when Square won't report the token's permissions", async () => {
+    mockRetrieveGrantedScopes.mockRejectedValue(new Error('Square API error (500)'));
+
+    const tables = await connector.listTables();
+
+    expect(tables).toHaveLength(SQUARE_ENTITY_TYPES.length);
+    expect(tables.some((table) => table.disabled)).toBe(false);
+  });
+
+  it('rejects an unknown table', async () => {
+    await expect(
+      connector.fetchJsonTableSpec({ wsId: 'inventory_counts', remoteId: ['inventory_counts'] }),
+    ).rejects.toThrow("Square has no table 'inventory_counts'");
   });
 
   it('hands each page to the job exactly as Square returned it, with its resume progress', async () => {

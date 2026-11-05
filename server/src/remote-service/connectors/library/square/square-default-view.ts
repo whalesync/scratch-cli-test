@@ -63,6 +63,36 @@ const PRIORITY_FIELDS: Record<SquareEntityType, string[]> = {
   invoices: ['invoice_number', 'id', 'title', 'status', 'location_id', 'order_id', 'primary_recipient', 'created_at'],
   team_members: ['given_name', 'family_name', 'email_address', 'status', 'is_owner', 'id', 'created_at'],
   payouts: ['id', 'location_id', 'status', 'type', 'amount_money', 'arrival_date', 'created_at'],
+  payout_entries: [
+    'id',
+    'payout_id',
+    'type',
+    'gross_amount_money',
+    'fee_amount_money',
+    'net_amount_money',
+    'effective_at',
+  ],
+  gift_cards: ['gan', 'id', 'type', 'state', 'balance_money', 'customer_ids', 'created_at'],
+  gift_card_activities: [
+    'id',
+    'gift_card_id',
+    'gift_card_gan',
+    'type',
+    'location_id',
+    'gift_card_balance_money',
+    'created_at',
+  ],
+  subscriptions: [
+    'id',
+    'customer_id',
+    'location_id',
+    'plan_variation_id',
+    'status',
+    'start_date',
+    'charged_through_date',
+    'canceled_date',
+    'created_at',
+  ],
 };
 
 /**
