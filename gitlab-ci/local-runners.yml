@@ -172,16 +172,6 @@ local build and test server:
   extends:
     - .build-and-test-server
     - .local-runner-defaults
-  variables:
-    # Docker Desktop gives a Mac runner's VM far less memory than its CPU count
-    # implies (8 GiB for 14 CPUs), and the runner may run a second job beside
-    # this one. Jest's default of one worker per CPU, each growing past 1 GiB
-    # as it runs more suites, filled that VM and got workers SIGKILLed
-    # (DEV-12386). `workerIdleMemoryLimit` restarts a worker between test files
-    # once its heap passes the limit, so the cap holds as the suite grows.
-    # Measured in the CI image on that Mac: the default peaked at 7.3 GiB and
-    # failed after ~190 s; these flags peak at ~2.3 GiB and pass in ~35 s.
-    SERVER_JEST_WORKER_LIMIT_ARGS: "--maxWorkers=4 --workerIdleMemoryLimit=512MB"
   rules:
     - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, server]

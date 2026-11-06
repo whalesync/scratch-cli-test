@@ -171,10 +171,17 @@ build client docker image for production:
   interruptible: true
   tags: !reference [.runner_tags, high_memory]
   variables:
-    # Empty so the shared runners keep jest's default of one worker per CPU.
-    # `local build and test server` (gitlab-ci/local-runners.yml) sets this to
-    # cap jest's memory on a small Docker Desktop VM.
-    SERVER_JEST_WORKER_LIMIT_ARGS: ""
+    # Jest defaults to one worker per CPU, and every CI container sees all of
+    # its machine's CPUs: 10 to 12 on the Mac fleet, 14 on a local Mac runner,
+    # whatever its share of memory. Each worker grows past 1 GiB as it runs
+    # more suites. On a local Mac runner the default peaked at 7.3 GiB and got
+    # workers SIGKILLed (DEV-12386). On the Mac fleet, where every job has to
+    # fit in about 5.5 GB (DEV-12779), this job peaked at 7.5 GB with the
+    # default and at 3.8 GB with these flags. Capping workers alone barely
+    # helps: 7 workers peaked at 7.1 GiB. `workerIdleMemoryLimit` restarts a
+    # worker between test files once its heap passes the limit, so the cap
+    # holds as the suite grows.
+    SERVER_JEST_WORKER_LIMIT_ARGS: "--maxWorkers=4 --workerIdleMemoryLimit=512MB"
   script:
     - !reference [.build_shared_types, script]
     - cd server
@@ -377,7 +384,13 @@ build server docker image:
   script:
     - command -v git && git --version
     - cd scratch-git-2
-    - cargo test
+    # Cargo runs one rustc per CPU, and the container sees all of its machine's
+    # CPUs (10 to 12 on the Mac fleet), whatever its share of memory. On the
+    # Mac fleet every job has to fit in about 5.5 GB (DEV-12779). From a cold
+    # target directory, building and linking the test binaries peaked at
+    # 5.7 GB with 12 rustc processes and at 4.3 GB with 4. The release build
+    # below peaks at about 1.6 GB, so it keeps one rustc per CPU.
+    - cargo test --jobs 4
     # `apt-get update` because before_script deleted /var/lib/apt/lists/*. The
     # CC_/AR_ exports are required on top of the linker: ring, libsqlite3-sys
     # (bundled), zstd-sys, lzma-sys and bzip2-sys all compile C through the `cc`
