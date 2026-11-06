@@ -100,6 +100,16 @@ mirroring the whalesync apply.
 reading one requires elevating to admin. (Contrast `developer_roles`, which grants `secretmanager.secretAccessor` +
 `secretmanager.viewer`.)
 
+### Production storage is read bucket by bucket (DEV-12775)
+
+In `spv1eu-production` the group doesn't get `roles/storage.objectViewer` on the whole project. It reads objects only in
+the buckets listed in `readonly_sa_read_buckets` (`terraform/modules/env/main.tf`), so it can't read the Terraform state
+bucket. The state holds the Cloud SQL root password, the Redis AUTH string, and the PagerDuty integration key in plain
+text. `spv1eu-test` still grants object read on every bucket.
+
+To let the read-only SAs read another production bucket, add it to `readonly_sa_read_buckets`. Don't put the
+project-wide grant back. Production `terraform plan`, `terraform state list`, and `terraform output` now need admin.
+
 ### Elevation is unchanged — it's the same laptop tooling
 
 `gcp-admin` (interactive `gcloud auth login --update-adc`) and `gcp-ro` (`gcloud auth revoke`, scrubbing the cached

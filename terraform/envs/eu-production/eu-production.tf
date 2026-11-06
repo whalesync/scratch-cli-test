@@ -38,6 +38,9 @@ module "eu_production" {
   # here (secret_access_readonly_sa_threshold, default 200 / 10-min, per principal). Prod-only.
   enable_secret_access_readonly_sa_alert = true
 
+  # The read-only SAs read only the buckets in the module's readonly_sa_read_buckets, not the Terraform state (DEV-12775).
+  limit_readonly_sa_storage_reads = true
+
   # Warn when month-to-date Cloud Logging ingestion exceeds log_ingestion_alert_threshold_gib (default
   # 300 GiB) — a cost guardrail on the audit-log volume added by WSG-008 / DEV-10989. Resets monthly.
   enable_log_ingestion_alerts = true

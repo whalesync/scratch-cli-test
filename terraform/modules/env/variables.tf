@@ -610,3 +610,13 @@ variable "grant_readonly_sa_all_secrets" {
     docs/plans/2026-06-11-local-readonly-agent-access-spinner/2026-06-11-local-readonly-agent-access-spinner.md.
   EOT
 }
+
+variable "limit_readonly_sa_storage_reads" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    When true, role_readonly_sa@ reads objects only in the buckets in local.readonly_sa_read_buckets (main.tf), not in
+    every bucket in the project. That keeps it off the Terraform state bucket, whose state holds database and Redis
+    passwords in plain text (DEV-12775). Set in production.
+  EOT
+}

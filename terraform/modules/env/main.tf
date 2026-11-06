@@ -188,12 +188,12 @@ locals {
   # oauthconfig.editor, iam.serviceAccountUser (actAs/impersonation) and cloudsql.studioUser — none of which belong on a
   # long-lived key sitting on a laptop. We omit secretmanager.* entirely so a leaked read-only key cannot read secret
   # payloads. Widen read-only access for every dev at once by adding the missing read role HERE — never a write or
-  # escalation role.
-  readonly_sa_roles = [
+  # escalation role. Storage is the exception: where var.limit_readonly_sa_storage_reads is set, object read is granted
+  # bucket by bucket (readonly_sa_read_buckets below), so a new bucket is added there instead.
+  readonly_sa_roles = concat([
     "roles/browser",
     "roles/cloudsql.viewer",
     "roles/compute.viewer",
-    "roles/storage.objectViewer",
     "roles/redis.viewer",
     "roles/artifactregistry.reader",
     "roles/run.viewer",
@@ -203,7 +203,10 @@ locals {
     "roles/iam.roleViewer",
     "roles/errorreporting.viewer",
     "roles/aiplatform.viewer",
-  ]
+    ],
+    # Object read on every bucket, including the Terraform state. Left out where the flag grants it per bucket instead.
+    var.limit_readonly_sa_storage_reads ? [] : ["roles/storage.objectViewer"],
+  )
 
   # Assignments of roles to users, groups, and service accounts
   # See https://cloud.google.com/iam/docs/overview#concepts_related_identity for what can be used as a principal.
@@ -774,5 +777,29 @@ module "static_bucket_lb" {
   log_bucket      = google_storage_bucket.gcs_access_logs.name
 
   depends_on = [google_storage_bucket_iam_member.gcs_access_logs_writer]
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Read-only SA bucket reads (var.limit_readonly_sa_storage_reads, production)
+## ---------------------------------------------------------------------------------------------------------------------
+# Where the flag is set, role_readonly_sa@ reads objects only in these buckets. The Terraform state bucket stays off
+# the list, and so does any new bucket until someone adds it here (DEV-12775). Don't grant storage.objectViewer on the
+# whole project again.
+locals {
+  readonly_sa_read_buckets = {
+    for name, bucket in {
+      assets         = google_storage_bucket.assets.name
+      upload_patches = google_storage_bucket.upload_patches.name
+      access_logs    = google_storage_bucket.gcs_access_logs.name
+      static         = one(module.static_bucket_lb[*].bucket_name) # Null where the env has no static bucket.
+    } : name => bucket if bucket != null && var.limit_readonly_sa_storage_reads
+  }
+}
+
+resource "google_storage_bucket_iam_member" "readonly_sa_read" {
+  for_each = local.readonly_sa_read_buckets
+  bucket   = each.value
+  role     = "roles/storage.objectViewer"
+  member   = "group:role_readonly_sa@whalesync.com"
 }
 
