@@ -27,7 +27,12 @@
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
-import { createScratchApiClient, getApiUrl } from './common';
+import {
+  createScratchApiClient,
+  getApiUrl,
+  SCRATCH_API_WARM_UP_HOOK_TIMEOUT_MS,
+  waitForScratchApiToBeWarm,
+} from './common';
 
 // Bounded + transport-retrying client. A bare `axios` has no timeout, so one dropped connection
 // used to hang this suite until Jest's 60s cap fired with a message that named no request —
@@ -106,11 +111,17 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
   let prismaForDbRowAssertions: PrismaClient | undefined;
   const provisionedWhalesyncUserIds: string[] = [];
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // test-api scales to zero, and the post-deploy job spends its first minutes in suites that never
+    // call it, so the instance is often shut down by the time this suite runs. Without a warm-up the
+    // first test's write timed out during the ~40s cold start. The warm-up goes here, not in the
+    // job's global setup: Cloud Run has shut an idle instance as soon as ~40s after a rollout, so an
+    // API warmed at job start can be cold again by the time this suite runs.
+    await waitForScratchApiToBeWarm(apiUrl);
     if (!isApiOnlyMode) {
       prismaForDbRowAssertions = new PrismaClient();
     }
-  });
+  }, SCRATCH_API_WARM_UP_HOOK_TIMEOUT_MS);
 
   afterEach(async () => {
     // Deprovision everything created this test (idempotent), so no workbook repos or rows leak.

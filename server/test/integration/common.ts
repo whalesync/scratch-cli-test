@@ -98,3 +98,102 @@ export const createScratchApiClient = (): AxiosInstance => {
 
   return client;
 };
+
+/** Tuning for {@link waitForScratchApiToBeWarm}. Tests shrink these; real callers use the defaults. */
+export interface ScratchApiWarmUpSettings {
+  /** A `/health` round trip slower than this came from an instance that was still starting. */
+  maximumLatencyOfAWarmHealthResponseMs: number;
+  /** How many fast `200 /health` responses must arrive back to back before the API counts as warm. */
+  consecutiveFastHealthResponsesRequiredToCountAsWarm: number;
+  /** Pause between probes, so back-to-back fast responses span long enough to rule out a replaced instance. */
+  delayBetweenWarmUpProbesMs: number;
+  /** Per-probe timeout. Long enough that one whole cold start can finish inside a single probe. */
+  warmUpProbeTimeoutMs: number;
+  /** Total time allowed before giving up with an error that lists what every probe saw. */
+  totalWarmUpBudgetMs: number;
+}
+
+const DEFAULT_SCRATCH_API_WARM_UP_SETTINGS: ScratchApiWarmUpSettings = {
+  // A warm `/health` answers in well under a second from a CI runner; a cold start takes ~40s.
+  maximumLatencyOfAWarmHealthResponseMs: 3_000,
+  consecutiveFastHealthResponsesRequiredToCountAsWarm: 3,
+  delayBetweenWarmUpProbesMs: 1_000,
+  warmUpProbeTimeoutMs: 60_000,
+  // Room for two cold starts back to back (~82s has been observed) plus margin.
+  totalWarmUpBudgetMs: 150_000,
+};
+
+/** A `beforeAll` timeout that comfortably covers {@link waitForScratchApiToBeWarm} with default settings. */
+export const SCRATCH_API_WARM_UP_HOOK_TIMEOUT_MS = DEFAULT_SCRATCH_API_WARM_UP_SETTINGS.totalWarmUpBudgetMs + 30_000;
+
+/** How many of the most recent probe outcomes to include when the warm-up gives up. */
+const PROBE_OUTCOMES_TO_REPORT_ON_FAILURE = 10;
+
+/**
+ * Wake the Scratch API and wait until it is answering quickly, before a suite sends its first
+ * real request.
+ *
+ * The test environment's api-service scales to zero. When a deployed API has been idle for even a
+ * minute, the next request has to wait ~40s for Cloud Run to start an instance. That is longer than
+ * {@link createScratchApiClient}'s per-attempt timeout, and a timed-out write is never replayed, so
+ * the suite's first test failed even though the server was healthy. Polling `/health` first makes
+ * Cloud Run start the instance before any test runs.
+ *
+ * One fast response is not enough: Cloud Run has replaced a freshly started instance right after
+ * its first response, which forced a second cold start. So this waits for several fast `200`
+ * responses in a row, spaced apart.
+ */
+export const waitForScratchApiToBeWarm = async (
+  apiUrl: string,
+  settingsOverrides: Partial<ScratchApiWarmUpSettings> = {},
+): Promise<void> => {
+  const settings = { ...DEFAULT_SCRATCH_API_WARM_UP_SETTINGS, ...settingsOverrides };
+  const healthUrl = `${apiUrl}/health`;
+  const warmUpStartedAt = Date.now();
+  const warmUpDeadline = warmUpStartedAt + settings.totalWarmUpBudgetMs;
+  const probeOutcomeDescriptions: string[] = [];
+  let consecutiveFastHealthyResponseCount = 0;
+
+  for (;;) {
+    const probeStartedAt = Date.now();
+    const probeTimeoutMs = Math.max(1, Math.min(settings.warmUpProbeTimeoutMs, warmUpDeadline - probeStartedAt));
+    let probeWasFastAndHealthy = false;
+    try {
+      const response = await axios.get(healthUrl, { timeout: probeTimeoutMs, validateStatus: () => true });
+      const probeLatencyMs = Date.now() - probeStartedAt;
+      probeWasFastAndHealthy =
+        response.status === 200 && probeLatencyMs <= settings.maximumLatencyOfAWarmHealthResponseMs;
+      probeOutcomeDescriptions.push(`${response.status} in ${probeLatencyMs}ms`);
+    } catch (error) {
+      const probeLatencyMs = Date.now() - probeStartedAt;
+      const errorDescription = error instanceof AxiosError ? (error.code ?? error.message) : String(error);
+      probeOutcomeDescriptions.push(`${errorDescription} after ${probeLatencyMs}ms`);
+    }
+
+    consecutiveFastHealthyResponseCount = probeWasFastAndHealthy ? consecutiveFastHealthyResponseCount + 1 : 0;
+    if (consecutiveFastHealthyResponseCount >= settings.consecutiveFastHealthResponsesRequiredToCountAsWarm) {
+      const warmUpDurationMs = Date.now() - warmUpStartedAt;
+      const apiWasColdWhenWarmUpStarted =
+        probeOutcomeDescriptions.length > settings.consecutiveFastHealthResponsesRequiredToCountAsWarm;
+      if (apiWasColdWhenWarmUpStarted) {
+        console.warn(
+          `Scratch API at ${apiUrl} was cold and took ${Math.round(warmUpDurationMs / 1000)}s to warm up ` +
+            `(probes: ${probeOutcomeDescriptions.join(', ')}).`,
+        );
+      }
+      return;
+    }
+
+    if (Date.now() + settings.delayBetweenWarmUpProbesMs >= warmUpDeadline) {
+      throw new Error(
+        `Scratch API at ${apiUrl} did not warm up within ${settings.totalWarmUpBudgetMs / 1000}s: needed ` +
+          `${settings.consecutiveFastHealthResponsesRequiredToCountAsWarm} consecutive 200 responses from /health, ` +
+          `each faster than ${settings.maximumLatencyOfAWarmHealthResponseMs}ms. Last ` +
+          `${Math.min(PROBE_OUTCOMES_TO_REPORT_ON_FAILURE, probeOutcomeDescriptions.length)} of ` +
+          `${probeOutcomeDescriptions.length} probes: ` +
+          `${probeOutcomeDescriptions.slice(-PROBE_OUTCOMES_TO_REPORT_ON_FAILURE).join(', ')}.`,
+      );
+    }
+    await sleep(settings.delayBetweenWarmUpProbesMs);
+  }
+};
