@@ -13,6 +13,8 @@
  * API docs: https://developer.copper.com/
  */
 
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
+
 /** Supported Copper entity types (the six v1 writable record entities). */
 export type CopperEntityType = 'people' | 'companies' | 'opportunities' | 'leads' | 'tasks' | 'projects';
 
@@ -119,8 +121,20 @@ export interface CopperDownloadProgress {
   nextPage?: number;
 }
 
-/** Decrypted credentials: Copper auth needs both the API token and the account email. */
-export interface CopperCredentials {
-  apiKey: string;
-  email: string;
-}
+/**
+ * Copper OAuth (authorization code, through Whalesync's Copper partner app). Access tokens do not expire and come
+ * with no refresh token. https://developer.copper.com/introduction/authentication.html
+ */
+export const COPPER_OAUTH_AUTHORIZE_URL = 'https://app.copper.com/oauth/authorize';
+export const COPPER_OAUTH_TOKEN_URL = 'https://app.copper.com/oauth/token';
+/** The only scope Copper offers: the same access as an API key. */
+export const COPPER_OAUTH_SCOPE = 'developer/v1/all';
+
+/**
+ * How a connection authenticates. A pasted API key needs the account email too (sent as `X-PW-UserEmail`, the user
+ * the key belongs to); a signed-in connection sends its OAuth access token as a bearer token. The OAuth token is a
+ * provider, so a reconnect that replaces the token is picked up on the next request.
+ */
+export type CopperCredentials =
+  | { kind: 'api_key'; apiKey: string; email: string }
+  | { kind: 'oauth'; accessToken: ConnectorAuthTokenOrProvider };

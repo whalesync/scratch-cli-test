@@ -128,6 +128,20 @@ describe('OAuthAppCredentialResolver', () => {
       expect(resolver.getCurrentVersionForNewConnections(Service.SQUARE)).toBe(DEFAULT_OAUTH_APP_VERSION);
     });
 
+    it("resolves Copper from COPPER_CLIENT_*, with Whalesync's copper callback", () => {
+      const resolver = makeResolver({
+        COPPER_CLIENT_ID: 'copper-app',
+        COPPER_CLIENT_SECRET: 'copper-secret',
+        ...REDIRECTS,
+      });
+      expect(resolver.resolveSystemAppCredentials(Service.COPPER, DEFAULT_OAUTH_APP_VERSION)).toEqual({
+        clientId: 'copper-app',
+        clientSecret: 'copper-secret',
+        redirectUri: 'https://app.whalesync.com/oauth-callback/connector/copper',
+      });
+      expect(resolver.getCurrentVersionForNewConnections(Service.COPPER)).toBe(DEFAULT_OAUTH_APP_VERSION);
+    });
+
     it('accepts a lowercase service key (normalizes to the registry key)', () => {
       const resolver = makeResolver({ NOTION_CLIENT_ID: 'id', NOTION_CLIENT_SECRET: 'secret', ...REDIRECTS });
       expect(resolver.resolveSystemAppCredentials('notion', DEFAULT_OAUTH_APP_VERSION).clientId).toBe('id');

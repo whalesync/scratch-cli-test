@@ -22,7 +22,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [Audienceful](../server/src/remote-service/connectors/library/audienceful/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free tier | ❌ | ❌ | |
 | [Brevo](../server/src/remote-service/connectors/library/brevo/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free tier | ✅ | ❌ | |
 | [ClickUp](../server/src/remote-service/connectors/library/clickup/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 🔒 | Free tier | ✅ | ❌ | 2026-06-10 |
-| [Copper](../server/src/remote-service/connectors/library/copper/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Trial → paid | ❌ | ❌ | 2026-06-10 |
+| [Copper](../server/src/remote-service/connectors/library/copper/STATE.md) | ✅ | ✅ | 🟠 | 🟠 | 👁️ | Trial → paid | ❌ | ❌ | 2026-06-10 |
 | [Framer](../server/src/remote-service/connectors/library/framer/STATE.md) | ❌ | ✅ | 🟠 | ❌ | 👁️ | Free tier | ✅ | ❌ | 2026-06-19 |
 | [Generic API](../server/src/remote-service/connectors/library/generic-api/STATE.md) | ❌ | ✅ | ❌ | 🟠 | 👁️ | n/a (any API) | ❌ | ❌ | |
 | [GoHighLevel](../server/src/remote-service/connectors/library/gohighlevel/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Trial → paid | ✅ | ✅ | 2026-06-18 |

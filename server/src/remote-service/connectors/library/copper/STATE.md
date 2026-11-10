@@ -14,7 +14,8 @@
 - **Trial:** Business plan, ~13 days left as of 2026-06-05 → **cancel by ~2026-06-18** (see banner).
 - **API key:** *omitted here on purpose.* To obtain it: decrypt the connection creds — `ConnectorAccount.encryptedCredentials` (`{iv,salt,encrypted}`) for `coa_v21ua3Q7ct`, AES-256-GCM, key `ENCRYPTION_MASTER_KEY` (in `server/.env`), AAD `connector-account` (see `server/tools/decrypt-credentials.js`). Or regenerate in Copper → **Settings → Integrations → API Keys**.
 - **Scratch side:** workbook `wkb_lsWnc2smsb` / connection `coa_v21ua3Q7ct` · local workspace `local/cli-v4/Copper`
-- **Auth method:** `user_provided_params` (apiKey + email) — connectable from the CLI.
+- **Auth method:** `user_provided_params` (apiKey + email) — connectable from the CLI. (This test connection predates OAuth.)
+- **OAuth (default since 2026-11-09):** `oauth` is now the first supported auth method, so Live Export and the connect forms lead with "Connect with Copper"; the pasted apiKey + email stays as the alternative. Signs in through Whalesync's Copper partner app (`COPPER_CLIENT_ID` / `COPPER_CLIENT_SECRET`, the same values as Whalesync's `connector-oauth_copper` secret) at `app.copper.com/oauth/authorize`, scope `developer/v1/all`, PKCE, redirect `REDIRECT_URI_WHALESYNC` + `/oauth-callback/connector/copper`. Form-encoded code exchange at `app.copper.com/oauth/token`. Tokens never expire and there is no refresh token, so no expiry is recorded and the host never refreshes. API calls send only `Authorization: Bearer <token>` (none of the `X-PW-*` headers), as Whalesync's connector does. **Not yet run live through Copper's sign-in on Scratch** (Whalesync's identical flow was signed in on test.whalesync.com 2026-11-09).
 
 ## Metadata
 - **Type:** STATIC (CRM) · custom fields supported (mixed)
@@ -137,7 +138,7 @@ One row per FK. **Tested = set via the CLI** (edit FK to a *different* parent �
 - ⚠️ **Related-person rule (Copper data-integrity):** `Companies.primary_contact_id` only accepts a person Copper considers **related/eligible** to *that* company. Moving to a freshly-created (free) person works and auto-relates them; pointing it at a person already tied to a *different* company is rejected with **`422 "Data integrity error"`** — confirmed it's Copper, not the connector (a raw API `PUT` 422s identically). The connector sends the value correctly and the failed write **stays in `files unpublished`** (so the CLI's "Published" line is not proof — check `unpublished`). Likely applies to other person/company FK fields too.
 
 ## Endpoints (what the connector calls)
-Base host `https://api.copper.com/developer_api/v1`. Auth = three headers together: `X-PW-AccessToken: <apiKey>`, `X-PW-Application: developer_api`, `X-PW-UserEmail: <email>`. `<entity>` ∈ `people | companies | opportunities | leads | tasks | projects`.
+Base host `https://api.copper.com/developer_api/v1`. Pasted-key auth = three headers together: `X-PW-AccessToken: <apiKey>`, `X-PW-Application: developer_api`, `X-PW-UserEmail: <email>`. OAuth auth = `Authorization: Bearer <token>` alone. `<entity>` ∈ `people | companies | opportunities | leads | tasks | projects`.
 
 | Entity / area | Op | Method + path | Note (only if it matters) |
 |---|---|---|---|

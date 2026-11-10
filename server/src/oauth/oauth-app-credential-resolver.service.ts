@@ -45,6 +45,7 @@ type OAuthAppEnvVarNamesByVersion = { 1: OAuthAppEnvVarNames } & Partial<Record<
 // type OAuthAppServiceKey = (typeof OAUTH_APP_SERVICE_KEYS)[number];
 type OAuthAppServiceKey =
   | typeof Service.AIRTABLE
+  | typeof Service.COPPER
   | typeof Service.GOHIGHLEVEL
   | typeof Service.GOOGLE_SHEETS
   | typeof Service.LINEAR
@@ -80,6 +81,15 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientIdEnvVar: 'AIRTABLE_CLIENT_ID_V2',
       clientSecretEnvVar: 'AIRTABLE_CLIENT_SECRET_V2',
       redirectUri: (config) => whalesyncRedirectUri(config, 'airtable'),
+    },
+  },
+  // Shares Whalesync's Copper partner app (Whalesync's `connector-oauth_copper` secret holds the same id and secret).
+  // Its callback is registered under the `copper` slug on each environment's Whalesync.
+  [Service.COPPER]: {
+    1: {
+      clientIdEnvVar: 'COPPER_CLIENT_ID',
+      clientSecretEnvVar: 'COPPER_CLIENT_SECRET',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'copper'),
     },
   },
   [Service.GOHIGHLEVEL]: {

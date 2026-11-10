@@ -32,6 +32,7 @@ import {
   COPPER_ENTITY_TYPES,
   COPPER_REFERENCE_ENTITY_CONFIG,
   COPPER_REFERENCE_ENTITY_TYPES,
+  CopperCredentials,
   CopperDownloadProgress,
   CopperEntityType,
   isCopperReferenceEntityType,
@@ -62,6 +63,10 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     logo: COPPER_LOGO_DATA_URI,
     // Validated end-to-end (all 6 entities full CRUD + custom-field reshape + FK move) — visible in production.
     visible: true,
+    // Signing in authorizes Whalesync's Copper partner app on the user's account. A pasted API key and email are the
+    // alternative (only Copper admins can create a key).
+    oauth: { label: 'Connect with Copper' },
+    userProvidedParamsLabel: 'API Key',
     credentialFields: {
       user_provided_params: [
         { key: 'apiKey', type: 'password', label: 'API Key', required: true },
@@ -79,7 +84,7 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
 
   private readonly client: CopperApiClient;
 
-  constructor(credentials: { apiKey: string; email: string }, opts?: { rateLimiter?: RateLimiter }) {
+  constructor(credentials: CopperCredentials, opts?: { rateLimiter?: RateLimiter }) {
     super();
     this.client = new CopperApiClient(credentials, opts);
   }
@@ -381,16 +386,21 @@ connectorRegistry.register({
   service: Service.COPPER,
   metadata: CopperConnector.metadata,
   advancedSettings: [],
-  supportedAuthMethods: ['user_provided_params'],
+  supportedAuthMethods: ['oauth', 'user_provided_params'],
   rateLimiterSpec: { points: 3, duration: 1 },
-  // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
+    const rateLimiter = ctx.connectorAccount ? ctx.createRateLimiter(ctx.connectorAccount.id) : undefined;
+    if (ctx.connectorAccount?.authType === 'OAUTH') {
+      const oauthAccessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection with no usable token fails here rather than on the first API call.
+      await oauthAccessTokenProvider();
+      return new CopperConnector({ kind: 'oauth', accessToken: oauthAccessTokenProvider }, { rateLimiter });
+    }
     const apiKey = ctx.decryptedCredentials?.apiKey;
     const email = ctx.decryptedCredentials?.email;
     if (!apiKey || !email) {
       throw new ConnectorInstantiationError('API key and account email are required for Copper', Service.COPPER);
     }
-    const rateLimiter = ctx.connectorAccount ? ctx.createRateLimiter(ctx.connectorAccount.id) : undefined;
-    return new CopperConnector({ apiKey, email }, { rateLimiter });
+    return new CopperConnector({ kind: 'api_key', apiKey, email }, { rateLimiter });
   },
 });

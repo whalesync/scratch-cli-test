@@ -11,6 +11,7 @@ import { OAuthPendingAuthorizationStore } from './oauth-pending-authorization-st
 import { OAuthController } from './oauth.controller';
 import { OAuthService } from './oauth.service';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
+import { CopperOAuthProvider } from './providers/copper-oauth.provider';
 import { GoHighLevelOAuthProvider } from './providers/gohighlevel-oauth.provider';
 import { GoogleSheetsOAuthProvider } from './providers/google-sheets-oauth.provider';
 import { LinearOAuthProvider } from './providers/linear-oauth.provider';
@@ -56,6 +57,7 @@ import { ZohoOAuthProvider } from './providers/zoho-oauth.provider';
     SalesforceOAuthProvider,
     StripeOAuthProvider,
     SquareOAuthProvider,
+    CopperOAuthProvider,
   ],
   exports: [OAuthService],
 })

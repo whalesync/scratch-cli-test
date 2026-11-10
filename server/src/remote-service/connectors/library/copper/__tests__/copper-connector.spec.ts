@@ -1,5 +1,12 @@
+import {
+  connectorRegistry,
+  type ConnectorFactoryContext,
+  type ConnectorRegistration,
+} from '../../../connector-registry';
+import { ConnectorInstantiationError } from '../../../error';
+import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile, EntityId } from '../../../types';
-import { CopperError } from '../copper-api-client';
+import { CopperApiClient, CopperError } from '../copper-api-client';
 import { CopperConnector } from '../copper-connector';
 import { buildCopperJsonTableSpec } from '../copper-json-schema';
 import { CopperEntityType } from '../copper-types';
@@ -46,12 +53,80 @@ function realTableSpec(entityType: CopperEntityType): BaseJsonTableSpec {
   return buildCopperJsonTableSpec(id, entityType, []);
 }
 
+function getCopperRegistration(): ConnectorRegistration {
+  const copperRegistration = connectorRegistry.get(Service.COPPER);
+  if (!copperRegistration) throw new Error('Copper connector did not register itself');
+  return copperRegistration;
+}
+
+function buildConnectorFactoryContext(overrides: Partial<ConnectorFactoryContext>): ConnectorFactoryContext {
+  return {
+    connectorAccount: { id: 'coa_copper_unit', authType: 'user_provided_params', extras: null, version: 1 },
+    decryptedCredentials: { apiKey: 'pasted-key', email: 'user@example.com' },
+    createOAuthAccessTokenProvider: jest.fn(),
+    createRateLimiter: jest.fn(),
+    getFolderOptionsByTableId: jest.fn(),
+    listFolderTableIds: jest.fn(),
+    isFeatureEnabled: jest.fn(),
+    ...overrides,
+  };
+}
+
+describe('Copper connector registration', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('offers the Copper sign-in first and the pasted API key as the alternative', () => {
+    expect(getCopperRegistration().supportedAuthMethods).toEqual(['oauth', 'user_provided_params']);
+    expect(CopperConnector.metadata.defaultAuthMethod).toBe('oauth');
+    expect(CopperConnector.metadata.oauth).toEqual({ label: 'Connect with Copper' });
+  });
+
+  it("sends a signed-in connection's OAuth access token, resolved through the host", async () => {
+    const oauthAccessTokenProvider = jest.fn().mockResolvedValue('copper-oauth-access');
+    const createOAuthAccessTokenProvider = jest.fn().mockReturnValue(oauthAccessTokenProvider);
+
+    const connector = await getCopperRegistration().createConnector(
+      buildConnectorFactoryContext({
+        connectorAccount: { id: 'coa_copper_oauth', authType: 'OAUTH', extras: null, version: 1 },
+        decryptedCredentials: { oauthAccessToken: 'copper-oauth-access' },
+        createOAuthAccessTokenProvider,
+      }),
+    );
+
+    expect(connector).toBeInstanceOf(CopperConnector);
+    expect(createOAuthAccessTokenProvider).toHaveBeenCalledWith('coa_copper_oauth');
+    expect(oauthAccessTokenProvider).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(CopperApiClient).mock.calls[0][0]).toEqual({
+      kind: 'oauth',
+      accessToken: oauthAccessTokenProvider,
+    });
+  });
+
+  it('sends the pasted API key and email', async () => {
+    await getCopperRegistration().createConnector(buildConnectorFactoryContext({}));
+
+    expect(jest.mocked(CopperApiClient).mock.calls[0][0]).toEqual({
+      kind: 'api_key',
+      apiKey: 'pasted-key',
+      email: 'user@example.com',
+    });
+  });
+
+  it('refuses a pasted-key connection with no stored email', async () => {
+    const creation = getCopperRegistration().createConnector(
+      buildConnectorFactoryContext({ decryptedCredentials: { apiKey: 'pasted-key' } }),
+    );
+
+    await expect(creation).rejects.toBeInstanceOf(ConnectorInstantiationError);
+  });
+});
+
 describe('CopperConnector', () => {
   let connector: CopperConnector;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    connector = new CopperConnector({ apiKey: 'test-key', email: 'user@example.com' });
+    connector = new CopperConnector({ kind: 'api_key', apiKey: 'test-key', email: 'user@example.com' });
   });
 
   describe('listTables', () => {

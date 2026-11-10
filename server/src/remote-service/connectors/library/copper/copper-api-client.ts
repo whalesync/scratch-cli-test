@@ -1,7 +1,8 @@
 import axios, { AxiosInstance, isAxiosError, RawAxiosRequestHeaders } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
-import { createApiClient } from '../../create-api-client';
+import { toConnectorAuthTokenProvider } from '../../connector-auth-token';
+import { createApiClient, CreateApiClientOptions } from '../../create-api-client';
 import { CopperCredentials, CopperCustomFieldDefinition, CopperEntityType } from './copper-types';
 
 const LOG_SOURCE = 'CopperApiClient';
@@ -46,27 +47,39 @@ export class CopperError extends Error {
 /**
  * Low-level API client for the Copper CRM REST API.
  *
- * Auth requires three headers together: the API token (`X-PW-AccessToken`), a
- * fixed `X-PW-Application: developer_api`, and the account email
- * (`X-PW-UserEmail`). Listing is done via `POST /{entity}/search` with
- * offset pagination (`page_number` / `page_size`).
+ * Auth is either a pasted API key, which needs three headers together (the API
+ * token as `X-PW-AccessToken`, a fixed `X-PW-Application: developer_api`, and the
+ * account email as `X-PW-UserEmail`), or an OAuth access token sent as a plain
+ * bearer token.
+ * Listing is done via `POST /{entity}/search` with offset pagination
+ * (`page_number` / `page_size`).
  */
 export class CopperApiClient {
   private readonly client: AxiosInstance;
   private readonly rateLimiter?: RateLimiter;
+  private readonly credentialKind: CopperCredentials['kind'];
 
   constructor(credentials: CopperCredentials, opts?: { rateLimiter?: RateLimiter }) {
     this.rateLimiter = opts?.rateLimiter;
 
     const headers: RawAxiosRequestHeaders = {
-      'X-PW-AccessToken': credentials.apiKey,
-      'X-PW-Application': 'developer_api',
-      'X-PW-UserEmail': credentials.email,
       'Content-Type': 'application/json',
       Accept: 'application/json',
     };
+    let apiClientOptions: CreateApiClientOptions | undefined;
+    if (credentials.kind === 'oauth') {
+      const oauthAccessTokenProvider = toConnectorAuthTokenProvider(credentials.accessToken);
+      apiClientOptions = {
+        authorizationHeaderValueProvider: async () => `Bearer ${await oauthAccessTokenProvider()}`,
+      };
+    } else {
+      headers['X-PW-AccessToken'] = credentials.apiKey;
+      headers['X-PW-Application'] = 'developer_api';
+      headers['X-PW-UserEmail'] = credentials.email;
+    }
 
-    this.client = createApiClient({ baseURL: COPPER_BASE_URL, headers });
+    this.client = createApiClient({ baseURL: COPPER_BASE_URL, headers }, apiClientOptions);
+    this.credentialKind = credentials.kind;
   }
 
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -84,7 +97,11 @@ export class CopperApiClient {
       await this.withRetry(() => this.client.get('/account'));
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 401) {
-        throw new CopperError('Invalid API token or email', 401, error.response?.data);
+        const rejectedCredentialDescription =
+          this.credentialKind === 'oauth'
+            ? 'Copper rejected the sign-in; reconnect Copper'
+            : 'Invalid API token or email';
+        throw new CopperError(rejectedCredentialDescription, 401, error.response?.data);
       }
       throw error;
     }

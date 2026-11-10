@@ -41,6 +41,7 @@ import { asOAuthAppVersion, OAuthAppCredentials, OAuthAppVersion } from './oauth
 import { OAuthPendingAuthorizationStore } from './oauth-pending-authorization-store.service';
 import { OAuthProvider, OAuthTokenResponse } from './oauth-provider.interface';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
+import { CopperOAuthProvider } from './providers/copper-oauth.provider';
 import { GoHighLevelOAuthProvider } from './providers/gohighlevel-oauth.provider';
 import { GoogleSheetsOAuthProvider } from './providers/google-sheets-oauth.provider';
 import { LinearOAuthProvider } from './providers/linear-oauth.provider';
@@ -221,6 +222,7 @@ export class OAuthService {
     private readonly salesforceProvider: SalesforceOAuthProvider,
     private readonly stripeProvider: StripeOAuthProvider,
     private readonly squareProvider: SquareOAuthProvider,
+    private readonly copperProvider: CopperOAuthProvider,
     private readonly posthogService: PostHogService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
@@ -244,6 +246,7 @@ export class OAuthService {
     this.providers.set('SALESFORCE', this.salesforceProvider);
     this.providers.set('STRIPE', this.stripeProvider);
     this.providers.set('SQUARE', this.squareProvider);
+    this.providers.set('COPPER', this.copperProvider);
   }
 
   /**
