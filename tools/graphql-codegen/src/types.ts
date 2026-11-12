@@ -81,16 +81,17 @@ export interface EntityConfig {
     additionalReadOnlyFields?: string[];
     /** Fields to strip only on update (not create) */
     stripOnUpdateFields?: string[];
+    /**
+     * Keep the create and update mutations on this deprecated argument instead of its replacement.
+     * Use it when the replacement takes a different input type the connector doesn't support yet.
+     */
+    keepDeprecatedInputArgument?: string;
   };
   /** Parent entity for normalized child tables */
   parent?: {
     entityType: string;
     foreignKey: string;
     connectionField: string;
-  };
-  /** Metadata flags */
-  metadata?: {
-    plusOnly?: boolean;
   };
 }
 

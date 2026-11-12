@@ -14,7 +14,26 @@ import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 export const ProductVariantsSchema = Type.Object(
   {
     availableForSale: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    availablePublicationsCount: Type.Optional(
+      Type.Union([
+        Type.Object({
+          count: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          precision: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
     barcode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    barcodes: Type.Optional(
+      Type.Union([
+        Type.Object({
+          edges: Type.Optional(Type.Array(Type.Unknown())),
+          nodes: Type.Optional(Type.Array(Type.Unknown())),
+          pageInfo: Type.Optional(Type.Unknown()),
+        }),
+        Type.Null(),
+      ]),
+    ),
     compareAtPrice: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -24,7 +43,7 @@ export const ProductVariantsSchema = Type.Object(
         Type.Object({
           altText: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           height: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-          id: Type.Optional(Type.String()),
+          id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -79,6 +98,7 @@ export const ProductVariantsSchema = Type.Object(
         Type.Object({
           availablePublicationsCount: Type.Optional(Type.Unknown()),
           bodyHtml: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          bundleConsolidatedOptions: Type.Optional(Type.Array(Type.Unknown())),
           category: Type.Optional(Type.Unknown()),
           combinedListing: Type.Optional(Type.Unknown()),
           combinedListingRole: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -91,6 +111,7 @@ export const ProductVariantsSchema = Type.Object(
           featuredImage: Type.Optional(Type.Unknown()),
           featuredMedia: Type.Optional(Type.Unknown()),
           feedback: Type.Optional(Type.Unknown()),
+          giftCardSettings: Type.Optional(Type.Unknown()),
           giftCardTemplateSuffix: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           handle: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           hasOnlyDefaultVariant: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -131,6 +152,15 @@ export const ProductVariantsSchema = Type.Object(
       ]),
     ),
     requiresComponents: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    resourcePublicationsCount: Type.Optional(
+      Type.Union([
+        Type.Object({
+          count: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          precision: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
     selectedOptions: Type.Optional(
       Type.Array(
         Type.Union([
@@ -190,6 +220,8 @@ export const ProductVariantsSchema = Type.Object(
 
 // Mark read-only fields
 ProductVariantsSchema.properties.availableForSale[X_SCRATCH_READONLY] = true;
+ProductVariantsSchema.properties.availablePublicationsCount[X_SCRATCH_READONLY] = true;
+ProductVariantsSchema.properties.barcode[X_SCRATCH_READONLY] = true;
 ProductVariantsSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
 ProductVariantsSchema.properties.displayName[X_SCRATCH_READONLY] = true;
 ProductVariantsSchema.properties.id[X_SCRATCH_READONLY] = true;
@@ -199,6 +231,7 @@ ProductVariantsSchema.properties.legacyResourceId[X_SCRATCH_READONLY] = true;
 ProductVariantsSchema.properties.position[X_SCRATCH_READONLY] = true;
 ProductVariantsSchema.properties.presentmentPrices[X_SCRATCH_READONLY] = true;
 ProductVariantsSchema.properties.product[X_SCRATCH_READONLY] = true;
+ProductVariantsSchema.properties.resourcePublicationsCount[X_SCRATCH_READONLY] = true;
 ProductVariantsSchema.properties.selectedOptions[X_SCRATCH_READONLY] = true;
 ProductVariantsSchema.properties.sellableOnlineQuantity[X_SCRATCH_READONLY] = true;
 ProductVariantsSchema.properties.sellingPlanGroupCount[X_SCRATCH_READONLY] = true;
@@ -211,7 +244,7 @@ ProductVariantsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
 /**
  * GraphQL query field selection for Product Variants
  */
-export const PRODUCT_VARIANTS_QUERY_FIELDS = `availableForSale barcode compareAtPrice createdAt displayName id image { altText height id originalSrc src thumbhash transformedSrc url width } inventoryItem { countryCodeOfOrigin createdAt duplicateSkuCount harmonizedSystemCode id inventoryHistoryUrl legacyResourceId provinceCodeOfOrigin requiresShipping sku tracked updatedAt } inventoryPolicy inventoryQuantity legacyResourceId position price product { id } requiresComponents selectedOptions { name value } sellableOnlineQuantity sellingPlanGroupCount sellingPlanGroupsCount { count precision } showUnitPrice sku taxCode taxable title unitPrice { amount currencyCode } unitPriceMeasurement { measuredType quantityUnit quantityValue referenceUnit referenceValue } updatedAt`;
+export const PRODUCT_VARIANTS_QUERY_FIELDS = `availableForSale availablePublicationsCount { count precision } barcode compareAtPrice createdAt displayName id image { altText height id originalSrc src thumbhash transformedSrc url width } inventoryItem { countryCodeOfOrigin createdAt duplicateSkuCount harmonizedSystemCode id inventoryHistoryUrl legacyResourceId provinceCodeOfOrigin requiresShipping sku tracked updatedAt } inventoryPolicy inventoryQuantity legacyResourceId position price product { id } requiresComponents resourcePublicationsCount { count precision } selectedOptions { name value } sellableOnlineQuantity sellingPlanGroupCount sellingPlanGroupsCount { count precision } showUnitPrice sku taxCode taxable title unitPrice { amount currencyCode } unitPriceMeasurement { measuredType quantityUnit quantityValue referenceUnit referenceValue } updatedAt`;
 
 /**
  * Entity configuration for Product Variants

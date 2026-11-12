@@ -180,6 +180,8 @@ export const PRODUCT_VARIANTS_DELETE_MUTATION = `mutation ProductVariantsBulkDel
  */
 export const PRODUCT_VARIANTS_READ_ONLY_FIELDS = new Set([
   'availableForSale',
+  'availablePublicationsCount',
+  'barcode',
   'contextualPricing',
   'createdAt',
   'defaultCursor',
@@ -198,6 +200,14 @@ export const PRODUCT_VARIANTS_READ_ONLY_FIELDS = new Set([
   'product',
   'productParents',
   'productVariantComponents',
+  'publicationCount',
+  'publishedOnChannel',
+  'publishedOnCurrentChannel',
+  'publishedOnCurrentPublication',
+  'publishedOnPublication',
+  'resourcePublications',
+  'resourcePublicationsCount',
+  'resourcePublicationsV2',
   'selectedOptions',
   'sellableOnlineQuantity',
   'sellingPlanGroupCount',
@@ -208,5 +218,7 @@ export const PRODUCT_VARIANTS_READ_ONLY_FIELDS = new Set([
   'title',
   'translations',
   'unitPrice',
+  'unpublishedChannels',
+  'unpublishedPublications',
   'updatedAt',
 ]);

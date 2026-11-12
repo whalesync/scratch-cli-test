@@ -195,7 +195,10 @@ class MutationsGenerator {
 
     // Generate create mutation
     if (entity.mutations.create) {
-      const createMutation = this.getMutationField(entity.mutations.create);
+      const createMutation = this.getMutationField(
+        entity.mutations.create,
+        entity.mutations.keepDeprecatedInputArgument,
+      );
       if (createMutation) {
         const inputType = this.getInputType(createMutation);
         if (inputType) {
@@ -223,7 +226,10 @@ class MutationsGenerator {
 
     // Generate update mutation
     if (entity.mutations.update) {
-      const updateMutation = this.getMutationField(entity.mutations.update);
+      const updateMutation = this.getMutationField(
+        entity.mutations.update,
+        entity.mutations.keepDeprecatedInputArgument,
+      );
       if (updateMutation) {
         const inputType = this.getInputType(updateMutation);
         if (inputType) {
@@ -311,12 +317,38 @@ class MutationsGenerator {
     };
   }
 
+  /**
+   * Look up a mutation, hiding its deprecated arguments. The schema is introspected with deprecated
+   * arguments included (so a pinned one stays reachable), but by default codegen targets the current
+   * argument, never a deprecated one. `deprecatedArgumentNameToKeepIfAny` keeps one deprecated argument
+   * visible, so an entity can stay on it (see `EntityConfig.mutations.keepDeprecatedInputArgument`).
+   */
   private getMutationField(
     mutationName: string,
+    deprecatedArgumentNameToKeepIfAny?: string,
   ): GraphQLField<unknown, unknown> | null {
     if (!this.mutationType) return null;
     const fields = this.mutationType.getFields();
-    return fields[mutationName] || null;
+    const mutationField = fields[mutationName];
+    if (!mutationField) return null;
+
+    const argumentsVisibleToCodegen = mutationField.args.filter(
+      (argument) =>
+        !argument.deprecationReason ||
+        argument.name === deprecatedArgumentNameToKeepIfAny,
+    );
+    if (
+      deprecatedArgumentNameToKeepIfAny &&
+      !argumentsVisibleToCodegen.some(
+        (argument) => argument.name === deprecatedArgumentNameToKeepIfAny,
+      )
+    ) {
+      throw new Error(
+        `${mutationName} has no argument named "${deprecatedArgumentNameToKeepIfAny}" to keep. ` +
+          `Shopify may have removed it; update keepDeprecatedInputArgument in the entity config.`,
+      );
+    }
+    return { ...mutationField, args: argumentsVisibleToCodegen };
   }
 
   /**
@@ -413,9 +445,17 @@ class MutationsGenerator {
     return arg.type.toString();
   }
 
+  /**
+   * The input fields a mutation accepts. Deprecated input fields are left out, so a field Shopify has
+   * replaced is treated as read-only rather than writable.
+   */
   private getInputFieldNames(inputType: GraphQLInputObjectType): Set<string> {
     const fields = inputType.getFields();
-    return new Set(Object.keys(fields));
+    return new Set(
+      Object.values(fields)
+        .filter((inputField) => !inputField.deprecationReason)
+        .map((inputField) => inputField.name),
+    );
   }
 
   private computeReadOnlyFields(

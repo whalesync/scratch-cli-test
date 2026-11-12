@@ -58,7 +58,9 @@ export const COLLECTIONS_DELETE_MUTATION = `mutation CollectionDelete($input: Co
  * Fields that are read-only and should be stripped before mutations
  */
 export const COLLECTIONS_READ_ONLY_FIELDS = new Set([
+  'activeOperations',
   'availablePublicationsCount',
+  'createdAt',
   'description',
   'events',
   'feedback',
@@ -77,7 +79,9 @@ export const COLLECTIONS_READ_ONLY_FIELDS = new Set([
   'resourcePublications',
   'resourcePublicationsCount',
   'resourcePublicationsV2',
+  'sources',
   'storefrontId',
+  'subCollectionEligibility',
   'translations',
   'unpublishedChannels',
   'unpublishedPublications',

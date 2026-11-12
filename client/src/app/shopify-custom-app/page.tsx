@@ -7,8 +7,12 @@ import { Check, ClipboardCopy, X } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import React, { Suspense, useState } from 'react';
 
+// `read_customers` and `read_all_orders` let Scratch read Customers and every order (not just the last
+// 60 days). Shopify grants them to the merchant's own app without review.
 const SCOPES = [
+  'read_all_orders',
   'read_content',
+  'read_customers',
   'read_files',
   'read_inventory',
   'read_metaobject_definitions',

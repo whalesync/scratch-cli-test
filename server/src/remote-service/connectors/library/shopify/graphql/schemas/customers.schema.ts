@@ -25,14 +25,85 @@ export const CustomersSchema = Type.Object(
     canDelete: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     dataSaleOptOut: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    defaultAddress: Type.Optional(
+      Type.Union([
+        Type.Object({
+          address1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          address2: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          city: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          coordinatesValidated: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          countryCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          countryCodeV2: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          firstName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          formatted: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
+          formattedArea: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          id: Type.Optional(Type.String()),
+          lastName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          latitude: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          longitude: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          phone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          province: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          provinceCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          timeZone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          validationResultSummary: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          zip: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
+    defaultEmailAddress: Type.Optional(
+      Type.Union([
+        Type.Object({
+          emailAddress: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          marketingOptInLevel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          marketingState: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          marketingUpdatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          openTrackingLevel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          sourceLocation: Type.Optional(Type.Unknown()),
+          validFormat: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
+    defaultPhoneNumber: Type.Optional(
+      Type.Union([
+        Type.Object({
+          marketingCollectedFrom: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          marketingOptInLevel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          marketingState: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          marketingUpdatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          phoneNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          sourceLocation: Type.Optional(Type.Unknown()),
+          whatsAppMarketingConsent: Type.Optional(Type.Unknown()),
+        }),
+        Type.Null(),
+      ]),
+    ),
     displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    firstName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     id: Type.String(),
+    identityProviderSubjects: Type.Optional(
+      Type.Array(
+        Type.Union([
+          Type.Object({
+            createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            id: Type.Optional(Type.String()),
+            providerName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            subject: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          }),
+          Type.Null(),
+        ]),
+      ),
+    ),
     image: Type.Optional(
       Type.Union([
         Type.Object({
           altText: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           height: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-          id: Type.Optional(Type.String()),
+          id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -43,20 +114,26 @@ export const CustomersSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    lastName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     lastOrder: Type.Optional(
       Type.Union([
         Type.Object({
           additionalFees: Type.Optional(Type.Array(Type.Unknown())),
           alerts: Type.Optional(Type.Array(Type.Unknown())),
           app: Type.Optional(Type.Unknown()),
+          attribution: Type.Optional(Type.Unknown()),
+          billingAddress: Type.Optional(Type.Unknown()),
           billingAddressMatchesShippingAddress: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           canMarkAsPaid: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          canNotifyCustomer: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cancelReason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           cancellation: Type.Optional(Type.Unknown()),
           cancelledAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           capturable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cartDiscountAmountSet: Type.Optional(Type.Unknown()),
+          cartToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           channelInformation: Type.Optional(Type.Unknown()),
+          checkoutToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           clientIp: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           closed: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           closedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -75,11 +152,17 @@ export const CustomersSchema = Type.Object(
           currentTotalTaxSet: Type.Optional(Type.Unknown()),
           currentTotalWeight: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           customAttributes: Type.Optional(Type.Array(Type.Unknown())),
+          customer: Type.Optional(Type.Unknown()),
+          customerAcceptsMarketing: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          customerLocale: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           discountCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           discountCodes: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
+          displayAddress: Type.Optional(Type.Unknown()),
           displayFinancialStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           displayFulfillmentStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          displayRequestedEditStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           edited: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          email: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           estimatedTaxes: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           exchangeV2s: Type.Optional(Type.Unknown()),
           fulfillable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -99,18 +182,22 @@ export const CustomersSchema = Type.Object(
           originalTotalPriceSet: Type.Optional(Type.Unknown()),
           paymentCollectionDetails: Type.Optional(Type.Unknown()),
           paymentGatewayNames: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
+          phone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           poNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           presentmentCurrencyCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           processedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          productNetwork: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           publication: Type.Optional(Type.Unknown()),
           refundDiscrepancySet: Type.Optional(Type.Unknown()),
           refundable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           registeredSourceUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          requestedOrderEdits: Type.Optional(Type.Unknown()),
           requiresShipping: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           restockable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           retailLocation: Type.Optional(Type.Unknown()),
           returnStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           risk: Type.Optional(Type.Unknown()),
+          shippingAddress: Type.Optional(Type.Unknown()),
           shippingLine: Type.Optional(Type.Unknown()),
           shopifyProtect: Type.Optional(Type.Unknown()),
           sourceIdentifier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -145,17 +232,6 @@ export const CustomersSchema = Type.Object(
     legacyResourceId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     lifetimeDuration: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     locale: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    mergeable: Type.Optional(
-      Type.Union([
-        Type.Object({
-          errorFields: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
-          isMergeable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-          mergeInProgress: Type.Optional(Type.Unknown()),
-          reason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
-    ),
     multipassIdentifier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     note: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     numberOfOrders: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -173,6 +249,9 @@ export const CustomersSchema = Type.Object(
     tags: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
     taxExempt: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     taxExemptions: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
+    taxSettings: Type.Optional(
+      Type.Union([Type.Object({ taxId: Type.Optional(Type.Union([Type.String(), Type.Null()])) }), Type.Null()]),
+    ),
     updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     verifiedEmail: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
   },
@@ -187,14 +266,19 @@ CustomersSchema.properties.amountSpent[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.canDelete[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.dataSaleOptOut[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.defaultAddress[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.defaultEmailAddress[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.defaultPhoneNumber[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.displayName[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.firstName[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.id[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.identityProviderSubjects[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.image[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.lastName[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.lastOrder[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.legacyResourceId[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.lifetimeDuration[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.locale[X_SCRATCH_READONLY] = true;
-CustomersSchema.properties.mergeable[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.multipassIdentifier[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.note[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.numberOfOrders[X_SCRATCH_READONLY] = true;
@@ -204,13 +288,14 @@ CustomersSchema.properties.statistics[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.tags[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.taxExempt[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.taxExemptions[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.taxSettings[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
 CustomersSchema.properties.verifiedEmail[X_SCRATCH_READONLY] = true;
 
 /**
  * GraphQL query field selection for Customers
  */
-export const CUSTOMERS_QUERY_FIELDS = `amountSpent { amount currencyCode } canDelete createdAt dataSaleOptOut displayName id image { altText height id originalSrc src thumbhash transformedSrc url width } lastOrder { billingAddressMatchesShippingAddress canMarkAsPaid cancelReason cancelledAt capturable clientIp closed closedAt confirmationNumber confirmed createdAt currencyCode currentSubtotalLineItemsQuantity currentTotalWeight discountCode discountCodes displayFinancialStatus displayFulfillmentStatus edited estimatedTaxes fulfillable fullyPaid id legacyResourceId merchantEditable name note number paymentGatewayNames poNumber presentmentCurrencyCode processedAt refundable registeredSourceUrl requiresShipping restockable returnStatus sourceIdentifier sourceName statusPageUrl subtotalLineItemsQuantity tags taxExempt taxesIncluded test totalWeight unpaid updatedAt } legacyResourceId lifetimeDuration locale mergeable { errorFields isMergeable reason } multipassIdentifier note numberOfOrders productSubscriberStatus state statistics { predictedSpendTier rfmGroup } tags taxExempt taxExemptions updatedAt verifiedEmail`;
+export const CUSTOMERS_QUERY_FIELDS = `amountSpent { amount currencyCode } canDelete createdAt dataSaleOptOut defaultAddress { address1 address2 city coordinatesValidated country countryCode countryCodeV2 firstName formatted formattedArea id lastName latitude longitude name phone province provinceCode timeZone validationResultSummary zip } defaultEmailAddress { emailAddress marketingOptInLevel marketingState marketingUpdatedAt openTrackingLevel validFormat } defaultPhoneNumber { marketingCollectedFrom marketingOptInLevel marketingState marketingUpdatedAt phoneNumber } displayName firstName id identityProviderSubjects { createdAt id providerName subject updatedAt } image { altText height id originalSrc src thumbhash transformedSrc url width } lastName lastOrder { billingAddressMatchesShippingAddress canMarkAsPaid canNotifyCustomer cancelReason cancelledAt capturable cartToken checkoutToken clientIp closed closedAt confirmationNumber confirmed createdAt currencyCode currentSubtotalLineItemsQuantity currentTotalWeight customerAcceptsMarketing customerLocale discountCode discountCodes displayFinancialStatus displayFulfillmentStatus displayRequestedEditStatus edited email estimatedTaxes fulfillable fullyPaid id legacyResourceId merchantEditable name note number paymentGatewayNames phone poNumber presentmentCurrencyCode processedAt productNetwork refundable registeredSourceUrl requiresShipping restockable returnStatus sourceIdentifier sourceName statusPageUrl subtotalLineItemsQuantity tags taxExempt taxesIncluded test totalWeight unpaid updatedAt } legacyResourceId lifetimeDuration locale multipassIdentifier note numberOfOrders productSubscriberStatus state statistics { predictedSpendTier rfmGroup } tags taxExempt taxExemptions taxSettings { taxId } updatedAt verifiedEmail`;
 
 /**
  * Entity configuration for Customers
@@ -223,8 +308,5 @@ export const CUSTOMERS_CONFIG = {
   readOnly: true,
   columns: {
     title: ['displayName'],
-  },
-  metadata: {
-    plusOnly: true,
   },
 } as const;

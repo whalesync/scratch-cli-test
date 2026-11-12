@@ -62,7 +62,7 @@ export const ArticlesSchema = Type.Object(
         Type.Object({
           altText: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           height: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-          id: Type.Optional(Type.String()),
+          id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),

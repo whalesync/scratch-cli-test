@@ -42,8 +42,9 @@ At-a-glance progress through the build journey, so anyone can see where this con
 ## TODOs — known pending tasks
 Living checklist of what's left: gaps found while adopting human-built code, unfinished entities/fields, deferred edge cases, and follow-up issues. Check items off as they land. Coarser than the coverage matrix; broader than **Open issues** (which is only for broken ❌ cells with Linear links).
 
-- [ ] <pending task> <(link issue if any)>
-- [ ] <…>
+- [ ] **Verify Customers and Orders on a real store with exactly the setup guide's scopes.** Everything was verified against Shopify's demo shop through the shopify.dev schema proxy (see *Customers and Orders* below), but that token has far more scopes than ours. A field gated by a scope the demo token holds and ours doesn't would fail the pull with Shopify's ACCESS_DENIED message. Also confirm a merchant's Dev Dashboard app gets protected customer data (names, emails, phones, addresses) with no extra step, as Shopify documents.
+- [ ] **Move collections to the `sources` model before Shopify drops `collectionCreate(input:)`.** 2026-07 deprecated `input: CollectionInput` (with `ruleSet`/`products`) for `collection: CollectionCreateInput`/`CollectionUpdateInput` (with `sources`). Codegen keeps collections on `input` via `keepDeprecatedInputArgument`; still accepted through 2027-01.
+- [ ] **Incremental pulls for the other tables.** Products, collections, pages, blogs, and articles also accept an `updated_at` search filter; only Customers and Orders use it so far.
 
 ## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
 These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
@@ -117,17 +118,17 @@ Max records (or fields) per API request, **per operation** — services often di
 <Note any org-wide rate/quota limits (daily credits, concurrency, token-endpoint throttle) separately — they're independent of bulk size.>
 
 ## Incremental polling
-- **Supported:** <YES / NO>. Driver field = `<last-modified field>` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns <SUPPORTED/NOT_SUPPORTED> when <condition>.
-- **Mechanism:** <how a `since` pull is expressed — e.g. `If-Modified-Since` header / `updated_since` param / cursor> and **how the new watermark is derived** (server time captured before the first page? max record timestamp?). Note idempotency (mid-run edits re-pulled next time).
-- **Deletions:** <how deletes are detected on an incremental run — tombstone/deleted endpoint, or "not supported">.
+- **Supported:** YES for Customers, Orders, Order Line Items, and Order Shipping Lines; NO for every other table (always a full pull). Driver field = `updatedAt` (non-null `DateTime!` on Customer and Order). `incrementalPullSupport` returns SUPPORTED by table (`shopify-incremental.ts`), and NOT_SUPPORTED with no table spec.
+- **Mechanism:** the list query's search `query` argument, `updated_at:>='<watermark − 5 min>'`, sorted `sortKey: UPDATED_AT` so pages stay stable while records change. The watermark is our clock, captured before the first API call; the 5-minute overlap covers clock skew and Shopify's search-index lag (pull commits are idempotent). The order child tables filter their parent orders, because a line item or shipping line change updates its order's `updatedAt`. Verified on the demo shop: a far-future watermark returns 0, and a mid-range one returns exactly the orders/customers updated since it (2/16 orders, 3/18 line items).
+- **Deletions:** not seen by an incremental pull (Shopify has no deleted-records query); the next full pull removes them.
 
 ## Endpoints (what the connector calls)
 **Super-concise** — distil only the endpoints THIS connector actually hits; do NOT paste the vendor's full API reference / OpenAPI dump. One row per (entity/area × op); add a note only where a quirk matters.
 
 **API version & client** (answer first — "are we up to date?"; research the service's current offering, don't assume the code is current):
-- **API version:** `<v2 / date-based Attio-Version: 2026-…>` — latest the service offers? `<YES | NO — newest is <X>; upgrading needs <…>>`. Required version header? `<none | Header: value>`.
-- **Client / SDK:** `<hand-rolled axios (createApiClient) | official SDK <name> | third-party SDK <name>>` — if an SDK: pinned `<x.y.z>` vs newest published `<a.b.c>` → `<✅ current | ⚠️ behind (major/minor)>`. If hand-rolled: note any official/community SDK that exists and that we deliberately don't use it (house default).
-- **Currency verdict:** `<up to date | behind — detail>`.
+- **API version:** `2026-10` (in the URL path, `/admin/api/2026-10/graphql.json`), the latest stable as of 2026-11-12 (`2027-01` is the release candidate). Shopify supports a version for about a year and then silently serves the oldest supported one instead: the connector sat on `2025-01` until 2026-11 and was really being served `2026-01`. Pinned in `tools/graphql-codegen/src/shopify/run.ts`; `yarn codegen:shopify` regenerates against Shopify's public schema proxy (no store or token needed).
+- **Client / SDK:** hand-rolled axios (`createApiClient`) with codegen'd queries and mutations; no Shopify SDK (house default).
+- **Currency verdict:** up to date (2026-11-12). Collections still use the deprecated `collectionCreate/collectionUpdate(input:)` argument; see TODOs.
 
 | Entity / area | Op | Method + path | Note (only if it matters) |
 |---|---|---|---|
@@ -144,10 +145,11 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 |---|:--:|:--:|---|
 | `product_variants.product` → Products | ✅ | ⬜ | Plucked to `product.id`; read-only view FK (DEV-11049). Supersedes the injected `productId`, which is hidden as a duplicate |
 | `product_media.productId` → Products | ✅ | ⬜ | Injected parent FK; read-only view FK (DEV-11017). No verbatim `product` ref is pulled for media |
-| `order_line_items.orderId` → Orders | ✅ | ⬜ | Injected parent FK; read-only view FK. Orders are Plus-only |
+| `orders.customer` → Customers | ✅ | ➖ | Plucked to `customer.id`; read-only view FK. Null for a guest checkout. Orders are read-only |
+| `order_line_items.orderId` → Orders | ✅ | ⬜ | Injected parent FK; read-only view FK |
 | `order_line_items.product` → Products | ✅ | ⬜ | Plucked to `product.id`; read-only view FK (DEV-11049) |
 | `order_line_items.variant` → Product Variants | ✅ | ⬜ | Plucked to `variant.id`; read-only view FK (DEV-11049) |
-| `order_shipping_lines.orderId` → Orders | ✅ | ⬜ | Injected parent FK; read-only view FK. Orders are Plus-only |
+| `order_shipping_lines.orderId` → Orders | ✅ | ⬜ | Injected parent FK; read-only view FK |
 | `articles.blog` → Blogs | ✅ | ⬜ | Plucked to `blog.id`; read-only view FK (DEV-11017). `blog` is strip-on-update |
 - Association endpoint (if any): none — parent links are injected at pull time (`pullChildRecords`), not a separate association endpoint.
 - Reverse to-many connections (`blogs.articles`, `articles.comments`, `metaobjects.referencedBy`, `product_variants.presentmentPrices`) are `{ edges, nodes, pageInfo }` envelopes we don't pull; the default view hides them (DEV-11049). Each one's forward side is already an FK on the child (e.g. `articles.blog`).
@@ -195,7 +197,40 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
   (`sanitizeRecordIdForFileName`) so its slashes don't stage records into a nested path (which the
   stale-file cleanup then deleted, silently emptying the table).
 
+- **Customers and Orders (2026-11).** They're on every Shopify plan; the old `plusOnly` flag that hid
+  them from `listTables` (and the codegen rules that stripped names, emails, phones, addresses, and
+  `Order.customer` as "Plus only") was wrong and is gone. Those fields are Shopify *protected
+  customer data*: Shopify documents them as always available to a custom app, which is what the
+  `/shopify-custom-app` guide creates. What each table needs:
+  - Customers: `read_customers`, plus `read_orders` (each customer's `lastOrder` is an Order).
+  - Orders: `read_orders`, `read_all_orders` (without it Shopify returns only the last 60 days),
+    and `read_customers` (each order's `customer` link).
+  - Order Line Items / Shipping Lines: `read_orders` and `read_all_orders` (their parent orders are
+    listed by id only).
+  The connector checks the token's `currentAppInstallation.accessScopes` before pulling these tables
+  and fails with the missing scopes named. Any other Shopify `ACCESS_DENIED` error fails the request
+  with Shopify's message and the fix (`buildShopifyAccessDeniedMessage`), never storing the nulls
+  Shopify sends for denied fields.
+- **Scope-gated fields skipped at codegen.** One gated field fails the whole query, so these are in
+  `skipFieldsByType`: `Customer.mergeable` (`read_customer_merge`),
+  `CustomerEmailAddress.marketingUnsubscribeUrl` / `openTrackingUrl` (`write_customers`), and
+  `LineItem.contract` (subscription-contract scopes). Both `mergeable` and `contract` were already
+  in the old queries, so Customers and Order Line Items never worked with a normal token.
+  Deprecated `Customer.email` / `phone` / `addresses` are skipped in favor of
+  `defaultEmailAddress`, `defaultPhoneNumber`, and `defaultAddress`.
+- **Nullable `ID`s.** Codegen used to type every `ID` as a required string; it now follows the GraphQL
+  nullability, so a plain `ID` (e.g. `Image.id`, null on a customer's Gravatar image) can be null.
+  Without this, every pulled customer failed schema validation.
+- **Default view.** Customers lead with name, email, phone, and address; `defaultEmailAddress` and
+  `defaultPhoneNumber` display their `emailAddress` / `phoneNumber` (the marketing-state objects
+  stay on disk). Orders link to Customers via `customer.id`.
+
 ## Gotchas
+- **Existing connections can't pull Customers or Orders until they get a new token.** Tokens made
+  with the setup guide before 2026-11-12 have `read_orders` but not `read_customers` or
+  `read_all_orders`. Their other tables keep working; for Customers/Orders the user adds the
+  scopes to their Dev Dashboard app, releases a new version, reruns the guide, and pastes the new
+  token. The pull error says so.
 - **Historical data migration (DEV-10637):** records pulled before the verbatim switch still
   carry the old `seo:{title,description}` (articles/pages/blogs) or flattened top-level file
   `url` (MediaImage). `scratchmd files migrate-shopify-verbatim` (scratch-git-2 CLI) converts an

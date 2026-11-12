@@ -5,12 +5,11 @@ A tool for generating TypeBox schemas and mutation code from GraphQL APIs via in
 ## Quick Start (Shopify)
 
 ```bash
-# Set environment variables
-export SHOPIFY_CODEGEN_SHOP=your-store-name
-export SHOPIFY_CODEGEN_TOKEN=shpat_xxxxx
-
-# Run codegen
+# Run codegen against Shopify's public schema proxy (no store needed)
 yarn codegen:shopify
+
+# Or introspect a specific store
+SHOPIFY_CODEGEN_SHOP=your-store-name SHOPIFY_CODEGEN_TOKEN=shpat_xxxxx yarn codegen:shopify
 ```
 
 This generates TypeBox schemas, mutations, and query fields to:
@@ -18,11 +17,17 @@ This generates TypeBox schemas, mutations, and query fields to:
 
 See [`src/shopify/run.ts`](./src/shopify/run.ts) for the full implementation.
 
-### Plus-Only Entities
+With no environment variables, the schema comes from Shopify's public Admin API schema proxy
+(`https://shopify.dev/admin-graphql-direct-proxy/<version>`, what shopify.dev's GraphiQL explorer
+uses), so no store or token is needed. The API version is pinned in `src/shopify/run.ts`; keep it
+on a version Shopify still supports.
 
-Some entities (customers, orders, order_line_items, order_shipping_lines) require Shopify Plus
-and are marked with `metadata: { plusOnly: true }` in the generated config. The connector
-automatically excludes these from `listTables()` so they don't appear for non-Plus stores.
+### Customers and Orders
+
+Customers, Orders, Order Line Items, and Order Shipping Lines are on every Shopify plan, not just
+Plus. Their names, emails, phone numbers, and addresses are Shopify "protected customer data": a
+merchant's own custom app reads them with the `read_customers` scope, and needs `read_all_orders`
+to see orders older than 60 days.
 
 ## Overview
 

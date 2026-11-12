@@ -9,9 +9,14 @@
  * - Entity configuration metadata
  *
  * Usage:
+ *   yarn codegen:shopify
  *   SHOPIFY_CODEGEN_SHOP=mystore SHOPIFY_CODEGEN_TOKEN=xxx yarn codegen:shopify
  *
- * Environment variables:
+ * With no environment variables, the schema is introspected through Shopify's public
+ * Admin API schema proxy (the endpoint shopify.dev's GraphiQL explorer uses), which needs
+ * no store or token. Set both variables to introspect a specific store instead.
+ *
+ * Environment variables (optional, set both or neither):
  *   SHOPIFY_CODEGEN_SHOP  - Shop domain (e.g., "mystore" or "mystore.myshopify.com")
  *   SHOPIFY_CODEGEN_TOKEN - Admin API access token
  */
@@ -42,7 +47,12 @@ import { createShopifyPluginConfig, SHOPIFY_ENTITIES } from "./config";
 
 // ============= Configuration =============
 
-const API_VERSION = "2025-01";
+// Keep this on a version Shopify still supports. An unsupported version is silently served by the
+// oldest supported one, so the generated code would describe a schema the live API no longer runs.
+const API_VERSION = "2026-10";
+
+/** Shopify's public Admin API schema proxy (what shopify.dev's GraphiQL explorer calls). Needs no token. */
+const SHOPIFY_PUBLIC_ADMIN_SCHEMA_PROXY_URL = `https://shopify.dev/admin-graphql-direct-proxy/${API_VERSION}`;
 const OUTPUT_DIR = path.resolve(
   __dirname,
   "../../../../server/src/remote-service/connectors/library/shopify/graphql",
@@ -50,35 +60,44 @@ const OUTPUT_DIR = path.resolve(
 
 // ============= Introspection =============
 
-async function fetchIntrospection(
-  shopDomain: string,
-  accessToken: string,
-): Promise<IntrospectionQuery> {
-  let domain = shopDomain.trim().toLowerCase();
-  domain = domain.replace(/^https?:\/\//, "");
-  domain = domain.replace(/\/$/, "");
-  if (!domain.includes(".myshopify.com")) {
-    domain = `${domain}.myshopify.com`;
-  }
+type ShopifyStoreForIntrospection = { shopDomain: string; accessToken: string };
 
-  const url = `https://${domain}/admin/api/${API_VERSION}/graphql.json`;
+async function fetchIntrospection(
+  storeForIntrospectionIfAny: ShopifyStoreForIntrospection | null,
+): Promise<IntrospectionQuery> {
+  let url = SHOPIFY_PUBLIC_ADMIN_SCHEMA_PROXY_URL;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+  if (storeForIntrospectionIfAny) {
+    let domain = storeForIntrospectionIfAny.shopDomain.trim().toLowerCase();
+    domain = domain.replace(/^https?:\/\//, "");
+    domain = domain.replace(/\/$/, "");
+    if (!domain.includes(".myshopify.com")) {
+      domain = `${domain}.myshopify.com`;
+    }
+    url = `https://${domain}/admin/api/${API_VERSION}/graphql.json`;
+    headers["X-Shopify-Access-Token"] = storeForIntrospectionIfAny.accessToken;
+  }
 
   console.log(`Fetching introspection from ${url}...`);
 
   const response = await axios.post<{
     data: IntrospectionQuery;
     errors?: Array<{ message: string }>;
+    error?: string;
   }>(
     url,
-    { query: getIntrospectionQuery() },
-    {
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": accessToken,
-      },
-    },
+    // Include deprecated arguments and input fields. Without them a mutation's deprecated `input`
+    // argument disappears from the built schema and the mutations plugin silently switches to its
+    // replacement, which can take a different input type (e.g. 2026-07 moved collectionCreate from
+    // `input: CollectionInput` to `collection: CollectionCreateInput`, which has no ruleSet/products).
+    { query: getIntrospectionQuery({ inputValueDeprecation: true }) },
+    { headers },
   );
 
+  if (response.data.error) {
+    throw new Error(`Shopify introspection error: ${response.data.error}`);
+  }
   if (response.data.errors?.length) {
     throw new Error(
       `GraphQL introspection error: ${response.data.errors[0].message}`,
@@ -252,8 +271,12 @@ This directory contains **auto-generated code** from the Shopify GraphQL codegen
 To regenerate these files, run from the tools/graphql-codegen directory:
 
 \`\`\`bash
-SHOPIFY_CODEGEN_SHOP=mystore SHOPIFY_CODEGEN_TOKEN=xxx yarn codegen:shopify
+yarn codegen:shopify
 \`\`\`
+
+With no environment variables this introspects Shopify's public Admin API schema proxy, so no
+store or token is needed. To introspect a specific store instead, set both
+\`SHOPIFY_CODEGEN_SHOP\` and \`SHOPIFY_CODEGEN_TOKEN\`.
 
 ## How to Make Changes
 
@@ -338,27 +361,27 @@ async function main(): Promise<void> {
   const shopDomain = process.env.SHOPIFY_CODEGEN_SHOP;
   const accessToken = process.env.SHOPIFY_CODEGEN_TOKEN;
 
-  if (!shopDomain || !accessToken) {
-    console.error("Error: Missing required environment variables.");
+  if (Boolean(shopDomain) !== Boolean(accessToken)) {
+    console.error("Error: set both SHOPIFY_CODEGEN_SHOP and SHOPIFY_CODEGEN_TOKEN, or neither.");
     console.error("");
     console.error("Usage:");
+    console.error("  yarn codegen:shopify   (introspects Shopify's public schema proxy)");
     console.error(
       "  SHOPIFY_CODEGEN_SHOP=mystore SHOPIFY_CODEGEN_TOKEN=xxx yarn codegen:shopify",
     );
-    console.error("");
-    console.error("Environment variables:");
-    console.error('  SHOPIFY_CODEGEN_SHOP  - Shop domain (e.g., "mystore")');
-    console.error("  SHOPIFY_CODEGEN_TOKEN - Admin API access token");
     process.exit(1);
   }
 
-  console.log(`Shop: ${shopDomain}`);
+  const storeForIntrospectionIfAny: ShopifyStoreForIntrospection | null =
+    shopDomain && accessToken ? { shopDomain, accessToken } : null;
+
+  console.log(`Schema source: ${storeForIntrospectionIfAny ? `store ${storeForIntrospectionIfAny.shopDomain}` : "Shopify public schema proxy"}`);
   console.log(`API Version: ${API_VERSION}`);
   console.log(`Output: ${OUTPUT_DIR}`);
   console.log("");
 
   // Fetch introspection and build schema
-  const introspectionResult = await fetchIntrospection(shopDomain, accessToken);
+  const introspectionResult = await fetchIntrospection(storeForIntrospectionIfAny);
   const schema: GraphQLSchema = buildClientSchema(introspectionResult);
   console.log("Schema built successfully.\n");
 

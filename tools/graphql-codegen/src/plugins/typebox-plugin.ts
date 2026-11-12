@@ -152,17 +152,6 @@ export function generateSchemaFile(
     configLines.push(`  },`);
   }
 
-  // Add metadata flags
-  if (entity.metadata) {
-    const metadataLines: string[] = [];
-    if (entity.metadata.plusOnly) {
-      metadataLines.push(`    plusOnly: true,`);
-    }
-    if (metadataLines.length > 0) {
-      configLines.push(`  metadata: {\n${metadataLines.join("\n")}\n  },`);
-    }
-  }
-
   const hasReadOnlyFields = readOnlyFields && readOnlyFields.length > 0;
   const readOnlyImport = hasReadOnlyFields
     ? `\nimport { X_SCRATCH_READONLY } from '@spinner/shared-types';\n`
@@ -434,10 +423,14 @@ ${properties}
     return lines.join("\n");
   }
 
-  private generateFieldType(type: GraphQLOutputType, depth: number): string {
+  private generateFieldType(
+    type: GraphQLOutputType,
+    depth: number,
+    isWrappedInNonNull = false,
+  ): string {
     // Unwrap NonNull
     if (isNonNullType(type)) {
-      return this.generateFieldType(type.ofType, depth);
+      return this.generateFieldType(type.ofType, depth, true);
     }
 
     // Handle List
@@ -448,7 +441,7 @@ ${properties}
 
     // Handle Scalar
     if (isScalarType(type)) {
-      return this.generateScalarType(type);
+      return this.generateScalarType(type, isWrappedInNonNull);
     }
 
     // Handle Enum
@@ -622,7 +615,15 @@ ${properties}
     return mergedFields;
   }
 
-  private generateScalarType(type: GraphQLScalarType): string {
+  /**
+   * A scalar mapped as non-nullable (e.g. `ID`) is still nullable when the GraphQL field itself is:
+   * Shopify's `Image.id` is a plain `ID` and comes back null for a customer's Gravatar image, so
+   * declaring it a required string fails schema validation on real records.
+   */
+  private generateScalarType(
+    type: GraphQLScalarType,
+    isWrappedInNonNull: boolean,
+  ): string {
     const mapping = this.scalarMappings[type.name];
     if (!mapping) {
       return "Type.Union([Type.String(), Type.Null()])";
@@ -648,7 +649,7 @@ ${properties}
         baseType = "Type.String()";
     }
 
-    if (mapping.nullable) {
+    if (mapping.nullable || !isWrappedInNonNull) {
       return `Type.Union([${baseType}, Type.Null()])`;
     }
     return baseType;

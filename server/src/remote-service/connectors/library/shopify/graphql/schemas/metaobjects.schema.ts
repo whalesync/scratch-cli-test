@@ -19,6 +19,7 @@ export const MetaobjectsSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     createdByApp: Type.Optional(
       Type.Union([
         Type.Object({
@@ -65,6 +66,7 @@ export const MetaobjectsSchema = Type.Object(
         Type.Object({
           access: Type.Optional(Type.Unknown()),
           capabilities: Type.Optional(Type.Unknown()),
+          createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           createdByApp: Type.Optional(Type.Unknown()),
           description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           displayNameKey: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -76,6 +78,7 @@ export const MetaobjectsSchema = Type.Object(
           name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           standardTemplate: Type.Optional(Type.Unknown()),
           type: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -127,6 +130,7 @@ export const MetaobjectsSchema = Type.Object(
     ),
     type: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+    values: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
   },
   {
     $id: 'shopify/metaobjects',
@@ -136,6 +140,7 @@ export const MetaobjectsSchema = Type.Object(
 
 // Mark read-only fields
 MetaobjectsSchema.properties.capabilities[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
 MetaobjectsSchema.properties.createdByApp[X_SCRATCH_READONLY] = true;
 MetaobjectsSchema.properties.definition[X_SCRATCH_READONLY] = true;
 MetaobjectsSchema.properties.displayName[X_SCRATCH_READONLY] = true;
@@ -146,11 +151,12 @@ MetaobjectsSchema.properties.referencedBy[X_SCRATCH_READONLY] = true;
 MetaobjectsSchema.properties.thumbnailField[X_SCRATCH_READONLY] = true;
 MetaobjectsSchema.properties.type[X_SCRATCH_READONLY] = true;
 MetaobjectsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.values[X_SCRATCH_READONLY] = true;
 
 /**
  * GraphQL query field selection for Metaobjects
  */
-export const METAOBJECTS_QUERY_FIELDS = `createdByApp { appStoreAppUrl appStoreDeveloperUrl description developerName developerType developerUrl embedded features handle id installUrl isPostPurchaseAppInUse launchUrl previouslyInstalled pricingDetails pricingDetailsSummary privacyPolicyUrl publicCategory published shopifyDeveloped title uninstallMessage uninstallUrl webhookApiVersion } definition { description displayNameKey hasThumbnailField id metaobjectsCount name type } displayName fields { jsonValue key type value } handle id thumbnailField { jsonValue key type value } type updatedAt`;
+export const METAOBJECTS_QUERY_FIELDS = `createdAt createdByApp { appStoreAppUrl appStoreDeveloperUrl description developerName developerType developerUrl embedded features handle id installUrl isPostPurchaseAppInUse launchUrl previouslyInstalled pricingDetails pricingDetailsSummary privacyPolicyUrl publicCategory published shopifyDeveloped title uninstallMessage uninstallUrl webhookApiVersion } definition { createdAt description displayNameKey hasThumbnailField id metaobjectsCount name type updatedAt } displayName fields { jsonValue key type value } handle id thumbnailField { jsonValue key type value } type updatedAt values`;
 
 /**
  * Entity configuration for Metaobjects

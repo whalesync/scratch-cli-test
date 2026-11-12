@@ -14,36 +14,7 @@ import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 export const OrderLineItemsSchema = Type.Object(
   {
     canRestock: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-    contract: Type.Optional(
-      Type.Union([
-        Type.Object({
-          app: Type.Optional(Type.Unknown()),
-          appAdminUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          billingAttempts: Type.Optional(Type.Unknown()),
-          billingPolicy: Type.Optional(Type.Unknown()),
-          createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
-          currencyCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          customAttributes: Type.Optional(Type.Array(Type.Unknown())),
-          deliveryMethod: Type.Optional(Type.Unknown()),
-          deliveryPolicy: Type.Optional(Type.Unknown()),
-          deliveryPrice: Type.Optional(Type.Unknown()),
-          discounts: Type.Optional(Type.Unknown()),
-          id: Type.Optional(Type.String()),
-          lastBillingAttemptErrorType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          lastPaymentStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          lineCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-          lines: Type.Optional(Type.Unknown()),
-          linesCount: Type.Optional(Type.Unknown()),
-          nextBillingDate: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
-          note: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          originOrder: Type.Optional(Type.Unknown()),
-          revisionId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          status: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
-    ),
+    createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     currentQuantity: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     customAttributes: Type.Optional(
       Type.Array(
@@ -81,12 +52,12 @@ export const OrderLineItemsSchema = Type.Object(
       Type.Union([
         Type.Object({
           callbackUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           fulfillmentOrdersOptIn: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           handle: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           id: Type.Optional(Type.String()),
           inventoryManagement: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           location: Type.Optional(Type.Unknown()),
-          permitsSkuSharing: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           requiresShippingMethod: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           serviceName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           trackingSupport: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -102,7 +73,7 @@ export const OrderLineItemsSchema = Type.Object(
         Type.Object({
           altText: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           height: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-          id: Type.Optional(Type.String()),
+          id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -119,10 +90,10 @@ export const OrderLineItemsSchema = Type.Object(
         Type.Object({
           customAttributes: Type.Optional(Type.Array(Type.Unknown())),
           id: Type.Optional(Type.String()),
-          productId: Type.Optional(Type.String()),
+          productId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           quantity: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          variantId: Type.Optional(Type.String()),
+          variantId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           variantSku: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
         Type.Null(),
@@ -145,11 +116,18 @@ export const OrderLineItemsSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    priceAfterAllDiscountsBeforeTaxesSet: Type.Optional(
+      Type.Union([
+        Type.Object({ presentmentMoney: Type.Optional(Type.Unknown()), shopMoney: Type.Optional(Type.Unknown()) }),
+        Type.Null(),
+      ]),
+    ),
     product: Type.Optional(
       Type.Union([
         Type.Object({
           availablePublicationsCount: Type.Optional(Type.Unknown()),
           bodyHtml: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          bundleConsolidatedOptions: Type.Optional(Type.Array(Type.Unknown())),
           category: Type.Optional(Type.Unknown()),
           combinedListing: Type.Optional(Type.Unknown()),
           combinedListingRole: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -162,6 +140,7 @@ export const OrderLineItemsSchema = Type.Object(
           featuredImage: Type.Optional(Type.Unknown()),
           featuredMedia: Type.Optional(Type.Unknown()),
           feedback: Type.Optional(Type.Unknown()),
+          giftCardSettings: Type.Optional(Type.Unknown()),
           giftCardTemplateSuffix: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           handle: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           hasOnlyDefaultVariant: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -209,12 +188,22 @@ export const OrderLineItemsSchema = Type.Object(
       Type.Union([
         Type.Object({
           name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          sellingPlanId: Type.Optional(Type.String()),
+          sellingPlanId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
         Type.Null(),
       ]),
     ),
     sku: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    suggestedReturnReasonDefinitions: Type.Optional(
+      Type.Union([
+        Type.Object({
+          edges: Type.Optional(Type.Array(Type.Unknown())),
+          nodes: Type.Optional(Type.Array(Type.Unknown())),
+          pageInfo: Type.Optional(Type.Unknown()),
+        }),
+        Type.Null(),
+      ]),
+    ),
     taxLines: Type.Optional(
       Type.Array(
         Type.Union([
@@ -259,7 +248,9 @@ export const OrderLineItemsSchema = Type.Object(
       Type.Union([
         Type.Object({
           availableForSale: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          availablePublicationsCount: Type.Optional(Type.Unknown()),
           barcode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          barcodes: Type.Optional(Type.Unknown()),
           compareAtPrice: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -274,6 +265,7 @@ export const OrderLineItemsSchema = Type.Object(
           price: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           product: Type.Optional(Type.Unknown()),
           requiresComponents: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          resourcePublicationsCount: Type.Optional(Type.Unknown()),
           selectedOptions: Type.Optional(Type.Array(Type.Unknown())),
           sellableOnlineQuantity: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           sellingPlanGroupCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -292,6 +284,15 @@ export const OrderLineItemsSchema = Type.Object(
     ),
     variantTitle: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     vendor: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    weight: Type.Optional(
+      Type.Union([
+        Type.Object({
+          unit: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          value: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
   },
   {
     $id: 'shopify/order_line_items',
@@ -301,7 +302,7 @@ export const OrderLineItemsSchema = Type.Object(
 
 // Mark read-only fields
 OrderLineItemsSchema.properties.canRestock[X_SCRATCH_READONLY] = true;
-OrderLineItemsSchema.properties.contract[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.currentQuantity[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.customAttributes[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.discountedTotal[X_SCRATCH_READONLY] = true;
@@ -323,6 +324,7 @@ OrderLineItemsSchema.properties.originalTotal[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.originalTotalSet[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.originalUnitPrice[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.originalUnitPriceSet[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.priceAfterAllDiscountsBeforeTaxesSet[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.product[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.quantity[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.refundableQuantity[X_SCRATCH_READONLY] = true;
@@ -330,6 +332,7 @@ OrderLineItemsSchema.properties.requiresShipping[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.restockable[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.sellingPlan[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.sku[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.suggestedReturnReasonDefinitions[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.taxLines[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.taxable[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.title[X_SCRATCH_READONLY] = true;
@@ -343,11 +346,12 @@ OrderLineItemsSchema.properties.unfulfilledQuantity[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.variant[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.variantTitle[X_SCRATCH_READONLY] = true;
 OrderLineItemsSchema.properties.vendor[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.weight[X_SCRATCH_READONLY] = true;
 
 /**
  * GraphQL query field selection for Order Line Items
  */
-export const ORDER_LINE_ITEMS_QUERY_FIELDS = `canRestock contract { appAdminUrl createdAt currencyCode id lastBillingAttemptErrorType lastPaymentStatus lineCount nextBillingDate note revisionId status updatedAt } currentQuantity customAttributes { key value } discountedTotal discountedUnitPrice fulfillableQuantity fulfillmentService { callbackUrl fulfillmentOrdersOptIn handle id inventoryManagement permitsSkuSharing requiresShippingMethod serviceName trackingSupport type } fulfillmentStatus id image { altText height id originalSrc src thumbhash transformedSrc url width } isGiftCard lineItemGroup { id productId quantity title variantId variantSku } merchantEditable name nonFulfillableQuantity originalTotal originalUnitPrice product { id } quantity refundableQuantity requiresShipping restockable sellingPlan { name sellingPlanId } sku taxLines { channelLiable price rate ratePercentage source title } taxable title totalDiscount unfulfilledDiscountedTotal unfulfilledOriginalTotal unfulfilledQuantity variant { id } variantTitle vendor`;
+export const ORDER_LINE_ITEMS_QUERY_FIELDS = `canRestock createdAt currentQuantity customAttributes { key value } discountedTotal discountedUnitPrice fulfillableQuantity fulfillmentService { callbackUrl createdAt fulfillmentOrdersOptIn handle id inventoryManagement requiresShippingMethod serviceName trackingSupport type } fulfillmentStatus id image { altText height id originalSrc src thumbhash transformedSrc url width } isGiftCard lineItemGroup { id productId quantity title variantId variantSku } merchantEditable name nonFulfillableQuantity originalTotal originalUnitPrice product { id } quantity refundableQuantity requiresShipping restockable sellingPlan { name sellingPlanId } sku taxLines { channelLiable price rate ratePercentage source title } taxable title totalDiscount unfulfilledDiscountedTotal unfulfilledOriginalTotal unfulfilledQuantity variant { id } variantTitle vendor weight { unit value }`;
 
 /**
  * Entity configuration for Order Line Items
@@ -365,8 +369,5 @@ export const ORDER_LINE_ITEMS_CONFIG = {
     entityType: 'orders',
     foreignKey: 'orderId',
     connectionField: 'lineItems',
-  },
-  metadata: {
-    plusOnly: true,
   },
 } as const;

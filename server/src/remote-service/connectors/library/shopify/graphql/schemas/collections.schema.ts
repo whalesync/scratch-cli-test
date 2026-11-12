@@ -13,6 +13,9 @@ import { X_SCRATCH_READONLY } from '@spinner/shared-types';
  */
 export const CollectionsSchema = Type.Object(
   {
+    activeOperations: Type.Optional(
+      Type.Union([Type.Object({ duplicate: Type.Optional(Type.Array(Type.Unknown())) }), Type.Null()]),
+    ),
     availablePublicationsCount: Type.Optional(
       Type.Union([
         Type.Object({
@@ -22,6 +25,7 @@ export const CollectionsSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     descriptionHtml: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     feedback: Type.Optional(
@@ -41,7 +45,7 @@ export const CollectionsSchema = Type.Object(
         Type.Object({
           altText: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           height: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-          id: Type.Optional(Type.String()),
+          id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -90,6 +94,13 @@ export const CollectionsSchema = Type.Object(
       ]),
     ),
     sortOrder: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    sources: Type.Optional(Type.Array(Type.Union([Type.Unknown(), Type.Null()]))),
+    subCollectionEligibility: Type.Optional(
+      Type.Union([
+        Type.Object({ exclusion: Type.Optional(Type.Unknown()), inclusion: Type.Optional(Type.Unknown()) }),
+        Type.Null(),
+      ]),
+    ),
     templateSuffix: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -101,19 +112,23 @@ export const CollectionsSchema = Type.Object(
 );
 
 // Mark read-only fields
+CollectionsSchema.properties.activeOperations[X_SCRATCH_READONLY] = true;
 CollectionsSchema.properties.availablePublicationsCount[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
 CollectionsSchema.properties.description[X_SCRATCH_READONLY] = true;
 CollectionsSchema.properties.feedback[X_SCRATCH_READONLY] = true;
 CollectionsSchema.properties.id[X_SCRATCH_READONLY] = true;
 CollectionsSchema.properties.legacyResourceId[X_SCRATCH_READONLY] = true;
 CollectionsSchema.properties.productsCount[X_SCRATCH_READONLY] = true;
 CollectionsSchema.properties.resourcePublicationsCount[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.sources[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.subCollectionEligibility[X_SCRATCH_READONLY] = true;
 CollectionsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
 
 /**
  * GraphQL query field selection for Collections
  */
-export const COLLECTIONS_QUERY_FIELDS = `availablePublicationsCount { count precision } description descriptionHtml feedback { summary } handle id image { altText height id originalSrc src thumbhash transformedSrc url width } legacyResourceId productsCount { count precision } resourcePublicationsCount { count precision } ruleSet { appliedDisjunctively } seo { description title } sortOrder templateSuffix title updatedAt`;
+export const COLLECTIONS_QUERY_FIELDS = `availablePublicationsCount { count precision } createdAt description descriptionHtml feedback { summary } handle id image { altText height id originalSrc src thumbhash transformedSrc url width } legacyResourceId productsCount { count precision } resourcePublicationsCount { count precision } ruleSet { appliedDisjunctively } seo { description title } sortOrder templateSuffix title updatedAt`;
 
 /**
  * Entity configuration for Collections

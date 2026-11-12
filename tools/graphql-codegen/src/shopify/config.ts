@@ -33,26 +33,11 @@ export const SHOPIFY_PLUS_ONLY_FIELDS = new Set([
   "assignedTo",
   "lockedByStaff",
 
-  // Customer PII fields (Plus only for read access)
-  "defaultEmailAddress",
-  "defaultPhoneNumber",
-  "emailAddress",
-  "phoneNumber",
-  "firstName",
-  "lastName",
-  "addresses",
-  "addressesV2",
-  "defaultAddress",
-  "billingAddress",
-  "shippingAddress",
-  "customer",
-  "email",
-  "phone",
-  "canNotifyCustomer",
-  "customerAcceptsMarketing",
+  // Customer names, emails, phone numbers, and addresses are NOT listed here: they're on every plan.
+  // Shopify gates them as "protected customer data", which the merchant's own custom app (the one
+  // our /shopify-custom-app guide creates) gets with the `read_customers` scope. A store whose app
+  // lacks that access gets an ACCESS_DENIED error, which the connector reports as a failed pull.
   "customerJourneySummary",
-  "customerLocale",
-  "displayAddress",
 
   // B2B/Company fields (Plus only)
   "company",
@@ -169,6 +154,16 @@ export const SHOPIFY_FIELD_FILTERS: FieldFilterConfig = {
   ]),
 
   skipFieldsByType: {
+    // `email`, `phone`, and `addresses` are deprecated in favor of `defaultEmailAddress`,
+    // `defaultPhoneNumber`, and `defaultAddress` / `addressesV2`. Skipped for Customer only:
+    // `Order.email` and `Order.phone` aren't deprecated. `mergeable` needs the
+    // `read_customer_merge` scope, which our setup guide doesn't grant, and Shopify fails the
+    // whole query over it.
+    Customer: new Set(["email", "phone", "addresses", "mergeable"]),
+    // Both need the `write_customers` scope; a read-only token gets ACCESS_DENIED for the query.
+    CustomerEmailAddress: new Set(["marketingUnsubscribeUrl", "openTrackingUrl"]),
+    // Needs the `read_own_subscription_contracts` scope; ACCESS_DENIED for the query otherwise.
+    LineItem: new Set(["contract"]),
     // DEV-10683: these mutation payloads each carry a `shop: Shop!` field that nothing in
     // `shopify-api-client.ts` reads. Auto-expanding it selects `Shop.analyticsToken`, which
     // requires an API scope many store tokens lack — Shopify then returns a field-level
@@ -247,8 +242,6 @@ export const SHOPIFY_FIELD_FILTERS: FieldFilterConfig = {
     "AppInstallation",
     "MetafieldDefinition",
     "PrivateMetafield",
-    "MailingAddress",
-    "CustomerAddress",
   ]),
 };
 
@@ -352,6 +345,11 @@ export const SHOPIFY_ENTITIES: EntityConfig[] = [
       update: "collectionUpdate",
       delete: "collectionDelete",
       inputType: "CollectionInput",
+      // 2026-07 deprecated `input: CollectionInput` for `collection: CollectionCreateInput` /
+      // `CollectionUpdateInput`, which replace `ruleSet` and `products` with the new `sources`
+      // model. The connector writes smart-collection rules through `ruleSet`, so stay on `input`
+      // (still accepted through 2027-01) until collections move to sources.
+      keepDeprecatedInputArgument: "input",
     },
   },
   {
@@ -416,7 +414,6 @@ export const SHOPIFY_ENTITIES: EntityConfig[] = [
     displayName: "Customers",
     description: "Store customers (read-only)",
     readOnly: true,
-    metadata: { plusOnly: true },
     columns: {
       title: ["displayName"],
     },
@@ -427,7 +424,6 @@ export const SHOPIFY_ENTITIES: EntityConfig[] = [
     displayName: "Orders",
     description: "Store orders with line items (read-only)",
     readOnly: true,
-    metadata: { plusOnly: true },
     columns: {
       title: ["name"],
     },
@@ -438,7 +434,6 @@ export const SHOPIFY_ENTITIES: EntityConfig[] = [
     displayName: "Order Line Items",
     description: "Individual items within orders",
     readOnly: true,
-    metadata: { plusOnly: true },
     columns: {
       title: ["name"],
     },
@@ -454,7 +449,6 @@ export const SHOPIFY_ENTITIES: EntityConfig[] = [
     displayName: "Order Shipping Lines",
     description: "Shipping methods for orders",
     readOnly: true,
-    metadata: { plusOnly: true },
     columns: {
       title: ["title"],
     },

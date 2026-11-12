@@ -62,6 +62,7 @@ export const PRODUCTS_READ_ONLY_FIELDS = new Set([
   'availablePublicationsCount',
   'bodyHtml',
   'bundleComponents',
+  'bundleConsolidatedOptions',
   'collections',
   'combinedListing',
   'combinedListingRole',
@@ -76,6 +77,7 @@ export const PRODUCTS_READ_ONLY_FIELDS = new Set([
   'featuredImage',
   'featuredMedia',
   'feedback',
+  'giftCardSettings',
   'hasOnlyDefaultVariant',
   'hasOutOfStockVariants',
   'hasVariantsThatRequiresComponents',
@@ -125,6 +127,8 @@ export const PRODUCTS_READ_ONLY_FIELDS = new Set([
   'updatedAt',
   'variants',
   'variantsCount',
+  'variantsInCollection',
+  'variantsInCollectionCount',
 ]);
 
 /**

@@ -15,6 +15,7 @@ export const OrderShippingLinesSchema = Type.Object(
   {
     carrierIdentifier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     code: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     currentDiscountedPriceSet: Type.Optional(
       Type.Union([
         Type.Object({ presentmentMoney: Type.Optional(Type.Unknown()), shopMoney: Type.Optional(Type.Unknown()) }),
@@ -38,7 +39,7 @@ export const OrderShippingLinesSchema = Type.Object(
         Type.Null(),
       ]),
     ),
-    id: Type.String(),
+    id: Type.Union([Type.String(), Type.Null()]),
     isRemoved: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     originalPrice: Type.Optional(
       Type.Union([
@@ -55,17 +56,18 @@ export const OrderShippingLinesSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    phone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     price: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     requestedFulfillmentService: Type.Optional(
       Type.Union([
         Type.Object({
           callbackUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           fulfillmentOrdersOptIn: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           handle: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           id: Type.Optional(Type.String()),
           inventoryManagement: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           location: Type.Optional(Type.Unknown()),
-          permitsSkuSharing: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           requiresShippingMethod: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           serviceName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           trackingSupport: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -103,6 +105,7 @@ export const OrderShippingLinesSchema = Type.Object(
 // Mark read-only fields
 OrderShippingLinesSchema.properties.carrierIdentifier[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.code[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.currentDiscountedPriceSet[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.custom[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.deliveryCategory[X_SCRATCH_READONLY] = true;
@@ -112,6 +115,7 @@ OrderShippingLinesSchema.properties.id[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.isRemoved[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.originalPrice[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.originalPriceSet[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.phone[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.price[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.requestedFulfillmentService[X_SCRATCH_READONLY] = true;
 OrderShippingLinesSchema.properties.shippingRateHandle[X_SCRATCH_READONLY] = true;
@@ -122,7 +126,7 @@ OrderShippingLinesSchema.properties.title[X_SCRATCH_READONLY] = true;
 /**
  * GraphQL query field selection for Order Shipping Lines
  */
-export const ORDER_SHIPPING_LINES_QUERY_FIELDS = `carrierIdentifier code custom deliveryCategory discountedPrice { amount currencyCode } id isRemoved originalPrice { amount currencyCode } price requestedFulfillmentService { callbackUrl fulfillmentOrdersOptIn handle id inventoryManagement permitsSkuSharing requiresShippingMethod serviceName trackingSupport type } shippingRateHandle source taxLines { channelLiable price rate ratePercentage source title } title`;
+export const ORDER_SHIPPING_LINES_QUERY_FIELDS = `carrierIdentifier code createdAt custom deliveryCategory discountedPrice { amount currencyCode } id isRemoved originalPrice { amount currencyCode } phone price requestedFulfillmentService { callbackUrl createdAt fulfillmentOrdersOptIn handle id inventoryManagement requiresShippingMethod serviceName trackingSupport type } shippingRateHandle source taxLines { channelLiable price rate ratePercentage source title } title`;
 
 /**
  * Entity configuration for Order Shipping Lines
@@ -140,8 +144,5 @@ export const ORDER_SHIPPING_LINES_CONFIG = {
     entityType: 'orders',
     foreignKey: 'orderId',
     connectionField: 'shippingLines',
-  },
-  metadata: {
-    plusOnly: true,
   },
 } as const;

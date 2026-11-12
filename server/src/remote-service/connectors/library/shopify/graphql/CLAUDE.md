@@ -13,8 +13,12 @@ This directory contains **auto-generated code** from the Shopify GraphQL codegen
 To regenerate these files, run from the tools/graphql-codegen directory:
 
 ```bash
-SHOPIFY_CODEGEN_SHOP=mystore SHOPIFY_CODEGEN_TOKEN=xxx yarn codegen:shopify
+yarn codegen:shopify
 ```
+
+With no environment variables this introspects Shopify's public Admin API schema proxy, so no
+store or token is needed. To introspect a specific store instead, set both
+`SHOPIFY_CODEGEN_SHOP` and `SHOPIFY_CODEGEN_TOKEN`.
 
 ## How to Make Changes
 

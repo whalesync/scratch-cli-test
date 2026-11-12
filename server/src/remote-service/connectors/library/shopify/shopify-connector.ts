@@ -6,7 +6,7 @@
  */
 
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, isShopifyConnectorExtras, TableView } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport, isShopifyConnectorExtras, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -34,8 +34,19 @@ import {
 } from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, EntityType, getEntityConfig, isChildEntity } from './graphql';
 import { applyShopifyAgentFieldInstructions } from './shopify-agent-instructions';
-import { SEO_METAFIELD_ENTITIES, ShopifyApiClient, ShopifyError } from './shopify-api-client';
+import {
+  SEO_METAFIELD_ENTITIES,
+  SHOPIFY_ACCESS_FIX_INSTRUCTIONS,
+  ShopifyApiClient,
+  ShopifyError,
+} from './shopify-api-client';
 import { buildShopifyDefaultView } from './shopify-default-view';
+import {
+  buildShopifyUpdatedAtSearchQuery,
+  findMissingShopifyAccessScopesForEntity,
+  shopifyEntityRequiresAccessScopeCheck,
+  shopifyIncrementalPullSupport,
+} from './shopify-incremental';
 import { ShopifyCredentials } from './shopify-types';
 
 const LOG_SOURCE = 'ShopifyConnector';
@@ -117,6 +128,9 @@ export class ShopifyConnector extends Connector {
     records: 'items',
     base: 'store',
     bases: 'stores',
+    incrementalPull: true,
+    incrementalPullInstructions:
+      'Incremental pull only downloads records changed since the last pull. Customers, Orders, Order Line Items, and Order Shipping Lines support this, because Shopify can filter customers and orders by their updated-at time. The other tables do not support incremental pull and always re-download in full.',
     logo: 'https://static.scratch.md/connector-icons/shopify.svg',
     setupGuide: {
       label: 'Create a Shopify Custom App',
@@ -162,20 +176,13 @@ export class ShopifyConnector extends Connector {
   }
 
   /**
-   * List available tables - all entity types from generated registry.
-   * Excludes Plus-only entities (customers, orders, etc.) as they require special access.
+   * List available tables - all entity types from generated registry. Customers and Orders are on
+   * every Shopify plan; a token without the scopes they need fails their pull with a message naming
+   * the missing scope (see {@link assertTokenHasAccessScopesForEntity}).
    */
   // eslint-disable-next-line @typescript-eslint/require-await
   async listTables(): Promise<TablePreview[]> {
-    return ALL_ENTITY_TYPES.filter((entityType) => {
-      const config = getEntityConfig(entityType);
-      // Exclude Plus-only entities - they require Shopify Plus subscription
-      if ('metadata' in config && config.metadata) {
-        const metadata = config.metadata as { plusOnly?: boolean };
-        if (metadata.plusOnly) return false;
-      }
-      return true;
-    }).map((entityType) => {
+    return ALL_ENTITY_TYPES.map((entityType) => {
       const config = getEntityConfig(entityType);
       return {
         id: { wsId: entityType, remoteId: [entityType] },
@@ -280,15 +287,32 @@ export class ShopifyConnector extends Connector {
   }
 
   /**
+   * Customers, Orders, and the order child tables can pull only what changed since the last pull
+   * (Shopify's `updated_at` search filter). Other tables always full-pull. With no table spec (the
+   * REST layer asking about a folder in general) there's no table to answer for, so the answer is no.
+   */
+  override incrementalPullSupport(
+    _options: PullRecordFilesOptions,
+    tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    return tableSpec ? shopifyIncrementalPullSupport(tableSpec.id.wsId) : IncrementalPullSupport.NOT_SUPPORTED;
+  }
+
+  /**
    * Pull all entities of the given type as JSON files.
    * Child entities (variants, media, line items) are pulled via their parent.
+   *
+   * Incremental pull (Customers, Orders, and the order child tables): filter the list by Shopify's
+   * `updated_at` search term from the previous watermark, less a clock-skew overlap, and return the
+   * new watermark. An order child table filters its parent orders, since a line item or shipping
+   * line change updates its order. Deleted records aren't seen by an incremental pull; a full pull
+   * removes them.
    */
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: PullRecordFilesOptions,
+    options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as EntityType;
 
@@ -296,16 +320,50 @@ export class ShopifyConnector extends Connector {
       throw new ShopifyError(`Unsupported table: ${tableSpec.id.wsId}`, 400);
     }
 
+    // Captured before the first API call, so anything changed while this pull runs is pulled again
+    // next time rather than missed.
+    const pullStartedAt = new Date();
+    const updatedAtSearchQueryIfIncremental =
+      options.pullMode === 'incremental' &&
+      options.since instanceof Date &&
+      shopifyIncrementalPullSupport(entityType) === IncrementalPullSupport.SUPPORTED
+        ? buildShopifyUpdatedAtSearchQuery(options.since)
+        : undefined;
+
+    await this.assertTokenHasAccessScopesForEntity(entityType);
+
     const resumeCursor = (progress as { endCursor?: string })?.endCursor;
 
     // Check if this is a child entity
     if (isChildEntity(entityType)) {
       // Child entity resume not yet supported due to compound pagination (parent + child cursors)
-      await this.pullChildRecords(entityType, callback);
+      await this.pullChildRecords(entityType, callback, updatedAtSearchQueryIfIncremental);
     } else {
-      await this.pullParentRecords(entityType, callback, resumeCursor);
+      await this.pullParentRecords(entityType, callback, resumeCursor, updatedAtSearchQueryIfIncremental);
     }
-    return {};
+    return updatedAtSearchQueryIfIncremental !== undefined ? { newWatermark: pullStartedAt } : {};
+  }
+
+  /**
+   * Fail before pulling a table whose access scopes the token lacks (Customers and Orders), naming
+   * each missing scope. Without this, Shopify fails the query partway through (ACCESS_DENIED), or,
+   * for orders without `read_all_orders`, quietly returns only the last 60 days.
+   */
+  private async assertTokenHasAccessScopesForEntity(entityType: EntityType): Promise<void> {
+    if (!shopifyEntityRequiresAccessScopeCheck(entityType)) return;
+
+    const grantedAccessScopeHandles = await this.client.fetchGrantedAccessScopeHandles();
+    const missingAccessScopes = findMissingShopifyAccessScopesForEntity(entityType, grantedAccessScopeHandles);
+    if (missingAccessScopes.length === 0) return;
+
+    const displayName = getEntityConfig(entityType).displayName;
+    const missingAccessScopeList = missingAccessScopes.map(({ scope, reason }) => `${scope} (${reason})`).join(', ');
+    throw new ShopifyError(
+      `This Shopify connection's access token is missing scopes needed for ${displayName}: ` +
+        `${missingAccessScopeList}. ${SHOPIFY_ACCESS_FIX_INSTRUCTIONS}`,
+      403,
+      'MISSING_ACCESS_SCOPES',
+    );
   }
 
   /**
@@ -315,8 +373,11 @@ export class ShopifyConnector extends Connector {
     entityType: EntityType,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     resumeCursor?: string,
+    updatedAtSearchQueryIfIncremental?: string,
   ): Promise<void> {
-    for await (const batch of this.client.listEntities(entityType, 50, resumeCursor)) {
+    for await (const batch of this.client.listEntities(entityType, 50, resumeCursor, {
+      updatedAtSearchQuery: updatedAtSearchQueryIfIncremental,
+    })) {
       await callback({
         files: batch.nodes as ConnectorFile[],
         connectorProgress: batch.endCursor ? { endCursor: batch.endCursor } : {},
@@ -331,6 +392,7 @@ export class ShopifyConnector extends Connector {
   private async pullChildRecords(
     entityType: EntityType,
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+    parentUpdatedAtSearchQueryIfIncremental?: string,
   ): Promise<void> {
     const config = ENTITY_REGISTRY[entityType];
     if (!('parent' in config) || !config.parent) {
@@ -346,8 +408,13 @@ export class ShopifyConnector extends Connector {
       message: `Pulling ${entityType} via parent ${parentType}.${connectionField}`,
     });
 
-    // Iterate through all parents
-    for await (const batch of this.client.listEntities(parentType)) {
+    // Iterate through all parents (or, for an incremental pull, the parents updated since the
+    // watermark). Only each parent's id is used, so request nothing else: 250 per page, the most
+    // Shopify allows.
+    for await (const batch of this.client.listEntities(parentType, 250, undefined, {
+      updatedAtSearchQuery: parentUpdatedAtSearchQueryIfIncremental,
+      selectOnlyRecordIds: true,
+    })) {
       for (const parent of batch.nodes) {
         const parentId = String(parent.id);
 
@@ -382,6 +449,8 @@ export class ShopifyConnector extends Connector {
     if (!ENTITY_REGISTRY[entityType]) {
       throw new ShopifyError(`Unsupported table: ${tableSpec.id.wsId}`, 400);
     }
+
+    await this.assertTokenHasAccessScopesForEntity(entityType);
 
     const nodes = await this.client.fetchNodesByIds(entityType, ids);
 
@@ -605,6 +674,7 @@ connectorRegistry.register({
   metadata: ShopifyConnector.metadata,
   advancedSettings: [],
   supportedAuthMethods: ['user_provided_params'],
+  resolveIncrementalPullSupport: ({ tableId }) => shopifyIncrementalPullSupport(tableId[0] ?? ''),
   rateLimiterSpec: { points: 4, duration: 1 },
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {

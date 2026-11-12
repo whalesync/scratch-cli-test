@@ -23,6 +23,17 @@ export const ProductsSchema = Type.Object(
       ]),
     ),
     bodyHtml: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    bundleConsolidatedOptions: Type.Optional(
+      Type.Array(
+        Type.Union([
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            selections: Type.Optional(Type.Array(Type.Unknown())),
+          }),
+          Type.Null(),
+        ]),
+      ),
+    ),
     category: Type.Optional(
       Type.Union([
         Type.Object({
@@ -36,7 +47,7 @@ export const ProductsSchema = Type.Object(
           isRoot: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           level: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          parentId: Type.Optional(Type.String()),
+          parentId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -70,7 +81,7 @@ export const ProductsSchema = Type.Object(
         Type.Object({
           altText: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           height: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-          id: Type.Optional(Type.String()),
+          id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -120,6 +131,15 @@ export const ProductsSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    giftCardSettings: Type.Optional(
+      Type.Union([
+        Type.Object({
+          crossCurrencyRedeemable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          issuanceCurrency: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
     giftCardTemplateSuffix: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     handle: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     hasOnlyDefaultVariant: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -143,6 +163,7 @@ export const ProductsSchema = Type.Object(
       Type.Array(
         Type.Union([
           Type.Object({
+            createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
             id: Type.Optional(Type.String()),
             linkedMetafield: Type.Optional(Type.Unknown()),
             name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -250,6 +271,7 @@ export const ProductsSchema = Type.Object(
 // Mark read-only fields
 ProductsSchema.properties.availablePublicationsCount[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.bodyHtml[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.bundleConsolidatedOptions[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.combinedListing[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.combinedListingRole[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.compareAtPriceRange[X_SCRATCH_READONLY] = true;
@@ -260,6 +282,7 @@ ProductsSchema.properties.descriptionPlainSummary[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.featuredImage[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.featuredMedia[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.feedback[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.giftCardSettings[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.hasOnlyDefaultVariant[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.hasOutOfStockVariants[X_SCRATCH_READONLY] = true;
 ProductsSchema.properties.hasVariantsThatRequiresComponents[X_SCRATCH_READONLY] = true;
@@ -289,7 +312,7 @@ ProductsSchema.properties.variantsCount[X_SCRATCH_READONLY] = true;
 /**
  * GraphQL query field selection for Products
  */
-export const PRODUCTS_QUERY_FIELDS = `availablePublicationsCount { count precision } bodyHtml category { ancestorIds childrenIds fullName id isArchived isLeaf isRoot level name parentId } combinedListingRole createdAt customProductType description descriptionHtml descriptionPlainSummary featuredImage { id } featuredMedia { id } feedback { summary } giftCardTemplateSuffix handle hasOnlyDefaultVariant hasOutOfStockVariants hasVariantsThatRequiresComponents id isGiftCard legacyResourceId mediaCount { count precision } onlineStorePreviewUrl onlineStoreUrl options { id name position values } productComponentsCount { count precision } productType publishedAt requiresSellingPlan resourcePublicationsCount { count precision } sellingPlanGroupCount sellingPlanGroupsCount { count precision } seo { description title } status tags templateSuffix title totalInventory totalVariants tracksInventory updatedAt variantsCount { count precision } vendor`;
+export const PRODUCTS_QUERY_FIELDS = `availablePublicationsCount { count precision } bodyHtml bundleConsolidatedOptions { name } category { ancestorIds childrenIds fullName id isArchived isLeaf isRoot level name parentId } combinedListingRole createdAt customProductType description descriptionHtml descriptionPlainSummary featuredImage { id } featuredMedia { id } feedback { summary } giftCardSettings { crossCurrencyRedeemable issuanceCurrency } giftCardTemplateSuffix handle hasOnlyDefaultVariant hasOutOfStockVariants hasVariantsThatRequiresComponents id isGiftCard legacyResourceId mediaCount { count precision } onlineStorePreviewUrl onlineStoreUrl options { createdAt id name position values } productComponentsCount { count precision } productType publishedAt requiresSellingPlan resourcePublicationsCount { count precision } sellingPlanGroupCount sellingPlanGroupsCount { count precision } seo { description title } status tags templateSuffix title totalInventory totalVariants tracksInventory updatedAt variantsCount { count precision } vendor`;
 
 /**
  * Entity configuration for Products

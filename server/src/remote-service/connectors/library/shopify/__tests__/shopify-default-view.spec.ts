@@ -1,5 +1,7 @@
 import { Type } from '@sinclair/typebox';
 import { TableViewBannerGroup, TableViewCol, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { CustomersSchema } from '../graphql/schemas/customers.schema';
+import { OrdersSchema } from '../graphql/schemas/orders.schema';
 import { buildShopifyDefaultView } from '../shopify-default-view';
 
 describe('buildShopifyDefaultView', () => {
@@ -551,6 +553,47 @@ describe('buildShopifyDefaultView', () => {
     it('should not add subfields for plain string price fields', () => {
       const col = shippingView.cols.find((c) => c.kind === 'col' && c.path === 'price') as TableViewCol;
       expect(col.subfields).toBeUndefined();
+    });
+  });
+  describe('Customers and Orders (generated schemas)', () => {
+    const customersView = buildShopifyDefaultView(CustomersSchema, 'customers');
+    const ordersView = buildShopifyDefaultView(OrdersSchema, 'orders');
+    const columnPaths = (cols: typeof customersView.cols) =>
+      cols.filter((c): c is TableViewCol => c.kind === 'col').map((c) => c.path);
+
+    it('leads the Customers view with name, email, phone, and address', () => {
+      expect(columnPaths(customersView.cols).slice(0, 7)).toEqual([
+        'displayName',
+        'id',
+        'firstName',
+        'lastName',
+        'defaultEmailAddress',
+        'defaultPhoneNumber',
+        'defaultAddress',
+      ]);
+    });
+
+    it('shows the email address and phone number themselves, not their marketing objects', () => {
+      const emailCol = customersView.cols.find(
+        (c) => c.kind === 'col' && c.path === 'defaultEmailAddress',
+      ) as TableViewCol;
+      expect(emailCol.subfields).toEqual([{ relativePath: 'emailAddress', name: 'Email Address', type: 'string' }]);
+      expect(emailCol.selectedSubfield).toBe(0);
+
+      const phoneCol = customersView.cols.find(
+        (c) => c.kind === 'col' && c.path === 'defaultPhoneNumber',
+      ) as TableViewCol;
+      expect(phoneCol.subfields).toEqual([{ relativePath: 'phoneNumber', name: 'Phone Number', type: 'string' }]);
+    });
+
+    it('links each order to its customer by plucking customer.id', () => {
+      const customerCol = ordersView.cols.find((c) => c.kind === 'col' && c.path === 'customer.id') as TableViewCol;
+      expect(customerCol).toBeDefined();
+      expect(customerCol.name).toBe('Customer');
+      expect(customerCol.foreignKey).toEqual({ linkedTableId: 'customers', linkedTableRemoteId: ['customers'] });
+      expect(customerCol.readonly).toBe(true);
+      expect(ordersView.cols.find((c) => c.kind === 'col' && c.path === 'customer')).toBeUndefined();
+      expect(columnPaths(ordersView.cols).slice(0, 4)).toEqual(['name', 'id', 'customer.id', 'email']);
     });
   });
 });

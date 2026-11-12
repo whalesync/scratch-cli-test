@@ -197,6 +197,25 @@ export const SHOPIFY_RETRY_OPTS: WithRetryOpts = {
 };
 
 /**
+ * The GraphQL error code Shopify returns (with HTTP 200) when the token lacks a scope a query needs,
+ * or the app isn't allowed the protected customer data a field holds (names, emails, phone numbers,
+ * addresses). Shopify sends the rest of the data with those fields set to null; we fail the request
+ * instead, so a pull never stores the nulls as if they were the real values.
+ */
+export const SHOPIFY_ACCESS_DENIED_ERROR_CODE = 'ACCESS_DENIED';
+
+/** How to fix a Shopify access error, appended to every message that reports one. */
+export const SHOPIFY_ACCESS_FIX_INSTRUCTIONS =
+  "Add the missing access to your Shopify app's Access scopes in the Shopify Dev Dashboard, release a new " +
+  "version, and generate a new token with Scratch's Shopify setup guide. Then update this connection's Admin " +
+  'API Access Token.';
+
+/** The user-facing message for a Shopify ACCESS_DENIED GraphQL error. */
+export function buildShopifyAccessDeniedMessage(shopifyErrorMessage: string): string {
+  return `Shopify denied access: ${shopifyErrorMessage} ${SHOPIFY_ACCESS_FIX_INSTRUCTIONS}`;
+}
+
+/**
  * Shopify API error
  */
 export class ShopifyError extends Error {
@@ -289,6 +308,12 @@ export function getQueryFieldsForEntity(entityType: string): string | undefined 
 
 // ============= GraphQL Root Field Mapping =============
 
+/**
+ * Top-level tables whose list query accepts an `updated_at` search filter and `sortKey: UPDATED_AT`.
+ * Only these can be listed for an incremental pull (see shopify-incremental.ts).
+ */
+const ENTITY_TYPES_WITH_UPDATED_AT_SEARCH_FILTER = new Set(['customers', 'orders']);
+
 const ROOT_FIELD_MAP: Record<string, string> = {
   products: 'products',
   collections: 'collections',
@@ -322,6 +347,7 @@ export class ShopifyApiClient {
   private readonly client: AxiosInstance;
   private readonly domain: string;
   private readonly rateLimiter?: RateLimiter;
+  private grantedAccessScopeHandlesIfFetched?: ReadonlySet<string>;
 
   constructor(credentials: ShopifyCredentials, opts?: { rateLimiter?: RateLimiter }) {
     this.domain = normalizeDomain(credentials.shopDomain);
@@ -372,6 +398,9 @@ export class ShopifyApiClient {
     if (result.errors && result.errors.length > 0) {
       const error = result.errors[0];
       const code = error.extensions?.code as string | undefined;
+      if (code === SHOPIFY_ACCESS_DENIED_ERROR_CODE) {
+        throw new ShopifyError(buildShopifyAccessDeniedMessage(error.message), 403, code);
+      }
       throw new ShopifyError(error.message, 400, code);
     }
 
@@ -400,16 +429,47 @@ export class ShopifyApiClient {
     }
   }
 
+  /**
+   * The access scopes this token was granted (e.g. `read_orders`), fetched once per client. Shopify
+   * returns them for the calling app's installation, so this works for any token and needs no scope.
+   */
+  async fetchGrantedAccessScopeHandles(): Promise<ReadonlySet<string>> {
+    if (!this.grantedAccessScopeHandlesIfFetched) {
+      const data = await this.query<{ currentAppInstallation: { accessScopes: Array<{ handle: string }> } }>(`
+        query { currentAppInstallation { accessScopes { handle } } }
+      `);
+      this.grantedAccessScopeHandlesIfFetched = new Set(
+        data.currentAppInstallation.accessScopes.map((accessScope) => accessScope.handle),
+      );
+    }
+    return this.grantedAccessScopeHandlesIfFetched;
+  }
+
   // ============= Generic List Methods =============
 
   /**
    * List entities by type using generated query fields.
+   *
+   * - `updatedAtSearchQuery` (from `buildShopifyUpdatedAtSearchQuery`) narrows the list to records
+   *   updated since a watermark, for an incremental pull. It's passed as the connection's `query`
+   *   argument, sorted by `UPDATED_AT` so pagination stays stable while records keep changing.
+   * - `selectOnlyRecordIds` requests just each record's `id`. A child-table pull only needs its
+   *   parents' ids, and the full field selection costs far more per page.
    */
   async *listEntities(
     entityType: string,
     pageSize = 50,
     resumeCursor?: string,
+    listOptions: { updatedAtSearchQuery?: string; selectOnlyRecordIds?: boolean } = {},
   ): AsyncGenerator<{ nodes: Record<string, unknown>[]; endCursor: string | null }, void> {
+    const updatedAtSearchQueryIfAny = listOptions.updatedAtSearchQuery;
+    if (updatedAtSearchQueryIfAny !== undefined && !ENTITY_TYPES_WITH_UPDATED_AT_SEARCH_FILTER.has(entityType)) {
+      throw new ShopifyError(`Incremental pulls aren't supported for ${entityType}`, 400);
+    }
+    if (listOptions.selectOnlyRecordIds && (entityType === 'metaobjects' || entityType === 'files')) {
+      throw new ShopifyError(`Listing only record ids isn't supported for ${entityType}`, 400);
+    }
+
     if (entityType === 'metaobjects') {
       // Metaobject resume not yet supported due to compound pagination (definition + cursor)
       yield* this.listMetaobjects(pageSize);
@@ -422,15 +482,26 @@ export class ShopifyApiClient {
     }
 
     const rootField = ROOT_FIELD_MAP[entityType];
-    const queryFields = QUERY_FIELDS_MAP[entityType];
+    const queryFieldsForEntity = QUERY_FIELDS_MAP[entityType];
 
-    if (!rootField || !queryFields) {
+    if (!rootField || !queryFieldsForEntity) {
       throw new ShopifyError(`Unknown entity type: ${entityType}`, 400);
     }
+    const queryFields = listOptions.selectOnlyRecordIds ? 'id' : queryFieldsForEntity;
 
-    const queryString = `
+    const queryString =
+      updatedAtSearchQueryIfAny === undefined
+        ? `
       query List${capitalize(rootField)}($first: Int!, $after: String) {
         ${rootField}(first: $first, after: $after) {
+          nodes { ${queryFields} }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    `
+        : `
+      query List${capitalize(rootField)}UpdatedSince($first: Int!, $after: String, $query: String!) {
+        ${rootField}(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) {
           nodes { ${queryFields} }
           pageInfo { hasNextPage endCursor }
         }
@@ -438,7 +509,13 @@ export class ShopifyApiClient {
     `;
 
     // SEO metafields (seoTitle/seoDescription aliases) land verbatim — no reshape.
-    yield* this.paginatedList<Record<string, unknown>>(queryString, rootField, pageSize, resumeCursor);
+    yield* this.paginatedList<Record<string, unknown>>(
+      queryString,
+      rootField,
+      pageSize,
+      resumeCursor,
+      updatedAtSearchQueryIfAny === undefined ? {} : { query: updatedAtSearchQueryIfAny },
+    );
   }
 
   /**
@@ -449,6 +526,7 @@ export class ShopifyApiClient {
     rootField: string,
     pageSize: number,
     resumeCursor?: string,
+    additionalQueryVariables: Record<string, unknown> = {},
   ): AsyncGenerator<{ nodes: T[]; endCursor: string | null }, void> {
     let cursor: string | null = resumeCursor ?? null;
     let hasMore = true;
@@ -456,6 +534,7 @@ export class ShopifyApiClient {
     while (hasMore) {
       type ResponseType = Record<string, ShopifyConnection<T>>;
       const response: ResponseType = await this.query<ResponseType>(queryString, {
+        ...additionalQueryVariables,
         first: pageSize,
         after: cursor,
       });

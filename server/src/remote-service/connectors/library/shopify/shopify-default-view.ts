@@ -19,8 +19,30 @@ const PRIORITY_FIELDS: Record<string, string[]> = {
   pages: ['title', 'id', 'handle', 'body', 'bodySummary', 'createdAt'],
   blogs: ['title', 'id', 'handle', 'createdAt'],
   articles: ['title', 'id', 'handle', 'author', 'body', 'tags'],
-  customers: ['displayName', 'id', 'note', 'numberOfOrders', 'state', 'tags'],
-  orders: ['name', 'id', 'displayFinancialStatus', 'displayFulfillmentStatus', 'currencyCode', 'createdAt'],
+  customers: [
+    'displayName',
+    'id',
+    'firstName',
+    'lastName',
+    'defaultEmailAddress',
+    'defaultPhoneNumber',
+    'defaultAddress',
+    'numberOfOrders',
+    'amountSpent',
+    'state',
+    'tags',
+    'note',
+  ],
+  orders: [
+    'name',
+    'id',
+    'customer',
+    'email',
+    'displayFinancialStatus',
+    'displayFulfillmentStatus',
+    'currencyCode',
+    'createdAt',
+  ],
   order_line_items: ['name', 'id', 'title', 'sku', 'quantity', 'currentQuantity', 'vendor'],
   order_shipping_lines: ['title', 'id', 'code', 'price', 'source'],
   files: ['id', 'alt', 'fileStatus', 'mimeType', 'mediaContentType', 'filename'],
@@ -66,6 +88,10 @@ const PLUCK_SUBFIELD_BY_FIELD_NAME: Record<string, { relativePath: string; name:
   category: { relativePath: 'fullName', name: 'Full Name', type: 'string' },
   // products.featuredImage is `{ id, url, altText }` once the query pulls url/altText (DEV-11020).
   featuredImage: { relativePath: 'url', name: 'URL', type: 'url' },
+  // customers.defaultEmailAddress is `{ emailAddress, marketingState, … }`; show the address itself.
+  defaultEmailAddress: { relativePath: 'emailAddress', name: 'Email Address', type: 'string' },
+  // customers.defaultPhoneNumber is `{ phoneNumber, marketingState, … }`; show the number itself.
+  defaultPhoneNumber: { relativePath: 'phoneNumber', name: 'Phone Number', type: 'string' },
 };
 
 /**
@@ -88,6 +114,9 @@ const NESTED_FOREIGN_KEY_COLS: Record<string, { idPath: string; linkedTableId: s
   // are distinct relations from the injected `orderId` parent FK (DEV-11049).
   'order_line_items.product': { idPath: 'product.id', linkedTableId: 'products', name: 'Product' },
   'order_line_items.variant': { idPath: 'variant.id', linkedTableId: 'product_variants', name: 'Variant' },
+  // orders.customer is the verbatim `{ id }` reference to the customer who placed the order (null for
+  // a guest checkout).
+  'orders.customer': { idPath: 'customer.id', linkedTableId: 'customers', name: 'Customer' },
 };
 
 /**
