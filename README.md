@@ -126,6 +126,16 @@ To cut a prod release **by hand**:
 - **Desktop only:** **CI/CD → Pipelines → Run pipeline** on `prod` with `RELEASE_DESKTOP_ONLY=true`. Optionally set `RELEASE_TYPE` to `minor` or `major` (it defaults to `patch`). This always builds.
 - **CLI only:** **Run pipeline** on `prod` with `RELEASE_CLI_ONLY=true`, then play the `release-rust-cli-patch`, `-minor`, or `-major` manual job. This always builds.
 
+### Test environment pauses overnight and on weekends
+
+To save cost, the test environment (`spv1eu-test`) is paused when nobody uses it (DEV-12906). Paused, its api, worker, and cron services run 0 instances, and its database and scratch-git VM are stopped, so `test-api.scratch.md` returns "Service unavailable".
+
+- The **`Pause test env`** schedule (`TEST_POWER=pause`, target branch `master`, cron `0 23 * * *` in `America/Los_Angeles`) pauses it at 23:00 PT every day.
+- The **`Wake test env`** schedule (`TEST_POWER=wake`, target branch `master`, cron `45 4 * * 1-5` in `America/Los_Angeles`) wakes it at 04:45 PT on weekdays.
+- Every `master` pipeline wakes it before it deploys (`wake test`), and so does every `Scheduled CLI Tests` run. That wake changes nothing when test is already up.
+
+To wake or pause test by hand, use **CI/CD → Pipelines → Run pipeline** on `master` with `TEST_POWER=wake` or `TEST_POWER=pause`. Nothing else runs in that pipeline. A wake takes about 6 to 9 minutes. `terraform/tools/test_power.sh status` shows what's paused, and works with the read-only accounts. To stop pausing test, set the `Pause test env` schedule inactive and run the wake. Details: [docs/ops/plans/2026-11-16-pause-test-overnight.md](docs/ops/plans/2026-11-16-pause-test-overnight.md).
+
 ## Upgrading Node
 
 Upgrading to a new version of Node.js requires several steps.

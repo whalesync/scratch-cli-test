@@ -4,6 +4,7 @@
 - **Author:** Chris Hoefgen (with Claude)
 - **Linear:** [DEV-11808](https://linear.app/whalesync/issue/DEV-11808) (parent [DEV-11785](https://linear.app/whalesync/issue/DEV-11785) · project *Reduce GCP Costs*)
 - **Status:** Analysis / proposal — no infra changed. Implementation, if approved, lands as separate isolated terraform MRs.
+- **Follow-on (2026-11-16):** test now costs ~$325/mo after the right-sizing below. Pausing it overnight and on weekends ([DEV-12906](https://linear.app/whalesync/issue/DEV-12906), [plan](plans/2026-11-16-pause-test-overnight.md)) saves about $78/mo more.
 - **GCP projects:** `spv1eu-production`, `spv1eu-test` (region `europe-west1`, Belgium)
 
 ## Problem statement

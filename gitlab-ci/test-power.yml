@@ -1,0 +1,55 @@
+# Wakes and pauses Scratch's test environment (spv1eu-test) with terraform/tools/test_power.sh, so test doesn't run
+# overnight or on weekends (DEV-12906). See docs/ops/plans/2026-11-16-pause-test-overnight.md.
+#
+# Two pipeline schedules drive it, both on `master` in America/Los_Angeles (Build > Pipeline schedules):
+#   "Pause test env"   0 23 * * *     TEST_POWER = pause
+#   "Wake test env"    45 4 * * 1-5   TEST_POWER = wake
+# Every master pipeline, and every "Scheduled CLI Tests" run, also wakes test first (`wake test`, in
+# stages/01-build-and-test.yml). That wake changes nothing when test is already up.
+#
+# To wake or pause test by hand: Build > Pipelines > Run pipeline, on `master`, setting
+#   TEST_POWER = wake      (or pause)
+# Nothing else runs in that pipeline: .gitlab-ci.yml leaves every stage file and release file out whenever TEST_POWER
+# is set. To stop pausing test, set the "Pause test env" schedule inactive and run the wake.
+#
+# A pause doesn't check whether a pipeline is still deploying or testing test. One that is fails, and the next merge
+# deploys again.
+
+include:
+  - "/gitlab-ci/stages.yml"
+  - "/gitlab-ci/common.yml"
+
+.test_power:
+  extends:
+    - .gcp_eu_test_env # sets before_script and variables
+    # gcloud with `run services update --scaling`, plus the jq and curl the script needs.
+    - .docker_builder_image
+  stage: build and test
+  needs: []
+  dependencies: []
+  # Only one of these jobs runs at a time across all pipelines, so a wake and a pause can't interleave.
+  resource_group: test-power
+  # These change test, so a newer pipeline mustn't cancel one partway.
+  interruptible: false
+  # Waking and pausing are idempotent, so a retry picks up where a failed run stopped.
+  retry: 2
+  # A full wake starts the database and boots the scratch-git VM, which reruns its startup script.
+  timeout: 30 minutes
+
+.wake_test:
+  extends: .test_power
+  script:
+    - terraform/tools/test_power.sh wake
+
+# The manual and scheduled pipelines. Only on `master`, so they run the reviewed script.
+wake test now:
+  extends: .wake_test
+  rules:
+    - if: '$TEST_POWER == "wake" && $CI_COMMIT_BRANCH == "master"'
+
+pause test now:
+  extends: .test_power
+  script:
+    - terraform/tools/test_power.sh pause
+  rules:
+    - if: '$TEST_POWER == "pause" && $CI_COMMIT_BRANCH == "master"'

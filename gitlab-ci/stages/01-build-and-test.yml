@@ -614,6 +614,24 @@ notify slack prod release pipeline started:
   rules:
     - !reference [.rules, on_merge_to_prod]
 
+# =============================================================================
+# TEST POWER
+# =============================================================================
+#
+# Wakes test before anything in this pipeline uses it, since the "Pause test env"
+# schedule pauses it every night (gitlab-ci/test-power.yml). It changes nothing
+# when test is already up. The test migrations, deploys, and post-deploy
+# environment tests have no `needs:`, so they wait for this whole stage, wake
+# included.
+wake test:
+  extends: .wake_test
+  rules:
+    # The pipelines that deploy test, the same as the test deploy jobs.
+    - !reference [.rules, on_merge_to_master]
+    # The scheduled CLI tests run against test; `cli integration tests` needs
+    # this job.
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Scheduled CLI Tests"'
+
 # ⚠️  DO NOT set the dummy job to `when: manual`. Vanta requires a pipeline to
 # run and pass before every MR is merged. A manual job is too easy to skip,
 # which would violate that compliance requirement.

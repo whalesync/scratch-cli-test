@@ -18,60 +18,65 @@ variables:
     value: "false"
     options: ["false", "true"]
     description: "Skip everything except the 'release CLI app' stage jobs"
+  # Wakes or pauses the test environment (gitlab-ci/test-power.yml). The "Pause test env" and "Wake test env"
+  # schedules set it every night and every weekday morning. Any non-empty value leaves out every stage file and release
+  # file below, so that pipeline runs only `wake test now` or `pause test now`. A mistyped value matches no job, so
+  # GitLab doesn't create the pipeline.
+  TEST_POWER:
+    value: ""
+    description: "Wake or pause the test environment: 'wake' or 'pause', on master. Leave empty for a normal pipeline."
+
+# The rule for the stage-file includes below: everything is left out of the RELEASE_*_ONLY pipelines and the TEST_POWER
+# pipelines. An unset variable is null rather than "", so TEST_POWER needs both tests.
+.normal_pipeline_include_rules: &normal_pipeline_include_rules
+  - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true" && ($TEST_POWER == null || $TEST_POWER == "")'
 
 include:
-  # Release files — each is skipped when the *other* release is requested.
+  # Release files — each is skipped when the *other* release is requested, and
+  # both are skipped in the TEST_POWER pipelines.
   - local: "scratch-git-2/.gitlab-ci-release.yml"
     rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true"'
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && ($TEST_POWER == null || $TEST_POWER == "")'
   - local: "scratch-desktop/.gitlab-ci-release.yml"
     rules:
-      - if: '$RELEASE_CLI_ONLY != "true"'
+      - if: '$RELEASE_CLI_ONLY != "true" && ($TEST_POWER == null || $TEST_POWER == "")'
   # Shared infra — needed regardless of which jobs run.
   - local: "/gitlab-ci/common.yml"
   - local: "/gitlab-ci/stages.yml"
+  # Waking and pausing the test environment. Its jobs only run in the TEST_POWER pipelines; the `wake test` job that
+  # every master pipeline runs is in stages/01-build-and-test.yml.
+  - local: "/gitlab-ci/test-power.yml"
   # Local-runner job definitions extend templates from 01-build-and-test.yml /
   # 01-smoke-tests.yml, so skip this file whenever those stage files are
-  # skipped (i.e. under RELEASE_*_ONLY).
+  # skipped (i.e. under RELEASE_*_ONLY or TEST_POWER).
   - local: "/gitlab-ci/local-runners.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
 
-  # Everything else is skipped when either *_ONLY flag is set.
+  # Everything else is skipped when either *_ONLY flag or TEST_POWER is set.
   # Also kept out of the "Hourly Test Releases" and "Desktop and CLI Releases"
   # schedules. GitLab's stock secret_detection job runs on scheduled pipelines,
   # but those schedules only cut CLI/desktop releases and shouldn't drag in
   # secret detection.
   - template: Security/Secret-Detection.gitlab-ci.yml
     rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true" && ($CI_PIPELINE_SOURCE != "schedule" || ($PIPELINE_NAME != "Hourly Test Releases" && $PIPELINE_NAME != "Desktop and CLI Releases"))'
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true" && ($TEST_POWER == null || $TEST_POWER == "") && ($CI_PIPELINE_SOURCE != "schedule" || ($PIPELINE_NAME != "Hourly Test Releases" && $PIPELINE_NAME != "Desktop and CLI Releases"))'
   - local: "/gitlab-ci/stages/01-build-and-test.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
   - local: "/gitlab-ci/stages/01-smoke-tests.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
   - local: "/gitlab-ci/stages/01-cli-integration-tests.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
   - local: "/gitlab-ci/stages/01-publish-shared-types.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
   - local: "/gitlab-ci/stages/02-push-to-prod.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
   - local: "/gitlab-ci/stages/03-push-images.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
   - local: "/gitlab-ci/stages/04-run-migrations.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
   - local: "/gitlab-ci/stages/05-deploy.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
   - local: "/gitlab-ci/stages/06-environment-tests.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules
   - local: "/gitlab-ci/stages/07-cleanup-releases.yml"
-    rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+    rules: *normal_pipeline_include_rules

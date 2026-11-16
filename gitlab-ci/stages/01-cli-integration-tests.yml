@@ -56,6 +56,11 @@ include:
 
 cli integration tests:
   extends: .cli-integration-tests
+  # Test may be paused overnight, so wait for `wake test`
+  # (01-build-and-test.yml), which runs in this same stage.
+  needs:
+    - job: wake test
+      optional: true
   rules:
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Scheduled CLI Tests"'

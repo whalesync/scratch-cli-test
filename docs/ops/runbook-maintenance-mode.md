@@ -91,6 +91,7 @@ Things to know:
 4. For work on the **scratch-git VM**, turn off its background GC loop at `/settings/dev/gc` first. Do this before `on`, or from a bypassed IP with `--lockdown-only`, because the dev tools need the API.
 5. If the work takes Postgres, Redis, or the scratch-git VM down, snooze the matching `Scratch <env> DB ...`, `Redis ...`, and `Scratch Git ...` alert policies in the Cloud Monitoring console for the window. Several of them page. They are defined in [`monitoring.tf`](/terraform/modules/env/monitoring.tf).
 6. Tell the Whalesync team. Their app calls the Scratch API from the browser and from a Stripe-driven server path.
+7. **On test,** check whether test is paused for the night (`terraform/tools/test_power.sh status`), and wake it first if your work needs it ([pause test overnight](plans/2026-11-16-pause-test-overnight.md)). While test's lockdown is on, `test_power.sh` refuses to wake or pause, so the 23:00 pause and every master pipeline's `wake test` fail instead of fighting the window. Set the "Pause test env" schedule inactive if the window runs past 23:00 PT.
 
 ### Start
 

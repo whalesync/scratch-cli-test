@@ -4,6 +4,10 @@ include:
 
 #region test env
 
+# Test may be paused overnight: its services at 0 instances and the scratch-git
+# VM stopped. A deploy doesn't undo a pause. These jobs have no `needs:`, so they
+# wait for the build and test stage, which includes `wake test`
+# (01-build-and-test.yml). If you give one a `needs:`, list `wake test` too.
 deploy api service to Cloud Run test environment:
   stage: deploy
   resource_group: environment:test:service:api-service

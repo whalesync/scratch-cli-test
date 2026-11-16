@@ -6,6 +6,9 @@ include:
 # ENVIRONMENT TESTS
 # =============================================================================
 
+# Test may be paused overnight. This job has no `needs:`, so it waits for the
+# build and test stage, which includes `wake test` (01-build-and-test.yml). If
+# you give it a `needs:`, list `wake test` too.
 environment tests for test env post-deploy:
   stage: post-deploy environment tests
   interruptible: false
