@@ -15,6 +15,19 @@ variables:
   # so we need to copy instead of using hard links.
   UV_LINK_MODE: copy
 
+  # The OIDC template included below gives these five variables a `description`,
+  # so GitLab prefilled them in the "Run pipeline" form and sent them as pipeline
+  # variables, which outrank job variables. AUDIENCE came out empty, and every
+  # GCP job in a manually run pipeline failed with "AUDIENCE is not set." Plain
+  # values without a description keep them out of the form. The values match
+  # what the template resolves to, except AUDIENCE, which matches what
+  # .gcp_eu_test_env and .gcp_eu_production_env set.
+  WI_POOL_PROVIDER: ""
+  SERVICE_ACCOUNT: ""
+  AUDIENCE: "https://gitlab.com"
+  TOKEN_LIFETIME: "1800"
+  GCLOUD_PROJECT: ""
+
 # default image used by all jobs unless overridden
 image:
   name: unawareguitar/leaning-basket:latest
