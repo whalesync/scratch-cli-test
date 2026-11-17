@@ -23,6 +23,11 @@
  *      `prepareFolderForIncomingRecordPages` once, then `writeConnectorRecordPage` once per
  *      connector page, then `releaseRecordPageWritingStateForFolder` once (even if the fetch failed).
  *      A folder that was fully fetched by an earlier attempt skips all three.
+ *      A fetch that fails transiently (a dropped connection, a timeout, a 5xx) is retried between
+ *      that one prepare and that one release, from the folder's last checkpointed cursor — or from
+ *      the first page, for a connector that reports none. The sink can therefore be handed a record
+ *      it already holds, and must overwrite it, never store it twice (the classic sink gives a record id
+ *      the file name it already minted for it this run; the run store upserts by record id).
  *   2. Phase 2 (folders sequentially): `finishFolderAfterAllRecordPagesWritten` once per folder that
  *      fetched successfully (in this attempt or an earlier one) and has not been finished before.
  *   3. `cleanUpTemporaryStorageAfterPullAttempt` once, in the job's `finally`, even on failure.

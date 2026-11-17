@@ -14,6 +14,7 @@ import type { ExperimentsService } from '../../../experiments/experiments.servic
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import {
   type BaseJsonTableSpec,
+  type ConnectorErrorDetails,
   type ConnectorFile,
   dotPath,
   type PullRecordFilesOptions,
@@ -31,6 +32,7 @@ import { ConnectorAccountService } from 'src/remote-service/connector-account/co
 import type { Connector } from 'src/remote-service/connectors/connector';
 import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
+import { isTransientRemoteServiceFailure } from 'src/remote-service/connectors/transient-remote-service-failure';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { extractApiDomain } from 'src/utils/urls';
 import { JobCanceledError } from 'src/worker/job-errors';
@@ -98,6 +100,21 @@ const LOG_SOURCE = 'PullLinkedFolderFilesJob';
 
 /** Default max parallel folder fetches when no rate limiter spec is defined. */
 const DEFAULT_CONCURRENCY = 3;
+
+/**
+ * How long a folder fetch that failed transiently (see `isTransientRemoteServiceFailure`) waits before each retry,
+ * indexed by how many retries in a row have failed without the fetch getting any further. Its length is how many
+ * such retries a fetch gets before the folder fails. Long enough for a service's brief outage or a deploy to pass;
+ * short next to the pull itself.
+ */
+const TRANSIENT_FOLDER_FETCH_FAILURE_RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
+
+/**
+ * The most retries one folder fetch gets in total. The retry budget above starts over whenever a retry gets further
+ * than the one before, so a long fetch survives several separate blips; this stops a connection that fails every few
+ * pages from retrying forever.
+ */
+const MAX_TRANSIENT_FOLDER_FETCH_FAILURE_RETRIES_PER_FOLDER = 10;
 
 type PullLinkedFolderFilesJobProgress = {
   completedFolderIds?: string[];
@@ -810,6 +827,12 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         fetchingFolderEntry.status = 'active';
       }
 
+      // The folder's fetched count and warnings as they stood when its cursor was last checkpointed. A retry after
+      // a transient failure resumes from that cursor, so it rewinds the folder's progress to these (see
+      // readFolderFetchResumePoint). At the start of the fetch they pair with the cursor it starts from:
+      // restoreCountersFromPreviousAttemptCheckpoint restored them for exactly that cursor.
+      let folderProgressAtLastCheckpointedCursor = snapshotFolderFetchProgress(fetchingFolderEntry);
+
       try {
         const resumeProgress = jobProgress.folderCursors?.[folderId] ?? {};
         const result = await this.fetchFolder({
@@ -817,6 +840,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           jobId,
           pullSink,
           resumeProgress,
+          readResumePointForRetry: () =>
+            readFolderFetchResumePoint({
+              lastCheckpointedConnectorCursor: jobProgress.folderCursors?.[folderId],
+              folderProgressAtLastCheckpointedCursor,
+              fetchingFolderEntry,
+              publicProgress,
+            }),
           onBatchCheckpoint: async (update) => {
             // The run-wide count, this folder's count, its warnings, and its cursor all advance in one
             // synchronous step, so every checkpoint pairs a cursor with exactly the records (and warnings)
@@ -841,6 +871,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
             if (update.cursor) {
               jobProgress.folderCursors = jobProgress.folderCursors ?? {};
               jobProgress.folderCursors[folderId] = update.cursor;
+              folderProgressAtLastCheckpointedCursor = snapshotFolderFetchProgress(fetchingFolderEntry);
             }
             await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
           },
@@ -1061,6 +1092,8 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     jobId: string;
     pullSink: PullSink;
     resumeProgress: JsonSafeObject;
+    /** Where a retry after a transient failure resumes the fetch from (see {@link FolderFetchResumePoint}). */
+    readResumePointForRetry: () => FolderFetchResumePoint;
     onBatchCheckpoint: (update: {
       fileCount: number;
       cursor?: JsonSafeObject;
@@ -1068,7 +1101,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     }) => Promise<void>;
     abortSignal: AbortSignal;
   }): Promise<FolderFetchResult> {
-    const { folderCtx, jobId, pullSink, onBatchCheckpoint, abortSignal } = params;
+    const { folderCtx, jobId, pullSink, readResumePointForRetry, onBatchCheckpoint, abortSignal } = params;
     const { dataFolder, connector, tableSpec, pullOptions } = folderCtx;
     const folderId = dataFolder.id;
 
@@ -1098,19 +1131,32 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       cursor: folderCtx.effectiveMode === 'incremental' ? folderCtx.resumeCursor : null,
     };
 
+    // Retries happen here, between the sink's prepare and release, so the sink keeps everything it learned from the
+    // pages already written (classic: every pulled path, for stale-file deletion, and every file name it minted). A
+    // retry is therefore one continuous fetch to the sink, and `isResuming` stays what it was when the fetch started.
     let pullResult: PullRecordFilesResult;
+    let fetchResumedFromCheckpointedCursorAfterTransientFailure: boolean;
     try {
-      pullResult = await fetchFolderRecords({
-        connector,
-        tableSpec,
-        callOptions,
-        resumeProgress,
-        writeRecordPage: (connectorRecordsInPage) =>
-          pullSink.writeConnectorRecordPage(folderCtx, connectorRecordsInPage),
-        onBatchCheckpoint,
-        abortSignal,
-        jobId: folderCtx.jobId,
-      });
+      ({ pullResult, fetchResumedFromCheckpointedCursorAfterTransientFailure } =
+        await fetchFolderRecordsRetryingTransientFailures({
+          fetchFolderRecordsFromConnectorCursor: (connectorCursorToFetchFrom) =>
+            fetchFolderRecords({
+              connector,
+              tableSpec,
+              callOptions,
+              resumeProgress: connectorCursorToFetchFrom,
+              writeRecordPage: (connectorRecordsInPage) =>
+                pullSink.writeConnectorRecordPage(folderCtx, connectorRecordsInPage),
+              onBatchCheckpoint,
+              abortSignal,
+              jobId: folderCtx.jobId,
+            }),
+          connectorCursorTheFetchStartsFrom: resumeProgress,
+          readResumePointForRetry,
+          describeConnectorError: (error) => connector.extractConnectorErrorDetails(error),
+          folderCtx,
+          abortSignal,
+        }));
     } finally {
       pullSink.releaseRecordPageWritingStateForFolder(folderCtx);
     }
@@ -1118,8 +1164,20 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // For incremental: prefer the connector's reported watermark (e.g. server
     // time on the change-feed response) over the job-captured pullStartedAt,
     // but fall back to pullStartedAt if the connector didn't return one.
-    const newWatermark =
-      folderCtx.effectiveMode === 'incremental' ? (pullResult.newWatermark ?? folderCtx.pullStartedAt) : undefined;
+    //
+    // A fetch that resumed from a checkpointed cursor after a transient failure read the pages before that cursor in
+    // an earlier connector call, but most connectors stamp their watermark when the call STARTS — so the last call's
+    // watermark is later than those pages were read, and a record changed in between would be skipped by every later
+    // incremental pull. Such a fetch never stores a watermark later than the job's own start, captured before the
+    // first page.
+    let newWatermark: Date | undefined;
+    if (folderCtx.effectiveMode === 'incremental') {
+      const connectorOrJobWatermark = pullResult.newWatermark ?? folderCtx.pullStartedAt;
+      newWatermark =
+        fetchResumedFromCheckpointedCursorAfterTransientFailure && folderCtx.pullStartedAt < connectorOrJobWatermark
+          ? folderCtx.pullStartedAt
+          : connectorOrJobWatermark;
+    }
     const newCursor = folderCtx.effectiveMode === 'incremental' ? (pullResult.newCursor ?? null) : undefined;
 
     return { folderId, isResuming, newWatermark, newCursor };
@@ -1330,6 +1388,204 @@ async function fetchFolderRecords(params: {
   };
 
   return connector.pullRecordFiles(tableSpec, onBatch, resumeProgress, callOptions);
+}
+
+/** A folder's fetched-record count and degraded-record warnings at one moment of its fetch. */
+type FolderFetchProgressSnapshot = {
+  folderFetchedRecordCount: number;
+  degradedRecordWarnings: PulledRecordWarning[] | undefined;
+  degradedRecordWarningCount: number | undefined;
+};
+
+/** Before a folder's fetch has fetched anything: what a fetch that starts over from the first page rewinds to. */
+const FOLDER_FETCH_PROGRESS_BEFORE_ANY_PAGE: FolderFetchProgressSnapshot = {
+  folderFetchedRecordCount: 0,
+  degradedRecordWarnings: undefined,
+  degradedRecordWarningCount: undefined,
+};
+
+function snapshotFolderFetchProgress(folderProgressEntry: PullFolderProgress | undefined): FolderFetchProgressSnapshot {
+  return {
+    folderFetchedRecordCount: folderProgressEntry?.totalFiles ?? 0,
+    // addPulledRecordWarningsToFolderProgress replaces the array rather than appending to it, so keeping the
+    // reference keeps this moment's list.
+    degradedRecordWarnings: folderProgressEntry?.warnings,
+    degradedRecordWarningCount: folderProgressEntry?.warningCount,
+  };
+}
+
+/**
+ * Where a folder fetch that failed transiently resumes: exactly where a worker restart would resume it, from the
+ * cursor last checkpointed for the folder. Resuming anywhere else would make the two recovery paths disagree about
+ * what a connector's cursor means.
+ */
+type FolderFetchResumePoint = {
+  /** The cursor to hand the connector: `{}` when the fetch has to start over from the first page. */
+  connectorCursorToResumeFrom: JsonSafeObject;
+  /**
+   * Rewinds the folder's fetched count and warnings, and the run-wide fetched count, to that cursor, so the pages the
+   * retry fetches again are not counted twice: to what they were when the cursor was checkpointed, or to nothing when
+   * the fetch starts over.
+   */
+  rewindFolderProgressToResumePoint: () => void;
+};
+
+function readFolderFetchResumePoint(params: {
+  lastCheckpointedConnectorCursor: JsonSafeObject | undefined;
+  folderProgressAtLastCheckpointedCursor: FolderFetchProgressSnapshot;
+  fetchingFolderEntry: PullFolderProgress | undefined;
+  publicProgress: PullLinkedFolderFilesPublicProgress;
+}): FolderFetchResumePoint {
+  const {
+    lastCheckpointedConnectorCursor,
+    folderProgressAtLastCheckpointedCursor,
+    fetchingFolderEntry,
+    publicProgress,
+  } = params;
+
+  // Round-trip the cursor through JSON, as the checkpoint does, so it reads exactly as a worker restart would read it:
+  // a key whose value is `undefined` (e.g. HubSpot's `afterCursor` on its last page) is gone, which can leave `{}`.
+  const lastCheckpointedConnectorCursorAsStored = JSON.parse(
+    JSON.stringify(lastCheckpointedConnectorCursor ?? {}),
+  ) as JsonSafeObject;
+  const fetchResumesFromTheCursor = isResumableConnectorCursor(lastCheckpointedConnectorCursorAsStored);
+  const folderProgressToRewindTo = fetchResumesFromTheCursor
+    ? folderProgressAtLastCheckpointedCursor
+    : FOLDER_FETCH_PROGRESS_BEFORE_ANY_PAGE;
+
+  return {
+    connectorCursorToResumeFrom: fetchResumesFromTheCursor ? lastCheckpointedConnectorCursorAsStored : {},
+    rewindFolderProgressToResumePoint: () => {
+      if (!fetchingFolderEntry) {
+        return;
+      }
+      const recordsCountedSinceTheResumePoint =
+        fetchingFolderEntry.totalFiles - folderProgressToRewindTo.folderFetchedRecordCount;
+      fetchingFolderEntry.totalFiles -= recordsCountedSinceTheResumePoint;
+      publicProgress.totalFiles -= recordsCountedSinceTheResumePoint;
+
+      if (folderProgressToRewindTo.degradedRecordWarnings === undefined) {
+        delete fetchingFolderEntry.warnings;
+      } else {
+        fetchingFolderEntry.warnings = folderProgressToRewindTo.degradedRecordWarnings;
+      }
+      if (folderProgressToRewindTo.degradedRecordWarningCount === undefined) {
+        delete fetchingFolderEntry.warningCount;
+      } else {
+        fetchingFolderEntry.warningCount = folderProgressToRewindTo.degradedRecordWarningCount;
+      }
+    },
+  };
+}
+
+/**
+ * Fetches a folder's records, retrying the fetch when it fails transiently (a dropped connection, a timeout, or a
+ * 500/502/503/504 — see `isTransientRemoteServiceFailure`) instead of failing the folder, and with it a Live Export
+ * run, over one bad response (DEV-12926). Most connectors retry only their rate limits, so without this one dropped
+ * connection on page 800 of a pull threw the whole folder away.
+ *
+ * A pull only reads from the service, so a retry can't change anything there. Each retry resumes from the folder's
+ * last checkpointed cursor (see {@link FolderFetchResumePoint}) after a backoff
+ * ({@link TRANSIENT_FOLDER_FETCH_FAILURE_RETRY_DELAYS_MS}), which starts over each time a retry gets further than the
+ * one before. Any other failure, and the last transient one, is rethrown unchanged, so the folder fails exactly as it
+ * did before.
+ *
+ * Returns the last connector call's result, and whether any retry resumed from a checkpointed cursor — in which case
+ * that last call did not read the pages before the cursor, so its watermark doesn't cover them (see `fetchFolder`).
+ */
+async function fetchFolderRecordsRetryingTransientFailures(params: {
+  fetchFolderRecordsFromConnectorCursor: (connectorCursorToFetchFrom: JsonSafeObject) => Promise<PullRecordFilesResult>;
+  connectorCursorTheFetchStartsFrom: JsonSafeObject;
+  readResumePointForRetry: () => FolderFetchResumePoint;
+  describeConnectorError: (error: unknown) => ConnectorErrorDetails;
+  folderCtx: FolderContext;
+  abortSignal: AbortSignal;
+}): Promise<{ pullResult: PullRecordFilesResult; fetchResumedFromCheckpointedCursorAfterTransientFailure: boolean }> {
+  const {
+    fetchFolderRecordsFromConnectorCursor,
+    connectorCursorTheFetchStartsFrom,
+    readResumePointForRetry,
+    describeConnectorError,
+    folderCtx,
+    abortSignal,
+  } = params;
+
+  let connectorCursorThisTryStartedFrom = connectorCursorTheFetchStartsFrom;
+  let retriesInARowWithoutTheFetchGettingFurther = 0;
+  let retriesOfThisFolderFetch = 0;
+  let fetchResumedFromCheckpointedCursorAfterTransientFailure = false;
+
+  for (;;) {
+    try {
+      const pullResult = await fetchFolderRecordsFromConnectorCursor(connectorCursorThisTryStartedFrom);
+      return { pullResult, fetchResumedFromCheckpointedCursorAfterTransientFailure };
+    } catch (error) {
+      if (abortSignal.aborted || !isTransientRemoteServiceFailure(error)) {
+        throw error;
+      }
+
+      const resumePoint = readResumePointForRetry();
+      const fetchGotFurtherThanThisTryStarted =
+        JSON.stringify(resumePoint.connectorCursorToResumeFrom) !== JSON.stringify(connectorCursorThisTryStartedFrom);
+      if (fetchGotFurtherThanThisTryStarted) {
+        retriesInARowWithoutTheFetchGettingFurther = 0;
+      }
+      const retryDelayMs = TRANSIENT_FOLDER_FETCH_FAILURE_RETRY_DELAYS_MS[retriesInARowWithoutTheFetchGettingFurther];
+      if (
+        retryDelayMs === undefined ||
+        retriesOfThisFolderFetch >= MAX_TRANSIENT_FOLDER_FETCH_FAILURE_RETRIES_PER_FOLDER
+      ) {
+        throw error;
+      }
+      retriesInARowWithoutTheFetchGettingFurther++;
+      retriesOfThisFolderFetch++;
+
+      WSLogger.warn({
+        source: LOG_SOURCE,
+        message: 'Folder fetch failed transiently — retrying from its last checkpointed cursor',
+        workbookId: folderCtx.dataFolder.workbookId,
+        dataFolderId: folderCtx.dataFolder.id,
+        folderName: folderCtx.dataFolder.name,
+        connectorService: folderCtx.dataFolder.connectorService,
+        errorDetails: describeConnectorError(error),
+        retryNumberOfThisFolderFetch: retriesOfThisFolderFetch,
+        retryDelayMs,
+        resumesFromCheckpointedCursor: isResumableConnectorCursor(resumePoint.connectorCursorToResumeFrom),
+      });
+
+      resumePoint.rewindFolderProgressToResumePoint();
+      await waitBeforeRetryUnlessJobIsCanceled({ retryDelayMs, abortSignal, jobId: folderCtx.jobId });
+      connectorCursorThisTryStartedFrom = resumePoint.connectorCursorToResumeFrom;
+      if (isResumableConnectorCursor(connectorCursorThisTryStartedFrom)) {
+        fetchResumedFromCheckpointedCursorAfterTransientFailure = true;
+      }
+    }
+  }
+}
+
+/** Sleeps `retryDelayMs`, or throws {@link JobCanceledError} as soon as the job is canceled. */
+function waitBeforeRetryUnlessJobIsCanceled(params: {
+  retryDelayMs: number;
+  abortSignal: AbortSignal;
+  jobId: string;
+}): Promise<void> {
+  const { retryDelayMs, abortSignal, jobId } = params;
+  return new Promise((resolve, reject) => {
+    if (abortSignal.aborted) {
+      reject(new JobCanceledError(jobId));
+      return;
+    }
+    let retryDelayTimer: NodeJS.Timeout | undefined = undefined;
+    const stopWaitingBecauseTheJobWasCanceled = () => {
+      clearTimeout(retryDelayTimer);
+      reject(new JobCanceledError(jobId));
+    };
+    retryDelayTimer = setTimeout(() => {
+      abortSignal.removeEventListener('abort', stopWaitingBecauseTheJobWasCanceled);
+      resolve();
+    }, retryDelayMs);
+    abortSignal.addEventListener('abort', stopWaitingBecauseTheJobWasCanceled, { once: true });
+  });
 }
 
 /**

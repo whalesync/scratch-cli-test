@@ -1955,5 +1955,383 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         expect(checkpointedPublicProgress[checkpointedPublicProgress.length - 1].folders[0].totalFiles).toBe(3);
       });
     });
+
+    // DEV-12926: one dropped connection 80,200 records into a HubSpot pull failed a Live Export run. A transient
+    // failure now retries the fetch from the folder's last checkpointed cursor instead of failing the folder.
+    describe('retrying a folder fetch after a transient failure', () => {
+      type FinalPublicProgress = {
+        totalFiles: number;
+        folders: PullFolderProgress[];
+        folderErrors?: Record<string, { message: string }>;
+      };
+
+      const finalCheckpointedPublicProgress = (checkpoint: jest.Mock): FinalPublicProgress => {
+        const checkpointCalls = checkpoint.mock.calls as Array<[{ publicProgress: FinalPublicProgress }]>;
+        return checkpointCalls[checkpointCalls.length - 1][0].publicProgress;
+      };
+
+      /** What HubSpot's client threw in the failed run: a socket reset, with no HTTP response. */
+      const droppedConnection = () => Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+
+      /** The cursor each connector call was asked to resume from. */
+      const connectorCursorsFetchedFrom = (mockConnector: ReturnType<typeof createMockConnector>) =>
+        (mockConnector.pullRecordFiles.mock.calls as Array<unknown[]>).map((connectorCall) => connectorCall[2]);
+
+      /** Runs the job to the end, letting every wait before a retry elapse. */
+      const runLettingRetryWaitsElapse = async (runningJob: Promise<void>) => {
+        const jobOutcome = runningJob.then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        await jest.runAllTimersAsync();
+        return jobOutcome;
+      };
+
+      let warnSpy: jest.SpyInstance;
+
+      beforeEach(() => {
+        jest.useFakeTimers();
+        warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(WSLogger, 'error').mockImplementation(() => undefined);
+      });
+
+      afterEach(() => {
+        jest.useRealTimers();
+      });
+
+      it('resumes from the last checkpointed cursor after a dropped connection, writing and counting every record once', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        mockConnector.pullRecordFiles
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({ files: [{ id: 'rec1' }, { id: 'rec2' }], connectorProgress: { page: 'p2' } });
+            throw droppedConnection();
+          })
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({ files: [{ id: 'rec3' }], connectorProgress: { page: 'p3' } });
+            return {};
+          });
+        const { pullSink, pagesWritten } = createRecordingPullSink(false);
+
+        const jobError = await runLettingRetryWaitsElapse(createHandlerWritingTo(pullSink).run(params));
+
+        expect(jobError).toBeUndefined();
+        expect(connectorCursorsFetchedFrom(mockConnector)).toEqual([{}, { page: 'p2' }]);
+        expect(pagesWritten).toEqual([[{ id: 'rec1' }, { id: 'rec2' }], [{ id: 'rec3' }]]);
+        // One continuous fetch to the sink: prepared and released once, and finished as a complete pull.
+        expect(pullSink.prepareFolderForIncomingRecordPages).toHaveBeenCalledTimes(1);
+        expect(pullSink.releaseRecordPageWritingStateForFolder).toHaveBeenCalledTimes(1);
+        expect(pullSink.finishFolderAfterAllRecordPagesWritten).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ isResumingFromEarlierAttempt: false }),
+        );
+        const finalProgress = finalCheckpointedPublicProgress(params.checkpoint);
+        expect(finalProgress.totalFiles).toBe(3);
+        expect(finalProgress.folders[0]).toMatchObject({ status: 'completed', totalFiles: 3 });
+        expect(finalProgress.folderErrors).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Folder fetch failed transiently — retrying from its last checkpointed cursor',
+            dataFolderId: 'dfld_123',
+            retryNumberOfThisFolderFetch: 1,
+            retryDelayMs: 10_000,
+            resumesFromCheckpointedCursor: true,
+          }),
+        );
+        expect(mockPostHogService.trackPullCompleted).toHaveBeenCalledWith(
+          'usr_123',
+          expect.objectContaining({ result: 'success', totalFilesPulled: 3 }),
+        );
+      });
+
+      it('retries a 503 from the service', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        mockConnector.pullRecordFiles
+          .mockRejectedValueOnce(Object.assign(new Error('Service Unavailable'), { statusCode: 503 }))
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({ files: [{ id: 'rec1' }], connectorProgress: { page: 'p2' } });
+            return {};
+          });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await runLettingRetryWaitsElapse(createHandlerWritingTo(pullSink).run(params));
+
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(2);
+        expect(finalCheckpointedPublicProgress(params.checkpoint).folders[0]).toMatchObject({
+          status: 'completed',
+          totalFiles: 1,
+        });
+      });
+
+      it('starts over from the first page when the connector checkpoints no cursor, counting the records it fetches again once', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        mockConnector.pullRecordFiles
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({ files: [{ id: 'rec1' }, { id: 'rec2' }], connectorProgress: {} });
+            throw droppedConnection();
+          })
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({ files: [{ id: 'rec1' }, { id: 'rec2' }], connectorProgress: {} });
+            await callback({ files: [{ id: 'rec3' }], connectorProgress: {} });
+            return {};
+          });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await runLettingRetryWaitsElapse(createHandlerWritingTo(pullSink).run(params));
+
+        expect(connectorCursorsFetchedFrom(mockConnector)).toEqual([{}, {}]);
+        const finalProgress = finalCheckpointedPublicProgress(params.checkpoint);
+        expect(finalProgress.totalFiles).toBe(3);
+        expect(finalProgress.folders[0]).toMatchObject({ status: 'completed', totalFiles: 3 });
+      });
+
+      it('reads a cursor whose only key is undefined as no cursor, as a worker restart would', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        mockConnector.pullRecordFiles
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            // HubSpot hands back `{ afterCursor: undefined }` where it can't be resumed from; stored as JSON it is `{}`.
+            await callback({ files: [{ id: 'rec1' }], connectorProgress: { afterCursor: undefined } });
+            throw droppedConnection();
+          })
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({ files: [{ id: 'rec1' }], connectorProgress: { afterCursor: undefined } });
+            return {};
+          });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await runLettingRetryWaitsElapse(createHandlerWritingTo(pullSink).run(params));
+
+        expect(connectorCursorsFetchedFrom(mockConnector)).toEqual([{}, {}]);
+        expect(finalCheckpointedPublicProgress(params.checkpoint).folders[0].totalFiles).toBe(1);
+      });
+
+      it('rewinds the degraded-record warnings of the pages it fetches again', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        const recordWarningFor = (remoteId: string): PulledRecordWarning => ({
+          remoteId,
+          warning: `Pulled ${remoteId} without its history`,
+        });
+        mockConnector.pullRecordFiles
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({
+              files: [{ id: 'rec1' }],
+              connectorProgress: { page: 'p2' },
+              recordWarnings: [recordWarningFor('rec1')],
+            });
+            // A page whose cursor the connector doesn't report: the retry fetches it again.
+            await callback({ files: [{ id: 'rec2' }], recordWarnings: [recordWarningFor('rec2')] });
+            throw droppedConnection();
+          })
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({
+              files: [{ id: 'rec2' }],
+              connectorProgress: { page: 'p3' },
+              recordWarnings: [recordWarningFor('rec2')],
+            });
+            return {};
+          });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await runLettingRetryWaitsElapse(createHandlerWritingTo(pullSink).run(params));
+
+        expect(connectorCursorsFetchedFrom(mockConnector)).toEqual([{}, { page: 'p2' }]);
+        expect(finalCheckpointedPublicProgress(params.checkpoint).folders[0]).toMatchObject({
+          status: 'completed',
+          totalFiles: 2,
+          warningCount: 2,
+          warnings: [recordWarningFor('rec1'), recordWarningFor('rec2')],
+        });
+      });
+
+      it('fails the folder at once when the service rejects the request rather than failing to answer it', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        mockConnector.pullRecordFiles.mockRejectedValue(Object.assign(new Error('Not Found'), { statusCode: 404 }));
+        const { pullSink } = createRecordingPullSink(false);
+
+        await runLettingRetryWaitsElapse(createHandlerWritingTo(pullSink).run(params));
+
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(1);
+        expect(warnSpy).not.toHaveBeenCalledWith(
+          expect.objectContaining({ message: expect.stringContaining('retrying') as unknown }),
+        );
+        expect(finalCheckpointedPublicProgress(params.checkpoint).folders[0].status).toBe('failed');
+      });
+
+      it("gives up after three retries that get no further, failing the folder with the connector's error", async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        mockConnector.pullRecordFiles.mockRejectedValue(droppedConnection());
+        const { pullSink } = createRecordingPullSink(false);
+
+        const jobOutcome = createHandlerWritingTo(pullSink)
+          .run(params)
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+
+        // Waits 10s, 30s, then 60s before the three retries.
+        await jest.advanceTimersByTimeAsync(9_999);
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(1);
+        await jest.advanceTimersByTimeAsync(1);
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(2);
+        await jest.advanceTimersByTimeAsync(30_000);
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(3);
+        await jest.advanceTimersByTimeAsync(60_000);
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(4);
+        await jest.runAllTimersAsync();
+
+        expect(await jobOutcome).toBeUndefined();
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(4);
+        const finalProgress = finalCheckpointedPublicProgress(params.checkpoint);
+        expect(finalProgress.folders[0].status).toBe('failed');
+        expect(finalProgress.folderErrors?.dfld_123?.message).toBe('An error occurred');
+        expect(mockPostHogService.trackPullCompleted).toHaveBeenCalledWith(
+          'usr_123',
+          expect.objectContaining({ result: 'failure' }),
+        );
+      });
+
+      it('starts the retry budget over each time a retry gets further, so a long fetch survives several separate blips', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        const pageNumbersThatFailAfterBeingWritten = [1, 2, 3, 4];
+        let nextPageNumber = 1;
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          for (;;) {
+            const pageNumber = nextPageNumber++;
+            await callback({ files: [{ id: `rec${pageNumber}` }], connectorProgress: { page: `p${pageNumber + 1}` } });
+            if (pageNumbersThatFailAfterBeingWritten.includes(pageNumber)) {
+              throw droppedConnection();
+            }
+            if (pageNumber === 5) {
+              return {};
+            }
+          }
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await runLettingRetryWaitsElapse(createHandlerWritingTo(pullSink).run(params));
+
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(5);
+        expect(finalCheckpointedPublicProgress(params.checkpoint).folders[0]).toMatchObject({
+          status: 'completed',
+          totalFiles: 5,
+        });
+      });
+
+      it('stops after ten retries in all, even when every retry gets further', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        let nextPageNumber = 1;
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          const pageNumber = nextPageNumber++;
+          await callback({ files: [{ id: `rec${pageNumber}` }], connectorProgress: { page: `p${pageNumber + 1}` } });
+          throw droppedConnection();
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await runLettingRetryWaitsElapse(createHandlerWritingTo(pullSink).run(params));
+
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(11);
+        expect(finalCheckpointedPublicProgress(params.checkpoint).folders[0].status).toBe('failed');
+      });
+
+      it('cancels the job, without retrying, when the job is canceled during the wait before a retry', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        const abortController = new AbortController();
+        params.abortSignal = abortController.signal;
+        mockConnector.pullRecordFiles.mockRejectedValue(droppedConnection());
+        const { pullSink } = createRecordingPullSink(false);
+
+        const jobOutcome = createHandlerWritingTo(pullSink)
+          .run(params)
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        await jest.advanceTimersByTimeAsync(1_000);
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(1);
+
+        abortController.abort();
+
+        expect(await jobOutcome).toBeInstanceOf(JobCanceledError);
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(1);
+        expect(pullSink.cleanUpTemporaryStorageAfterPullAttempt).toHaveBeenCalledTimes(1);
+      });
+
+      it("stores the job's start as the incremental watermark, not the resumed call's, when a retry resumed from a cursor", async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, {
+          lastFullPullAt: new Date('2026-04-15T00:00:00.000Z'),
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        const jobStartedAtMs = Date.now();
+        mockConnector.pullRecordFiles
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({ files: [{ id: 'rec1', slug: 'first' }], connectorProgress: { page: 'p2' } });
+            throw droppedConnection();
+          })
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            // Like most connectors, this one stamps its watermark when the call starts: after the retry's wait, and
+            // after page 1 was read by the call that failed.
+            const watermarkStampedAtCallStart = new Date();
+            await callback({ files: [{ id: 'rec2', slug: 'second' }], connectorProgress: { page: 'p3' } });
+            return { newWatermark: watermarkStampedAtCallStart };
+          });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
+          created: [],
+          updated: [],
+          unchanged: [],
+        });
+
+        await runLettingRetryWaitsElapse(handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } }));
+
+        const folderUpdates = (mockPrisma.dataFolder.update as jest.Mock).mock.calls as Array<
+          [{ data: { lastIncrementalPullAt?: Date } }]
+        >;
+        const watermarkUpdate = folderUpdates.find(([update]) => update.data.lastIncrementalPullAt instanceof Date);
+        expect(watermarkUpdate?.[0].data.lastIncrementalPullAt?.getTime()).toBe(jobStartedAtMs);
+      });
+
+      it('keeps the records fetched before the failure out of stale-file deletion in the classic git store', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, {
+          lastFullPullAt: new Date('2026-04-15T00:00:00.000Z'),
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.pullRecordFiles
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({ files: [{ id: 'rec1', slug: 'first' }], connectorProgress: { page: 'p2' } });
+            throw droppedConnection();
+          })
+          .mockImplementationOnce(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+            await callback({ files: [{ id: 'rec2', slug: 'second' }], connectorProgress: { page: 'p3' } });
+            return {};
+          });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
+          created: [],
+          updated: [],
+          unchanged: [],
+        });
+        (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
+          { name: 'first.json', path: 'Products/first.json', type: 'file' },
+          { name: 'second.json', path: 'Products/second.json', type: 'file' },
+          { name: 'stale.json', path: 'Products/stale.json', type: 'file' },
+        ]);
+
+        await runLettingRetryWaitsElapse(handler.run({ ...params, data: { ...params.data, pullMode: 'full' } }));
+
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(2);
+        expect(mockScratchGitService.deleteFilesFromBranch).toHaveBeenCalledTimes(1);
+        const deleteCalls = (mockScratchGitService.deleteFilesFromBranch as jest.Mock).mock.calls as Array<
+          [string, string, string[], string]
+        >;
+        expect(deleteCalls[0][2]).toEqual(['Products/stale.json']);
+      });
+    });
   });
 });
