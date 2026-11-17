@@ -6,7 +6,7 @@ import { ScratchpadNotifications } from '@/app/components/ScratchpadNotification
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackAdminHardDeleteUser } from '@/lib/posthog';
 import { Code, Group, Modal, Stack, TextInput } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 /**
  * Type-to-confirm modal for the irreversible admin hard-delete of a user. The Delete button stays
@@ -27,12 +27,17 @@ export const HardDeleteUserModal = ({
   const [confirmText, setConfirmText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Reset the typed confirmation whenever the modal (re)opens or the target user changes.
-  useEffect(() => {
-    if (opened) {
+  // Reset the typed confirmation whenever the modal (re)opens or the target user changes. Done during render
+  // (not in an effect) so a stale confirmation can never pre-arm the Delete button, even for one frame.
+  const confirmationResetKeyWhileOpen = opened ? user.id : null;
+  const [previousConfirmationResetKeyWhileOpen, setPreviousConfirmationResetKeyWhileOpen] =
+    useState(confirmationResetKeyWhileOpen);
+  if (confirmationResetKeyWhileOpen !== previousConfirmationResetKeyWhileOpen) {
+    setPreviousConfirmationResetKeyWhileOpen(confirmationResetKeyWhileOpen);
+    if (confirmationResetKeyWhileOpen !== null) {
       setConfirmText('');
     }
-  }, [opened, user.id]);
+  }
 
   // Confirm against the email when we have one, otherwise fall back to the user id.
   const confirmToken = user.email ?? user.id;

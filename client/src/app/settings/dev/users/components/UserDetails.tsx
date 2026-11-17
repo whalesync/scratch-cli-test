@@ -41,7 +41,7 @@ import {
   UsersIcon,
 } from 'lucide-react';
 import Link from 'next/link';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useState } from 'react';
 import { clerkUserUrl, posthogPersonUrl, stripeCustomerUrl } from '../utils';
 import { HardDeleteUserModal } from './HardDeleteUserModal';
 
@@ -74,11 +74,14 @@ export const UserDetailsCard = ({
   // member); see GET /dev-tools/users/:id/details.
   const externalWorkspacesLostOnHardDelete = details.externallySharedWorkspaceCountLostOnHardDelete;
 
-  useEffect(() => {
+  // Reset per-user view state whenever a new details object arrives (a different user, or a refresh of this one).
+  const [previousDetails, setPreviousDetails] = useState(details);
+  if (details !== previousDetails) {
+    setPreviousDetails(details);
     setActiveWorkbookTab(details.workbooks[0]?.id ?? null);
     setCredentialsMap({});
     setLoadingCredentials({});
-  }, [details]);
+  }
 
   const { open: openConfirm, dialogProps } = useConfirmDialog();
   const orgIdError =

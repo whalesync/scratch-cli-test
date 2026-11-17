@@ -19,7 +19,7 @@ import { RoutineAction, ScheduleAction, type RoutineFileContent, type WorkbookId
 import CodeMirror from '@uiw/react-codemirror';
 import { AlertCircleIcon, ClockIcon, PlayIcon, SaveIcon, Trash2Icon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { RoutineScheduleModal, getRoutineScheduleLabel } from '../shared/RoutineScheduleModal';
 import { routineCompletionExtension, type RoutineCompletionData } from '../shared/routine-completion-extension';
@@ -98,6 +98,25 @@ function slugifyToYamlFileName(routineName: string): string {
   return slug ? `${slug}.yaml` : '';
 }
 
+/**
+ * A tiny mutable holder for the latest autocomplete data. Written by {@link RoutineCompletionDataSync} and read by
+ * the built-once completion source on every keystroke, without re-rendering the editor host.
+ */
+interface RoutineCompletionDataStore {
+  getLatestCompletionData: () => RoutineCompletionData;
+  setLatestCompletionData: (latestCompletionData: RoutineCompletionData) => void;
+}
+
+function createRoutineCompletionDataStore(): RoutineCompletionDataStore {
+  let latestCompletionData: RoutineCompletionData = { actions: [], connections: [], folders: [], syncs: [] };
+  return {
+    getLatestCompletionData: () => latestCompletionData,
+    setLatestCompletionData: (nextCompletionData) => {
+      latestCompletionData = nextCompletionData;
+    },
+  };
+}
+
 export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
   const isCreate = fileName === 'new';
   const filePath = `${ROUTINES_DIRECTORY}${fileName}`;
@@ -112,8 +131,8 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
   // <RoutineCompletionDataSync> child below so that SWR revalidations of that data re-render only the
   // child — not this editor host. (A host re-render mid-edit can make @uiw/react-codemirror's controlled
   // `value` reconciliation overwrite the document and drop the user's latest keystrokes.) The built-once
-  // completion source reads this ref on every keystroke.
-  const completionDataRef = useRef<RoutineCompletionData>({ actions: [], connections: [], folders: [], syncs: [] });
+  // completion source reads this store on every keystroke.
+  const [completionDataStore] = useState(createRoutineCompletionDataStore);
 
   // The live editor view, captured on creation. We read its document at save time so a save always
   // persists exactly what the user sees — the controlled `content` state can briefly lag the document
@@ -145,18 +164,12 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
 
   const [content, setContent] = useState('');
   const [savedContent, setSavedContent] = useState('');
-  const [hasChanges, setHasChanges] = useState(false);
+  // Create mode starts from the template against an empty saved baseline, so it counts as changed until saved.
+  const hasChanges = content !== savedContent;
   const [isContentInitialized, setIsContentInitialized] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isTriggering, setIsTriggering] = useState(false);
-
-  // Reset editor state whenever we navigate to a different routine (or to "new").
-  useEffect(() => {
-    setIsContentInitialized(false);
-    setHasChanges(false);
-    setSaveError(null);
-  }, [fileName]);
 
   // In create mode the file name is generated live from the routine's `name:` field.
   const derivedFileName = useMemo(
@@ -172,34 +185,33 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
   // Clear the preview on unmount so a stale draft never lingers in the sidebar.
   useEffect(() => () => setDraftFileName(null), [setDraftFileName]);
 
-  // Initialize content: a template for create mode, the fetched file otherwise.
-  useEffect(() => {
-    if (isContentInitialized) return;
+  // Initialize content once: a template for create mode, the fetched file otherwise. Done during render rather than
+  // in an effect. Later SWR revalidations never overwrite edits because of the isContentInitialized guard. The page
+  // keys this component by file name, so navigating to a different routine (or to "new") remounts it fresh.
+  if (!isContentInitialized) {
     if (isCreate) {
       setContent(NEW_ROUTINE_TEMPLATE);
       setSavedContent('');
-      setHasChanges(true);
       setIsContentInitialized(true);
-      return;
-    }
-    if (fileContent?.content !== undefined) {
+    } else if (fileContent?.content !== undefined) {
       setContent(fileContent.content);
       setSavedContent(fileContent.content);
-      setHasChanges(false);
       setIsContentInitialized(true);
     }
-  }, [isCreate, fileContent, isContentInitialized]);
+  }
 
+  const dismissSaveError = useCallback(() => setSaveError(null), []);
+
+  // Kept stable: @uiw/react-codemirror reconfigures the editor whenever its onChange identity changes.
   const handleContentChange = useCallback(
     (newContent: string) => {
       setContent(newContent);
-      setHasChanges(newContent !== savedContent);
-      setSaveError(null);
+      dismissSaveError();
     },
-    [savedContent],
+    [dismissSaveError],
   );
 
-  const handleSave = useCallback(async () => {
+  const handleSave = async () => {
     setSaveError(null);
 
     // Persist exactly what's on screen: read the live editor document rather than the controlled
@@ -229,7 +241,6 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
         trackRoutineUpdated(workbookId, targetPath);
       }
       setSavedContent(contentToSave);
-      setHasChanges(false);
       await mutate(SWR_KEYS.routines.list(workbookId));
       notifications.show({
         title: isCreate ? 'Routine created' : 'Routine saved',
@@ -249,7 +260,7 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [isCreate, filePath, content, workbookId, mutate, router]);
+  };
 
   const handleDelete = useCallback(() => {
     openConfirm({
@@ -298,23 +309,27 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
     await Promise.all([refreshSchedules(), mutate(SWR_KEYS.routines.list(workbookId))]);
   }, [refreshSchedules, mutate, workbookId]);
 
-  // Cmd+S / Ctrl+S to save.
+  // Cmd+S / Ctrl+S to save. The effect event always calls the latest handleSave without re-subscribing.
+  const saveFromKeyboardShortcut = useEffectEvent(() => {
+    void handleSave();
+  });
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
-        handleSave();
+        saveFromKeyboardShortcut();
       }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleSave]);
+  }, []);
 
-  // Built once and kept stable; the completion source reads live data through the ref getter above.
-  const extensions = useMemo(
-    () => [yaml(), EditorView.lineWrapping, routineCompletionExtension(() => completionDataRef.current)],
-    [],
-  );
+  // Built once and kept stable; the completion source reads live data through the store getter above.
+  const [extensions] = useState(() => [
+    yaml(),
+    EditorView.lineWrapping,
+    routineCompletionExtension(completionDataStore.getLatestCompletionData),
+  ]);
 
   const showLoading = !isCreate && isLoading && !isContentInitialized;
   const showNotFound = !isCreate && fileError && !isContentInitialized;
@@ -323,7 +338,7 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
     <Stack h="100%" gap={0}>
       {/* Loads connections/folders for autocomplete in isolation so their async revalidations don't
           re-render (and disrupt) the editor. Renders nothing. */}
-      <RoutineCompletionDataSync workbookId={workbookId} dataRef={completionDataRef} />
+      <RoutineCompletionDataSync workbookId={workbookId} completionDataStore={completionDataStore} />
 
       {/* Header: file name (or new-file input) + actions */}
       <Group
@@ -413,7 +428,7 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
           icon={<AlertCircleIcon size={16} />}
           title="Could not save routine"
           withCloseButton
-          onClose={() => setSaveError(null)}
+          onClose={dismissSaveError}
           style={{ flexShrink: 0, borderRadius: 0 }}
         >
           {saveError}
@@ -513,10 +528,10 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
  */
 function RoutineCompletionDataSync({
   workbookId,
-  dataRef,
+  completionDataStore,
 }: {
   workbookId: WorkbookId;
-  dataRef: MutableRefObject<RoutineCompletionData>;
+  completionDataStore: RoutineCompletionDataStore;
 }) {
   const { connectorAccounts } = useConnectorAccounts(workbookId);
   const { folders } = useDataFolders(workbookId);
@@ -530,7 +545,7 @@ function RoutineCompletionDataSync({
   }, [workbookId, fetchSyncs]);
 
   useEffect(() => {
-    dataRef.current = {
+    completionDataStore.setLatestCompletionData({
       actions: Object.values(RoutineAction),
       connections: (connectorAccounts ?? []).map((connection) => ({
         id: connection.id,
@@ -545,8 +560,8 @@ function RoutineCompletionDataSync({
         connectorService: folder.connectorService,
       })),
       syncs: syncs.map((sync) => ({ id: sync.id, displayName: sync.displayName })),
-    };
-  }, [connectorAccounts, folders, syncs, dataRef]);
+    });
+  }, [connectorAccounts, folders, syncs, completionDataStore]);
 
   return null;
 }

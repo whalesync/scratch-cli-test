@@ -23,9 +23,19 @@ interface RepairRepoModalProps {
  * repair is refused and manual recovery is required. (DEV-10574)
  */
 export function RepairRepoModal({ opened, onClose, connectorAccountId, connectionName }: RepairRepoModalProps) {
+  // Mantine unmounts the modal body on close, so every open starts from a clean slate and a fresh diagnosis.
+  return (
+    <Modal opened={opened} onClose={onClose} title={`Diagnose / Repair Repo — ${connectionName}`} size="lg" centered>
+      <RepairRepoModalBody onClose={onClose} connectorAccountId={connectorAccountId} connectionName={connectionName} />
+    </Modal>
+  );
+}
+
+function RepairRepoModalBody({ onClose, connectorAccountId, connectionName }: Omit<RepairRepoModalProps, 'opened'>) {
   const [report, setReport] = useState<GitFsckResponse | null>(null);
   const [lastRepair, setLastRepair] = useState<GitRepairResponse | null>(null);
-  const [isDiagnosing, setIsDiagnosing] = useState(false);
+  // Starts true: the body only mounts when the modal opens, and the effect below diagnoses right away.
+  const [isDiagnosing, setIsDiagnosing] = useState(true);
   const [isRepairing, setIsRepairing] = useState(false);
   const { open: openConfirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
@@ -41,13 +51,26 @@ export function RepairRepoModal({ opened, onClose, connectorAccountId, connectio
     }
   }, [connectorAccountId]);
 
-  // Diagnose automatically when the modal opens; clear prior state.
+  // Diagnose automatically when the modal opens (i.e. when this body mounts).
   useEffect(() => {
-    if (!opened) return;
-    setReport(null);
-    setLastRepair(null);
-    void diagnose();
-  }, [opened, diagnose]);
+    let isBodyUnmounted = false;
+    scratchApiClient.devTools
+      .fsckConnectionRepo(connectorAccountId)
+      .then((result) => {
+        if (!isBodyUnmounted) setReport(result);
+      })
+      .catch(() => {
+        if (!isBodyUnmounted) {
+          notifications.show({ title: 'Error', message: 'Failed to diagnose connection repo', color: 'red' });
+        }
+      })
+      .finally(() => {
+        if (!isBodyUnmounted) setIsDiagnosing(false);
+      });
+    return () => {
+      isBodyUnmounted = true;
+    };
+  }, [connectorAccountId]);
 
   const runRepair = async () => {
     setIsRepairing(true);
@@ -90,7 +113,7 @@ export function RepairRepoModal({ opened, onClose, connectorAccountId, connectio
   const canRepair = report !== null && !isHealthy && report.mainWalkable;
 
   return (
-    <Modal opened={opened} onClose={onClose} title={`Diagnose / Repair Repo — ${connectionName}`} size="lg" centered>
+    <>
       <Stack>
         {isDiagnosing && report === null ? (
           <Group gap="xs">
@@ -211,6 +234,6 @@ export function RepairRepoModal({ opened, onClose, connectorAccountId, connectio
         </Group>
       </Stack>
       <ConfirmDialog {...confirmDialogProps} />
-    </Modal>
+    </>
   );
 }

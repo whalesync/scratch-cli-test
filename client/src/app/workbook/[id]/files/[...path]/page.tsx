@@ -50,5 +50,6 @@ export default function FileDetailPage() {
   }
 
   // Otherwise show file viewer
-  return <FileViewer workbookId={workbookId} filePath={filePath} />;
+  // Keyed by path so switching files remounts the viewer with fresh editor state.
+  return <FileViewer key={filePath} workbookId={workbookId} filePath={filePath} />;
 }

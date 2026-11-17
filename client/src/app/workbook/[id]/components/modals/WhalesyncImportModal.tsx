@@ -18,7 +18,7 @@ import type {
 } from '@spinner/shared-types';
 import { AlertTriangleIcon, CheckIcon, ClipboardCopyIcon, InfoIcon, XCircleIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 type Step = 'credentials' | 'preview' | 'saving';
 
@@ -95,8 +95,10 @@ export function WhalesyncImportModal({ opened, onClose, workbookId }: WhalesyncI
   const fetchSyncs = useSyncStore((state) => state.fetchSyncs);
   const router = useRouter();
 
-  // Reset state when modal opens
-  useEffect(() => {
+  // Reset the wizard each time the modal opens
+  const [previousOpened, setPreviousOpened] = useState(opened);
+  if (opened !== previousOpened) {
+    setPreviousOpened(opened);
     if (opened) {
       setStep('credentials');
       setApiToken('');
@@ -107,7 +109,7 @@ export function WhalesyncImportModal({ opened, onClose, workbookId }: WhalesyncI
       setSavingProgress(0);
       setCopied(false);
     }
-  }, [opened]);
+  }
 
   const handlePreview = async () => {
     const coreBaseId = extractCoreBaseId(syncUrlOrId);

@@ -13,7 +13,7 @@ import {
   isNonBlankCredentialValue,
   resolveSecretFieldsToReenterForConnectionTargetEdit,
 } from '@spinner/shared-types';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { GenericApiConnectionModal } from './GenericApiConnectionModal';
 import { PemCredentialField } from './PemCredentialField';
 import {
@@ -80,7 +80,18 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
   ).filter((field) => field.type === 'string-list' && field.extrasKey !== undefined);
   const [extrasFieldRows, setExtrasFieldRows] = useState<Record<string, string[]>>({});
 
-  useEffect(() => {
+  // (Re)initialize the form whenever the account or the connectors metadata changes. Metadata loads asynchronously
+  // and drives extrasBackedFields, so it must re-trigger too. Done during render rather than in an effect.
+  const [previousFormInitializationSource, setPreviousFormInitializationSource] = useState<{
+    connectorAccount: typeof connectorAccount;
+    metadata: typeof metadata;
+  } | null>(null);
+  if (
+    previousFormInitializationSource === null ||
+    previousFormInitializationSource.connectorAccount !== connectorAccount ||
+    previousFormInitializationSource.metadata !== metadata
+  ) {
+    setPreviousFormInitializationSource({ connectorAccount, metadata });
     if (connectorAccount) {
       setUpdatedName(connectorAccount.displayName);
       setUpdatedModifier(connectorAccount.modifier);
@@ -93,9 +104,7 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
         ),
       );
     }
-    // extrasBackedFields is derived from connectorAccount + static metadata.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectorAccount, metadata]);
+  }
 
   const setFieldValue = (key: string, value: string | boolean) => {
     setFieldValues((prev) => ({ ...prev, [key]: value }));

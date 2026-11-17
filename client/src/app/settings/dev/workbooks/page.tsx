@@ -8,6 +8,7 @@ import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useGitActions } from '@/hooks/use-git-actions';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { RouteUrls } from '@/utils/route-urls';
 import {
@@ -33,7 +34,8 @@ import { useClipboard, useDebouncedValue } from '@mantine/hooks';
 import { AdminWorkbookConnectionDto, AdminWorkbookDto, WorkbookId } from '@spinner/shared-types';
 import { BookOpenIcon, ChevronDownIcon, ChevronUpIcon, FolderIcon, MoreVerticalIcon, ScissorsIcon } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import useSWR from 'swr';
 
 const PAGE_SIZE_OPTIONS = ['1', '10', '20', '25', '100', '1000'];
 
@@ -421,51 +423,49 @@ export default function WorkbooksDevPage() {
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
 
-  const [workbooks, setWorkbooks] = useState<AdminWorkbookDto[]>([]);
-  const [total, setTotal] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+  // Reset to page 1 when filters or sort change. Done during render so we never fetch the old page number with the
+  // new filters. Serialized so a new-but-equal serviceFilter array doesn't count as a change.
+  const filterAndSortKey = JSON.stringify([debouncedSearch, serviceFilter, serviceMode, sortOrder, pageSize]);
+  const [previousFilterAndSortKey, setPreviousFilterAndSortKey] = useState(filterAndSortKey);
+  if (filterAndSortKey !== previousFilterAndSortKey) {
+    setPreviousFilterAndSortKey(filterAndSortKey);
+    setPage(1);
+  }
 
-  const [connectionsWorkbook, setConnectionsWorkbook] = useState<AdminWorkbookDto | null>(null);
+  const adminListWorkbooksParameters = {
+    search: debouncedSearch || undefined,
+    services: serviceFilter.length ? serviceFilter : undefined,
+    serviceMode: serviceFilter.length > 1 ? serviceMode : undefined,
+    sortOrder,
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+  };
+  const {
+    data: adminWorkbooksPage,
+    isLoading,
+    error: loadError,
+  } = useSWR<{ workbooks: AdminWorkbookDto[]; total: number }, Error>(
+    isAdmin ? SWR_KEYS.devTools.adminWorkbooks(adminListWorkbooksParameters) : null,
+    () => scratchApiClient.devTools.adminListWorkbooks(adminListWorkbooksParameters),
+    { keepPreviousData: true, revalidateOnFocus: false },
+  );
+  const workbooks = adminWorkbooksPage?.workbooks ?? [];
+  const total = adminWorkbooksPage?.total ?? 0;
+
+  // The workbook whose connections modal is open. Re-resolved against the latest page so the modal reflects fresh
+  // data, falling back to the snapshot that was clicked if it's no longer on the current page.
+  const [clickedConnectionsWorkbook, setClickedConnectionsWorkbook] = useState<AdminWorkbookDto | null>(null);
+  const connectionsWorkbook = clickedConnectionsWorkbook
+    ? (workbooks.find((workbook) => workbook.id === clickedConnectionsWorkbook.id) ?? clickedConnectionsWorkbook)
+    : null;
 
   // Only used for workbook-level "Strip All Connection Prefixes" action
   const gitActions = useGitActions();
-
-  const fetchWorkbooks = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(false);
-    try {
-      const result = await scratchApiClient.devTools.adminListWorkbooks({
-        search: debouncedSearch || undefined,
-        services: serviceFilter.length ? serviceFilter : undefined,
-        serviceMode: serviceFilter.length > 1 ? serviceMode : undefined,
-        sortOrder,
-        limit: pageSize,
-        offset: (page - 1) * pageSize,
-      });
-      setWorkbooks(result.workbooks);
-      setTotal(result.total);
-      setConnectionsWorkbook((prev) => (prev ? (result.workbooks.find((w) => w.id === prev.id) ?? prev) : null));
-    } catch {
-      setLoadError(true);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [debouncedSearch, serviceFilter, serviceMode, sortOrder, page, pageSize]);
-
-  // Reset to page 1 when filters or sort change
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, serviceFilter, serviceMode, sortOrder, pageSize]);
 
   // Toggle the created-date sort direction (created date is the only sortable column).
   const toggleCreatedSortOrder = useCallback(() => {
     setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
   }, []);
-
-  useEffect(() => {
-    if (isAdmin) fetchWorkbooks();
-  }, [isAdmin, fetchWorkbooks]);
 
   if (isUserLoading) {
     return (
@@ -587,7 +587,7 @@ export default function WorkbooksDevPage() {
                     <WorkbookRow
                       key={workbook.id}
                       workbook={workbook}
-                      onShowConnections={setConnectionsWorkbook}
+                      onShowConnections={setClickedConnectionsWorkbook}
                       onStripAllPrefixes={(id) => void gitActions.handleStripAllPrefixes(id)}
                     />
                   ))}
@@ -604,7 +604,7 @@ export default function WorkbooksDevPage() {
         </Stack>
       </MainContent.Body>
 
-      <ConnectionsModal workbook={connectionsWorkbook} onClose={() => setConnectionsWorkbook(null)} />
+      <ConnectionsModal workbook={connectionsWorkbook} onClose={() => setClickedConnectionsWorkbook(null)} />
       {/* Workbook-level strip prefix results modal */}
       <Modal
         opened={gitActions.stripPrefixModalOpen}

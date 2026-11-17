@@ -206,7 +206,10 @@ export function TransformerConfigModal({
   const [showTypesMode, setShowTypesMode] = useState<'no' | 'output' | 'input-and-output'>('output');
   const { colorScheme } = useMantineColorScheme();
 
-  useEffect(() => {
+  // The modal stays mounted and is reused across mappings, so reset per-open state each time it opens
+  const [previousOpened, setPreviousOpened] = useState(opened);
+  if (opened !== previousOpened) {
+    setPreviousOpened(opened);
     if (opened) {
       setTypeTrace(null);
       setLastValidationResult(null);
@@ -215,7 +218,7 @@ export function TransformerConfigModal({
       setHoveredPlusSlot(null);
       setValidationResultModalOpen(false);
     }
-  }, [opened]);
+  }
 
   const insertAt = useCallback(
     (index: number) => {

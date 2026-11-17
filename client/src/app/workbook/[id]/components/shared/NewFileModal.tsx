@@ -4,7 +4,7 @@ import { ScratchpadNotifications } from '@/app/components/ScratchpadNotification
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Button, Checkbox, Group, Modal, Stack, TextInput } from '@mantine/core';
 import type { DataFolder, WorkbookId } from '@spinner/shared-types';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 interface NewFileModalProps {
   opened: boolean;
@@ -22,12 +22,16 @@ export function NewFileModal({ opened, onClose, folder, workbookId, onSuccess }:
   const [useTemplate, setUseTemplate] = useState(!isScratch);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
+  // Reset the form each time the modal opens (or the folder kind changes while open)
+  const formResetKeyWhileOpen = opened ? isScratch : null;
+  const [previousFormResetKeyWhileOpen, setPreviousFormResetKeyWhileOpen] = useState(formResetKeyWhileOpen);
+  if (formResetKeyWhileOpen !== previousFormResetKeyWhileOpen) {
+    setPreviousFormResetKeyWhileOpen(formResetKeyWhileOpen);
     if (opened) {
       setFileName('');
       setUseTemplate(!isScratch);
     }
-  }, [opened, isScratch]);
+  }
 
   const handleCreate = async () => {
     if (!fileName.trim()) return;

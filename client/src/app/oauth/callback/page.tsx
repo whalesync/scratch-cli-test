@@ -66,6 +66,17 @@ const isWhalesyncForwardUrl = (resultForwardUrl: string | undefined): resultForw
   }
 };
 
+const decodeOAuthStatePayload = (oAuthStateString: string): OAuthStatePayload | null => {
+  try {
+    if (!oAuthStateString) return null;
+
+    // Decode the base64 state parameter.
+    return (JSON.parse(Buffer.from(oAuthStateString, 'base64').toString()) as OAuthStatePayload) || null;
+  } catch {
+    return null;
+  }
+};
+
 /**
  * LEGACY — see the banner at the top of this file; the active routing lives in dusky's connector
  * callback, not here. This page is the pre-migration `redirect_uri`.
@@ -215,17 +226,6 @@ function OAuthCallbackContent() {
     handleOAuthCallback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const decodeOAuthStatePayload = (oAuthStateString: string): OAuthStatePayload | null => {
-    try {
-      if (!oAuthStateString) return null;
-
-      // Decode the base64 state parameter.
-      return (JSON.parse(Buffer.from(oAuthStateString, 'base64').toString()) as OAuthStatePayload) || null;
-    } catch {
-      return null;
-    }
-  };
 
   return (
     <Container size="sm" py="xl">

@@ -15,7 +15,7 @@ import { Box, Text, useMantineColorScheme } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { fkReferenceExtension, ResolvedReferences } from '../shared/fk-reference-extension';
 import { MergeEditor } from '../shared/MergeEditor';
@@ -49,21 +49,28 @@ export function ReviewFileViewer({ workbookId, filePath, connectorAccountId }: R
   const isPublishing = isPublishSubmitting || isJobActive;
 
   // Navigate back to review page when publish job completes successfully
-  const [wasJobActive, setWasJobActive] = useState(false);
+  const wasPublishJobActiveRef = useRef(false);
   useEffect(() => {
     if (isJobActive) {
-      setWasJobActive(true);
-    } else if (wasJobActive && publishJobId) {
-      setWasJobActive(false);
-      const finishedJobId = publishJobId;
-      setPublishJobId(null);
-      scratchApiClient.job.getJobsStatus([finishedJobId]).then((jobs) => {
+      wasPublishJobActiveRef.current = true;
+      return;
+    }
+    if (!wasPublishJobActiveRef.current || !publishJobId) {
+      return;
+    }
+    wasPublishJobActiveRef.current = false;
+    const finishedJobId = publishJobId;
+    scratchApiClient.job
+      .getJobsStatus([finishedJobId])
+      .then((jobs) => {
         if (jobs[0]?.state === 'completed') {
           router.push(`/workbook/${workbookId}/review`);
         }
+      })
+      .finally(() => {
+        setPublishJobId((currentPublishJobId) => (currentPublishJobId === finishedJobId ? null : currentPublishJobId));
       });
-    }
-  }, [isJobActive, wasJobActive, publishJobId, workbookId, router]);
+  }, [isJobActive, publishJobId, workbookId, router]);
 
   // View mode from shared toolbar store
   const viewMode = useReviewToolbarStore((state) => state.viewMode);
@@ -96,7 +103,11 @@ export function ReviewFileViewer({ workbookId, filePath, connectorAccountId }: R
   const [isContentInitialized, setIsContentInitialized] = useState(false);
   const [initialContentLength, setInitialContentLength] = useState<number>(0);
 
-  useEffect(() => {
+  // (Re)initialize whenever a new file response arrives, including the revalidation after a save. Done during
+  // render rather than in an effect.
+  const [previousFileResponse, setPreviousFileResponse] = useState<typeof fileResponse>(undefined);
+  if (fileResponse !== previousFileResponse) {
+    setPreviousFileResponse(fileResponse);
     if (fileResponse?.file?.content !== undefined) {
       const fileContent = fileResponse.file.content ?? '';
       setContent(fileContent);
@@ -105,7 +116,7 @@ export function ReviewFileViewer({ workbookId, filePath, connectorAccountId }: R
       setInitialContentLength(fileContent.length);
       setIsContentInitialized(true);
     }
-  }, [fileResponse]);
+  }
 
   const handleContentChange = useCallback(
     (newContent: string) => {

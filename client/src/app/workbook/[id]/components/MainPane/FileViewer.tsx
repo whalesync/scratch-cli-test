@@ -47,8 +47,12 @@ export function FileViewer({ workbookId, filePath }: FileViewerProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [isContentInitialized, setIsContentInitialized] = useState(false);
 
-  // Initialize content from file response
-  useEffect(() => {
+  // (Re)initialize content whenever a new file response arrives, including the revalidation after a save. Done
+  // during render rather than in an effect. The parent keys this component by filePath, so switching files remounts
+  // it with fresh state instead of resetting here.
+  const [previousFileResponse, setPreviousFileResponse] = useState<typeof fileResponse>(undefined);
+  if (fileResponse !== previousFileResponse) {
+    setPreviousFileResponse(fileResponse);
     if (fileResponse?.file?.content !== undefined) {
       const fileContent = fileResponse.file.content ?? '';
       setContent(fileContent);
@@ -56,13 +60,7 @@ export function FileViewer({ workbookId, filePath }: FileViewerProps) {
       setHasChanges(false);
       setIsContentInitialized(true);
     }
-  }, [fileResponse]);
-
-  // Reset when file path changes
-  useEffect(() => {
-    setIsContentInitialized(false);
-    setHasChanges(false);
-  }, [filePath]);
+  }
 
   // Extract filename from path
   const fileName = useMemo(() => {

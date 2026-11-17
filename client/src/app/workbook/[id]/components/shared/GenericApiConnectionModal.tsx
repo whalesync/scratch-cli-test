@@ -31,7 +31,7 @@ import {
 } from '@spinner/shared-types';
 import { ScratchpadApiError } from '@spinner/shared-types/api-client';
 import { Copy, Plus, Settings, Sparkles, Trash2 } from 'lucide-react';
-import { ReactNode, useEffect, useMemo, useState } from 'react';
+import { ReactNode, useMemo, useState } from 'react';
 
 export type GenericApiConnectionModalProps = ModalProps & {
   workbookId: string;
@@ -166,29 +166,40 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
 
   // Prepopulate from an existing account when in edit mode. Re-runs every time
   // the modal opens — onExitTransitionEnd resets state between opens, so
-  // depending on `existingAccount` alone misses the re-open case.
-  useEffect(() => {
-    if (!opened || !existingAccount) return;
-    setDisplayName(existingAccount.displayName);
-    setApiKey(''); // blank = keep existing encrypted key
-    const extras = existingAccount.extras;
-    if (isGenericApiConnectorExtras(extras)) {
-      setApiType(extras.apiType);
-      if (extras.authHeader.style === 'custom-header') {
-        setAuthStyle('custom-header');
-        setCustomHeaderName(extras.authHeader.headerName || 'X-API-Key');
-        setCustomValuePrefix(extras.authHeader.valuePrefix || '');
-      } else {
-        setAuthStyle(extras.authHeader.style);
+  // depending on `existingAccount` alone misses the re-open case. Done during
+  // render rather than in an effect.
+  const [previousPrefillSource, setPreviousPrefillSource] = useState<{
+    opened: boolean;
+    existingAccount: typeof existingAccount;
+  } | null>(null);
+  if (
+    previousPrefillSource === null ||
+    previousPrefillSource.opened !== opened ||
+    previousPrefillSource.existingAccount !== existingAccount
+  ) {
+    setPreviousPrefillSource({ opened, existingAccount });
+    if (opened && existingAccount) {
+      setDisplayName(existingAccount.displayName);
+      setApiKey(''); // blank = keep existing encrypted key
+      const extras = existingAccount.extras;
+      if (isGenericApiConnectorExtras(extras)) {
+        setApiType(extras.apiType);
+        if (extras.authHeader.style === 'custom-header') {
+          setAuthStyle('custom-header');
+          setCustomHeaderName(extras.authHeader.headerName || 'X-API-Key');
+          setCustomValuePrefix(extras.authHeader.valuePrefix || '');
+        } else {
+          setAuthStyle(extras.authHeader.style);
+        }
+        if (extras.apiType === 'rest') {
+          setRestEndpoints(extras.endpoints as GenericApiRestEndpoint[]);
+        } else {
+          setGraphqlEndpoints(extras.endpoints as GenericApiGraphqlEndpoint[]);
+        }
+        setUserConfigured(true);
       }
-      if (extras.apiType === 'rest') {
-        setRestEndpoints(extras.endpoints as GenericApiRestEndpoint[]);
-      } else {
-        setGraphqlEndpoints(extras.endpoints as GenericApiGraphqlEndpoint[]);
-      }
-      setUserConfigured(true);
     }
-  }, [existingAccount, opened]);
+  }
 
   const summary = useMemo(() => {
     type EndpointRow = { name: string; method?: string; url: string };

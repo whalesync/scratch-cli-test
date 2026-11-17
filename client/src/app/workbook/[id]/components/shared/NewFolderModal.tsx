@@ -5,7 +5,7 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { Button, Group, Modal, Stack, TextInput } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 interface NewFolderModalProps {
   opened: boolean;
@@ -23,11 +23,14 @@ export function NewFolderModal({ opened, onClose, workbookId }: NewFolderModalPr
   const [folderName, setFolderName] = useState('');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
+  // Clear the name each time the modal opens
+  const [previousOpened, setPreviousOpened] = useState(opened);
+  if (opened !== previousOpened) {
+    setPreviousOpened(opened);
     if (opened) {
       setFolderName('');
     }
-  }, [opened]);
+  }
 
   const handleCreate = async () => {
     const name = folderName.trim();

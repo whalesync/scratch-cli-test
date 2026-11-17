@@ -1,3 +1,4 @@
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import {
   Autocomplete,
@@ -25,7 +26,8 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import { FlaskRoundIcon, Search, Wand2Icon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import useSWR from 'swr';
 
 interface TestTransformerModalProps {
   opened: boolean;
@@ -85,11 +87,11 @@ function flattenKeys(obj: Record<string, unknown>, prefix = ''): PathOption[] {
   return keys;
 }
 
+const NO_PATH_OPTIONS: PathOption[] = [];
+
 export function TestTransformerModal({ opened, onClose, workbookId, file }: TestTransformerModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<TestTransformerResponse | null>(null);
-  const [paths, setPaths] = useState<PathOption[]>([]);
-  const [fetchingPaths, setFetchingPaths] = useState(false);
   const [prettify, setPrettify] = useState(false);
 
   // Simple HTML formatter
@@ -114,31 +116,21 @@ export function TestTransformerModal({ opened, onClose, workbookId, file }: Test
     return formatted.substring(1, formatted.length - 2);
   };
 
-  // Fetch file content when opened
-  useEffect(() => {
-    if (opened) {
-      setFetchingPaths(true);
-      setPaths([]); // Clear previous paths
-      scratchApiClient.git
-        .getRepoFile(workbookId, file.path)
-        .then((res) => {
-          try {
-            const json = JSON.parse(res.content) as Record<string, unknown>;
-            const flattened = flattenKeys(json);
-            console.log('Flattened paths:', flattened); // Debug log
-            setPaths(flattened);
-          } catch (e) {
-            console.warn('Failed to parse file content or flatten keys', e);
-          }
-        })
-        .catch((err) => {
-          console.error('Failed to fetch file content', err);
-        })
-        .finally(() => {
-          setFetchingPaths(false);
-        });
-    }
-  }, [opened, workbookId, file.path]);
+  // Fetch the file when opened and offer its flattened JSON key paths as suggestions
+  const { data: paths = NO_PATH_OPTIONS, isLoading: fetchingPaths } = useSWR(
+    opened ? SWR_KEYS.files.flattenedJsonPaths(workbookId, file.path) : null,
+    async (): Promise<PathOption[]> => {
+      const res = await scratchApiClient.git.getRepoFile(workbookId, file.path);
+      try {
+        const json = JSON.parse(res.content) as Record<string, unknown>;
+        return flattenKeys(json);
+      } catch (e) {
+        console.warn('Failed to parse file content or flatten keys', e);
+        return [];
+      }
+    },
+    { revalidateOnFocus: false, onError: (err) => console.error('Failed to fetch file content', err) },
+  );
 
   const form = useForm({
     initialValues: {

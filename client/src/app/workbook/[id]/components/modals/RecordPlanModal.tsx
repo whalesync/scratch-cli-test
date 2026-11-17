@@ -1,5 +1,6 @@
 'use client';
 
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
@@ -7,7 +8,8 @@ import { Badge, Group, Loader, Modal, ScrollArea, SegmentedControl, Stack, Text,
 import { PublishPlanOperationEntity, WorkbookId } from '@spinner/shared-types';
 import { Change, diffJson, diffLines } from 'diff';
 import { GitCompareIcon } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import useSWR from 'swr';
 import { MergeEditor } from '../shared/MergeEditor';
 import { UnifiedDiffView } from '../shared/UnifiedDiffView';
 
@@ -173,6 +175,8 @@ function SideBySideDiffView({
    Tab Labels & Colors
    ================================================================ */
 
+const NO_PLAN_ENTRIES: PlanEntry[] = [];
+
 const TAB_META: Record<DiffTab, { label: string; color: string }> = {
   userEdit: { label: 'User Edit', color: 'violet' },
   edit: { label: 'Edit', color: 'blue' },
@@ -186,44 +190,33 @@ const TAB_META: Record<DiffTab, { label: string; color: string }> = {
    ================================================================ */
 
 export function RecordPlanModal({ opened, onClose, workbookId, publishPlanId, filePath }: RecordPlanModalProps) {
-  const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<DiffTab>('userEdit');
+  const [selectedTab, setSelectedTab] = useState<DiffTab>('userEdit');
   const [layout, setLayout] = useState<DiffLayout>('inline');
   const [engine, setEngine] = useState<DiffEngine>('json');
 
-  // Data
-  const [masterJson, setMasterJson] = useState<string>('');
-  const [dirtyJson, setDirtyJson] = useState<string>('');
-  const [entries, setEntries] = useState<PlanEntry[]>([]);
-
-  const fetchData = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      // Fetch master, dirty, and entries in parallel
+  // Data: master, dirty, and this file's plan entries, fetched in parallel. A missing file on either branch
+  // (e.g. a create or a delete) yields an empty string rather than failing the whole load.
+  const { data: recordPlanData, isLoading } = useSWR(
+    opened ? SWR_KEYS.publishPlans.recordPlan(workbookId, publishPlanId, filePath) : null,
+    async () => {
       const [masterRes, dirtyRes, allEntries] = await Promise.allSettled([
         scratchApiClient.git.getRepoFile(workbookId, filePath, 'main'),
         scratchApiClient.git.getRepoFile(workbookId, filePath, 'dirty'),
         scratchApiClient.publish.listPublishPlanOperations(workbookId, publishPlanId, { pageSize: 200 }),
       ]);
-
-      setMasterJson(masterRes.status === 'fulfilled' ? formatJson(masterRes.value.content) : '');
-      setDirtyJson(dirtyRes.status === 'fulfilled' ? formatJson(dirtyRes.value.content) : '');
-
       // Filter entries for this file only
       const fileEntries = (allEntries.status === 'fulfilled' ? allEntries.value.data : []) as PlanEntry[];
-      setEntries(fileEntries.filter((e) => e.filePath === filePath));
-    } catch (err) {
-      console.error('RecordPlanModal: fetch failed', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [workbookId, publishPlanId, filePath]);
-
-  useEffect(() => {
-    if (opened) {
-      fetchData();
-    }
-  }, [opened, fetchData]);
+      return {
+        masterJson: masterRes.status === 'fulfilled' ? formatJson(masterRes.value.content) : '',
+        dirtyJson: dirtyRes.status === 'fulfilled' ? formatJson(dirtyRes.value.content) : '',
+        entries: fileEntries.filter((e) => e.filePath === filePath),
+      };
+    },
+    { revalidateOnFocus: false, onError: (err) => console.error('RecordPlanModal: fetch failed', err) },
+  );
+  const masterJson = recordPlanData?.masterJson ?? '';
+  const dirtyJson = recordPlanData?.dirtyJson ?? '';
+  const entries = recordPlanData?.entries ?? NO_PLAN_ENTRIES;
 
   // Get operation JSON for a given phase
   const getPhaseJson = useCallback(
@@ -246,12 +239,8 @@ export function RecordPlanModal({ opened, onClose, workbookId, publishPlanId, fi
     return tabs;
   }, [entries]);
 
-  // Auto-select first available tab when data loads, but prefer userEdit
-  useEffect(() => {
-    if (!availableTabs.includes(activeTab)) {
-      setActiveTab(availableTabs[0] ?? 'userEdit');
-    }
-  }, [availableTabs, activeTab]);
+  // Fall back to the first available tab (userEdit) when the selected one isn't available
+  const activeTab = availableTabs.includes(selectedTab) ? selectedTab : (availableTabs[0] ?? 'userEdit');
 
   // Compute diff pair for the active tab
   const { left, right } = useMemo(() => {
@@ -330,7 +319,7 @@ export function RecordPlanModal({ opened, onClose, workbookId, publishPlanId, fi
                   variant={activeTab === tab ? 'filled' : 'outline'}
                   size="lg"
                   style={{ cursor: 'pointer' }}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => setSelectedTab(tab)}
                 >
                   {TAB_META[tab].label}
                 </Badge>

@@ -1,8 +1,12 @@
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Anchor, Button, Code, Group, Loader, Modal, ScrollArea, Select, Stack, Text, ThemeIcon } from '@mantine/core';
 import { GitFile, WorkbookId } from '@spinner/shared-types';
 import { ArrowUpIcon, FileIcon, FolderIcon } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import useSWR from 'swr';
+
+const NO_GIT_FILES: GitFile[] = [];
 
 interface GitFileBrowserModalProps {
   workbookId: WorkbookId;
@@ -19,75 +23,65 @@ export const GitFileBrowserModal = ({
   connectorAccountId,
   useConfigRepo,
 }: GitFileBrowserModalProps) => {
-  const [branch, setBranch] = useState<'main' | 'dirty' | 'merge_base'>('main');
+  // Mantine unmounts the modal body on close, so the browser below starts fresh (main branch, repo root) on every open.
+  return (
+    <Modal title="Git Browser" opened={opened} onClose={onClose} size="lg">
+      <GitFileBrowser workbookId={workbookId} connectorAccountId={connectorAccountId} useConfigRepo={useConfigRepo} />
+    </Modal>
+  );
+};
+
+type GitBrowserBranch = 'main' | 'dirty' | 'merge_base';
+
+function GitFileBrowser({
+  workbookId,
+  connectorAccountId,
+  useConfigRepo,
+}: Pick<GitFileBrowserModalProps, 'workbookId' | 'connectorAccountId' | 'useConfigRepo'>) {
+  const [branch, setBranch] = useState<GitBrowserBranch>('main');
   const [currentPath, setCurrentPath] = useState('');
   const [currentFile, setCurrentFile] = useState<string | null>(null);
-  const [files, setFiles] = useState<GitFile[]>([]);
-  const [fileContent, setFileContent] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  // Define data fetching logic
-  const loadFolder = useCallback(
-    async (path: string, br: string) => {
-      setLoading(true);
-      try {
-        const list = await scratchApiClient.git.listRepoFiles(workbookId, br, path, connectorAccountId, useConfigRepo);
-        setFiles(
-          list.sort((a: GitFile, b: GitFile) => {
-            if (a.type === b.type) return a.name.localeCompare(b.name);
-            return a.type === 'directory' ? -1 : 1;
-          }),
-        );
-        // Ensure file content is cleared when showing folder
-        setFileContent(null);
-      } catch (err) {
-        console.error(err);
-        setFiles([]);
-      } finally {
-        setLoading(false);
-      }
+  const { data: files = NO_GIT_FILES, isLoading: folderLoading } = useSWR(
+    SWR_KEYS.git.repoFolderListing(workbookId, branch, currentPath, connectorAccountId, useConfigRepo),
+    async () => {
+      const list = await scratchApiClient.git.listRepoFiles(
+        workbookId,
+        branch,
+        currentPath,
+        connectorAccountId,
+        useConfigRepo,
+      );
+      return list.sort((a: GitFile, b: GitFile) => {
+        if (a.type === b.type) return a.name.localeCompare(b.name);
+        return a.type === 'directory' ? -1 : 1;
+      });
     },
-    [workbookId, connectorAccountId, useConfigRepo],
+    { revalidateOnFocus: false, onError: (err) => console.error(err) },
   );
 
-  const loadFileContent = useCallback(
-    async (path: string, filename: string, br: string) => {
-      const filePath = path ? `${path}/${filename}` : filename;
-      setLoading(true);
-      try {
-        const res = await scratchApiClient.git.getRepoFile(workbookId, filePath, br, connectorAccountId, useConfigRepo);
-        setFileContent(res.content);
-      } catch (err) {
-        console.error(err);
-        setFileContent(null); // Clear content if failed (e.g. file doesn't exist in this branch)
-      } finally {
-        setLoading(false);
-      }
+  const currentFilePath = currentFile ? (currentPath ? `${currentPath}/${currentFile}` : currentFile) : null;
+  // A failed load (e.g. the file doesn't exist on this branch) leaves the content null, which falls back to the
+  // folder listing below.
+  const { data: fileContent = null, isLoading: fileLoading } = useSWR(
+    currentFilePath
+      ? SWR_KEYS.git.repoFileContent(workbookId, branch, currentFilePath, connectorAccountId, useConfigRepo)
+      : null,
+    async () => {
+      if (!currentFilePath) return null;
+      const res = await scratchApiClient.git.getRepoFile(
+        workbookId,
+        currentFilePath,
+        branch,
+        connectorAccountId,
+        useConfigRepo,
+      );
+      return res.content;
     },
-    [workbookId, connectorAccountId, useConfigRepo],
+    { revalidateOnFocus: false, onError: (err) => console.error(err) },
   );
 
-  // Main Effect: React to state changes (Navigation & Branch Switch)
-  useEffect(() => {
-    if (!opened) return;
-
-    if (currentFile) {
-      loadFileContent(currentPath, currentFile, branch);
-    } else {
-      loadFolder(currentPath, branch);
-    }
-  }, [opened, branch, currentPath, currentFile, loadFolder, loadFileContent]);
-
-  // Reset state on Open
-  useEffect(() => {
-    if (opened) {
-      setCurrentPath('');
-      setCurrentFile(null);
-      setFileContent(null);
-      setBranch('main');
-      // No need to call load functions here, the Main Effect will trigger due to state changes/isOpen
-    }
-  }, [opened]);
+  const loading = currentFile ? fileLoading : folderLoading;
 
   const handleFolderClick = (folderName: string) => {
     const newPath = currentPath ? `${currentPath}/${folderName}` : folderName;
@@ -186,43 +180,41 @@ export const GitFileBrowserModal = ({
   };
 
   return (
-    <Modal title="Git Browser" opened={opened} onClose={onClose} size="lg">
-      <Stack gap="md">
-        <Group align="center" style={{ borderBottom: '1px solid var(--mantine-color-gray-3)', paddingBottom: '12px' }}>
-          <Select
-            value={branch}
-            onChange={(val) => setBranch(val as 'main' | 'dirty' | 'merge_base')}
-            data={[
-              { label: 'Main', value: 'main' },
-              { label: 'Dirty', value: 'dirty' },
-              { label: 'Merge Base', value: 'merge_base' },
-            ]}
-            w={130}
-            size="xs"
-            allowDeselect={false}
-          />
-          <Button
-            leftSection={<ArrowUpIcon size={14} />}
-            onClick={handleGoUp}
-            disabled={!currentPath && !currentFile}
-            size="xs"
-            variant="default"
-          >
-            Up
-          </Button>
-          <Text size="sm" c="dimmed" style={{ fontFamily: 'monospace' }} truncate>
-            {`/${currentPath}${currentFile ? `/${currentFile}` : ''}`}
-          </Text>
-        </Group>
+    <Stack gap="md">
+      <Group align="center" style={{ borderBottom: '1px solid var(--mantine-color-gray-3)', paddingBottom: '12px' }}>
+        <Select
+          value={branch}
+          onChange={(val) => setBranch(val as GitBrowserBranch)}
+          data={[
+            { label: 'Main', value: 'main' },
+            { label: 'Dirty', value: 'dirty' },
+            { label: 'Merge Base', value: 'merge_base' },
+          ]}
+          w={130}
+          size="xs"
+          allowDeselect={false}
+        />
+        <Button
+          leftSection={<ArrowUpIcon size={14} />}
+          onClick={handleGoUp}
+          disabled={!currentPath && !currentFile}
+          size="xs"
+          variant="default"
+        >
+          Up
+        </Button>
+        <Text size="sm" c="dimmed" style={{ fontFamily: 'monospace' }} truncate>
+          {`/${currentPath}${currentFile ? `/${currentFile}` : ''}`}
+        </Text>
+      </Group>
 
-        {loading ? (
-          <Group justify="center" p="xl">
-            <Loader size="sm" />
-          </Group>
-        ) : (
-          renderContent()
-        )}
-      </Stack>
-    </Modal>
+      {loading ? (
+        <Group justify="center" p="xl">
+          <Loader size="sm" />
+        </Group>
+      ) : (
+        renderContent()
+      )}
+    </Stack>
   );
-};
+}

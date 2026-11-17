@@ -5,7 +5,7 @@ import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-me
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { RouteUrls } from '@/utils/route-urls';
 import { Alert, Container, Group, Loader, Stack, Text, Title } from '@mantine/core';
-import { Service } from '@spinner/shared-types';
+import { ConnectorMetadata, Service } from '@spinner/shared-types';
 import { CircleCheckBigIcon, CircleXIcon } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -14,6 +14,31 @@ interface OAuthCallbackState {
   status: 'loading' | 'success' | 'error';
   message?: string;
   connectorAccountId?: string;
+}
+
+function decodeOAuthStateParameter(oauthStateParameter: string | null): Record<string, unknown> | null {
+  if (!oauthStateParameter) return null;
+  try {
+    // The state parameter is base64-encoded JSON
+    return JSON.parse(atob(oauthStateParameter)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function extractServiceFromOAuthStateParameter(oauthStateParameter: string | null): Service | null {
+  return (decodeOAuthStateParameter(oauthStateParameter)?.service as Service) || null;
+}
+
+function extractReturnPageFromOAuthStateParameter(oauthStateParameter: string | null): string | null {
+  return (decodeOAuthStateParameter(oauthStateParameter)?.returnPage as string) || null;
+}
+
+function isOAuthCapableService(
+  connectorsMetadata: Record<Service, ConnectorMetadata> | undefined,
+  service: string,
+): service is Service {
+  return connectorsMetadata ? connectorsMetadata[service as Service]?.oauth !== undefined : false;
 }
 
 export default function OAuthCallbackPage() {
@@ -67,7 +92,7 @@ export default function OAuthCallbackPage() {
 
         // Determine service from URL parameter or state parameter
         const serviceParam = searchParams.get('service');
-        const serviceFromState = extractServiceFromState();
+        const serviceFromState = extractServiceFromOAuthStateParameter(state);
 
         console.debug('OAuth callback debug:', {
           serviceParam,
@@ -77,7 +102,7 @@ export default function OAuthCallbackPage() {
 
         const service = (serviceParam as Service) || serviceFromState;
 
-        if (!service || !isValidOAuthService(service)) {
+        if (!service || !isOAuthCapableService(metadata, service)) {
           setState({
             status: 'error',
             message: `Unable to determine OAuth service. Found: ${service || 'none'}. Check console for debug info.`,
@@ -101,7 +126,7 @@ export default function OAuthCallbackPage() {
         });
 
         // Redirect to returnPage (if specified) or workbooks page after a short delay
-        const returnPage = extractReturnPageFromState();
+        const returnPage = extractReturnPageFromOAuthStateParameter(state);
         const redirectUrl = new URL(returnPage || RouteUrls.homePageUrl, window.location.origin);
         redirectUrl.searchParams.set('newConnectionId', result.connectorAccountId);
         setTimeout(() => {
@@ -130,42 +155,6 @@ export default function OAuthCallbackPage() {
     handleOAuthCallback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metadata]);
-
-  const extractServiceFromState = (): Service | null => {
-    try {
-      const state = searchParams.get('state');
-      if (!state) return null;
-
-      // Decode the base64 state parameter
-      const decoded = atob(state);
-      const parsed = JSON.parse(decoded) as Record<string, unknown>;
-
-      // Extract service from the parsed state
-      return (parsed.service as Service) || null;
-    } catch {
-      return null;
-    }
-  };
-
-  const extractReturnPageFromState = (): string | null => {
-    try {
-      const state = searchParams.get('state');
-      if (!state) return null;
-
-      // Decode the base64 state parameter
-      const decoded = atob(state);
-      const parsed = JSON.parse(decoded) as Record<string, unknown>;
-
-      // Extract returnPage from the parsed state
-      return (parsed.returnPage as string) || null;
-    } catch {
-      return null;
-    }
-  };
-
-  const isValidOAuthService = (service: string): service is Service => {
-    return metadata ? metadata[service as Service]?.oauth !== undefined : false;
-  };
 
   return (
     <Container size="sm" py="xl">

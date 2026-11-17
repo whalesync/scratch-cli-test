@@ -9,7 +9,7 @@ import { useDisclosure } from '@mantine/hooks';
 import type { ConnectorAccount, WorkbookId } from '@spinner/shared-types';
 import { ChevronDownIcon, CloudDownloadIcon, PlusIcon } from 'lucide-react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
 import { CreateConnectionModal } from '../shared/CreateConnectionModal';
 
@@ -29,7 +29,6 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
     newConnectionId ? workbookId : undefined,
     newConnectionId ?? undefined,
   );
-  const hasOpenedOAuthModal = useRef(false);
 
   const hasLinkedFolders = useMemo(() => {
     return dataFolderGroups.some((group) => group.dataFolders.some((folder) => folder.connectorAccountId !== null));
@@ -39,24 +38,25 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
   const [connectionModalOpened, { open: openConnectionModal, close: closeConnectionModal }] = useDisclosure(false);
 
   // Choose tables modal state (opened after creating a connection)
-  const [chooseTablesOpened, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
+  const [chooseTablesOpened, setChooseTablesOpened] = useState(false);
   const [newlyCreatedAccount, setNewlyCreatedAccount] = useState<ConnectorAccount | null>(null);
 
-  // Open table picker after OAuth connection redirect
-  if (oauthAccount && !hasOpenedOAuthModal.current) {
-    hasOpenedOAuthModal.current = true;
+  // Open the table picker once, the first time the OAuth connection from a redirect resolves
+  const [handledOAuthConnectorAccountId, setHandledOAuthConnectorAccountId] = useState<string | null>(null);
+  if (oauthAccount && handledOAuthConnectorAccountId === null) {
+    setHandledOAuthConnectorAccountId(oauthAccount.id);
     setNewlyCreatedAccount(oauthAccount);
+    setChooseTablesOpened(true);
   }
 
+  // Then strip the one-shot newConnectionId param from the URL
   useEffect(() => {
-    if (hasOpenedOAuthModal.current && oauthAccount) {
-      openChooseTables();
-      const url = new URL(window.location.href);
-      url.searchParams.delete('newConnectionId');
-      router.replace(url.pathname + url.search);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once when oauthAccount first resolves
-  }, [oauthAccount]);
+    if (handledOAuthConnectorAccountId === null) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('newConnectionId')) return;
+    url.searchParams.delete('newConnectionId');
+    router.replace(url.pathname + url.search);
+  }, [handledOAuthConnectorAccountId, router]);
 
   const [isPulling, setIsPulling] = useState(false);
 
@@ -71,13 +71,10 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
     [pullFolders],
   );
 
-  const handleConnectionCreated = useCallback(
-    (account: ConnectorAccount) => {
-      setNewlyCreatedAccount(account);
-      openChooseTables();
-    },
-    [openChooseTables],
-  );
+  const handleConnectionCreated = useCallback((account: ConnectorAccount) => {
+    setNewlyCreatedAccount(account);
+    setChooseTablesOpened(true);
+  }, []);
 
   return (
     <Box
@@ -132,7 +129,7 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
         <ChooseTablesModal
           opened={chooseTablesOpened}
           onClose={() => {
-            closeChooseTables();
+            setChooseTablesOpened(false);
             setNewlyCreatedAccount(null);
           }}
           workbookId={params.id as WorkbookId}

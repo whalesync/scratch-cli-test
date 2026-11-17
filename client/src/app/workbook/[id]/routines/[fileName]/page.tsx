@@ -8,5 +8,6 @@ export default function RoutineDetailPage() {
   const params = useParams<{ id: string; fileName: string }>();
   const workbookId = params.id as WorkbookId;
 
-  return <RoutineEditor workbookId={workbookId} fileName={params.fileName} />;
+  // Keyed by file name so navigating to a different routine (or to "new") remounts the editor with fresh state.
+  return <RoutineEditor key={params.fileName} workbookId={workbookId} fileName={params.fileName} />;
 }

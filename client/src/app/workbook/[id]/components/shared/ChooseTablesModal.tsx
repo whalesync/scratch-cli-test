@@ -583,58 +583,6 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     [allKnownTables, selectedTableIds, currentlyLinkedKeys],
   );
 
-  // Fetch table schema when entering step 2 for newly selected tables from field-selection connectors
-  useEffect(() => {
-    if (step !== 2 || !supportsFieldSelection) return;
-
-    for (const table of tablesToAdd) {
-      const tableKey = table.id.remoteId.join('/');
-      if (loadedTableSchemas.has(tableKey) || schemasLoading.has(tableKey)) continue;
-
-      setSchemasLoading((prev) => new Set(prev).add(tableKey));
-
-      scratchApiClient.connectorAccounts
-        .getTableSchema(workbookId, connectorAccount.id, table.id.remoteId.join(','))
-        .then((result) => {
-          setLoadedTableSchemas((prev) => new Map(prev).set(tableKey, result));
-          // Pre-populate selections with detected defaults if not already set
-          setFieldSelections((prev) => {
-            if (prev.has(tableKey)) return prev;
-            const next = new Map(prev);
-            // titlePath / idPath are lodash dot paths (DEV-10092). Fall back to the
-            // legacy names (titleColumnRemoteId segment array / idColumnRemoteId) for
-            // responses from a server predating the rename. nameField is a segment
-            // array, so split the dot path back into segments.
-            const detectedTitlePath =
-              result.titlePath ?? (result.titleColumnRemoteId ? result.titleColumnRemoteId.join('.') : undefined);
-            const detectedNameField = detectedTitlePath ? detectedTitlePath.split('.') : null;
-            // A spec flagged idPathRequiresUserSelection has no trustworthy id —
-            // leave the ID field empty so the user must choose one (the server
-            // rejects folder creation for such tables without an override).
-            const detectedIdField = result.idPathRequiresUserSelection
-              ? ''
-              : (result.idPath ?? result.idColumnRemoteId ?? '');
-            next.set(tableKey, {
-              idField: detectedIdField,
-              nameField: detectedNameField,
-            });
-            return next;
-          });
-        })
-        .catch((error) => {
-          console.debug('Failed to fetch table schema', tableKey, error);
-        })
-        .finally(() => {
-          setSchemasLoading((prev) => {
-            const next = new Set(prev);
-            next.delete(tableKey);
-            return next;
-          });
-        });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, supportsFieldSelection, tablesToAdd, workbookId, connectorAccount.id]);
-
   const handleFieldSelectionChange = useCallback(
     (tableKey: string, field: 'idField' | 'nameField', value: string | string[] | null) => {
       setFieldSelections((prev) => {
@@ -711,8 +659,61 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     return tables;
   }, [linkedFolders, selectedTableIds, tablesToAdd, tableLookup, getTableLabel]);
 
+  // Fetch table schemas for the newly selected tables of a field-selection connector. Called when entering step 2;
+  // the selection can only change in step 1, so this covers every table step 2 shows.
+  const loadSchemasForTablesToAdd = () => {
+    if (!supportsFieldSelection) return;
+
+    for (const table of tablesToAdd) {
+      const tableKey = table.id.remoteId.join('/');
+      if (loadedTableSchemas.has(tableKey) || schemasLoading.has(tableKey)) continue;
+
+      setSchemasLoading((prev) => new Set(prev).add(tableKey));
+
+      scratchApiClient.connectorAccounts
+        .getTableSchema(workbookId, connectorAccount.id, table.id.remoteId.join(','))
+        .then((result) => {
+          setLoadedTableSchemas((prev) => new Map(prev).set(tableKey, result));
+          // Pre-populate selections with detected defaults if not already set
+          setFieldSelections((prev) => {
+            if (prev.has(tableKey)) return prev;
+            const next = new Map(prev);
+            // titlePath / idPath are lodash dot paths (DEV-10092). Fall back to the
+            // legacy names (titleColumnRemoteId segment array / idColumnRemoteId) for
+            // responses from a server predating the rename. nameField is a segment
+            // array, so split the dot path back into segments.
+            const detectedTitlePath =
+              result.titlePath ?? (result.titleColumnRemoteId ? result.titleColumnRemoteId.join('.') : undefined);
+            const detectedNameField = detectedTitlePath ? detectedTitlePath.split('.') : null;
+            // A spec flagged idPathRequiresUserSelection has no trustworthy id —
+            // leave the ID field empty so the user must choose one (the server
+            // rejects folder creation for such tables without an override).
+            const detectedIdField = result.idPathRequiresUserSelection
+              ? ''
+              : (result.idPath ?? result.idColumnRemoteId ?? '');
+            next.set(tableKey, {
+              idField: detectedIdField,
+              nameField: detectedNameField,
+            });
+            return next;
+          });
+        })
+        .catch((error) => {
+          console.debug('Failed to fetch table schema', tableKey, error);
+        })
+        .finally(() => {
+          setSchemasLoading((prev) => {
+            const next = new Set(prev);
+            next.delete(tableKey);
+            return next;
+          });
+        });
+    }
+  };
+
   const handleNext = () => {
     setStep(2);
+    loadSchemasForTablesToAdd();
   };
 
   const handleBack = () => {

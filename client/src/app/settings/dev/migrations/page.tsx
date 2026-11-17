@@ -1,17 +1,35 @@
 'use client';
 
 import MainContent from '@/app/components/layouts/MainContent';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { formatNumber } from '@/utils/helpers';
 import { Alert, Button, Card, Checkbox, Group, NumberInput, Select, Stack, Text, Textarea, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type { MigrationDescriptor, MigrationResult } from '@spinner/shared-types';
 import { AlertCircle, CheckCircle2, Database, DatabaseIcon, Info } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import useSWR from 'swr';
+
+const NO_AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [];
 
 export default function MigrationsDevPage() {
-  const [availableMigrations, setAvailableMigrations] = useState<MigrationDescriptor[]>([]);
-  const [isLoadingMigrations, setIsLoadingMigrations] = useState(true);
+  const { data: availableMigrationsResponse, isLoading: isLoadingMigrations } = useSWR(
+    SWR_KEYS.devTools.availableMigrations(),
+    () => scratchApiClient.codeMigrations.getAvailableMigrations(),
+    {
+      revalidateOnFocus: false,
+      onError: (error) => {
+        console.error('Failed to load migrations:', error);
+        notifications.show({
+          title: 'Error',
+          message: 'Failed to load available migrations',
+          color: 'red',
+        });
+      },
+    },
+  );
+  const availableMigrations = availableMigrationsResponse?.migrations ?? NO_AVAILABLE_MIGRATIONS;
   const [selectedMigration, setSelectedMigration] = useState<string | null>(null);
   const [qty, setQty] = useState<number | string>('');
   const [ids, setIds] = useState<string>('');
@@ -19,32 +37,12 @@ export default function MigrationsDevPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [lastResult, setLastResult] = useState<MigrationResult | null>(null);
 
-  useEffect(() => {
-    loadAvailableMigrations();
-  }, []);
-
   const selectedDescriptor = useMemo(
     () => availableMigrations.find((m) => m.name === selectedMigration) ?? null,
     [availableMigrations, selectedMigration],
   );
   const selectedDescription = selectedDescriptor?.description;
   const dryRunSupported = selectedDescriptor?.supportsDryRun ?? false;
-
-  const loadAvailableMigrations = async () => {
-    try {
-      const response = await scratchApiClient.codeMigrations.getAvailableMigrations();
-      setAvailableMigrations(response.migrations);
-    } catch (error) {
-      console.error('Failed to load migrations:', error);
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to load available migrations',
-        color: 'red',
-      });
-    } finally {
-      setIsLoadingMigrations(false);
-    }
-  };
 
   const handleRunMigration = async () => {
     if (!selectedMigration) {

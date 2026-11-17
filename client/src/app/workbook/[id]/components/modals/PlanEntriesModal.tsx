@@ -1,5 +1,6 @@
 'use client';
 
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { formatNumber } from '@/utils/helpers';
 import { json } from '@codemirror/lang-json';
@@ -29,7 +30,8 @@ import {
   ExternalLinkIcon,
   ListIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import useSWR from 'swr';
 import { RecordPlanModal } from './RecordPlanModal';
 
 type PlanOperation = PublishPlanOperationEntity;
@@ -114,45 +116,29 @@ export function PlanEntriesModal({
   initialHasErrorFilter = false,
   initialPhaseFilter = '',
 }: PlanEntriesModalProps) {
-  const [operations, setOperations] = useState<PlanOperation[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
-  const [isLoading, setIsLoading] = useState(false);
   const [phaseFilter, setPhaseFilter] = useState(initialPhaseFilter);
   const [hasErrorFilter, setHasErrorFilter] = useState(initialHasErrorFilter);
   const [viewingOperation, setViewingOperation] = useState<PlanOperation | null>(null);
   const [viewingError, setViewingError] = useState<string | null>(null);
   const [viewingRecordPath, setViewingRecordPath] = useState<string | null>(null);
 
-  const fetchOperations = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const result = await scratchApiClient.publish.listPublishPlanOperations(workbookId, publishPlanId, {
+  const { data: operationsPage, isLoading } = useSWR(
+    opened
+      ? SWR_KEYS.publishPlans.operations(workbookId, publishPlanId, page, pageSize, phaseFilter, hasErrorFilter)
+      : null,
+    () =>
+      scratchApiClient.publish.listPublishPlanOperations(workbookId, publishPlanId, {
         page,
         pageSize,
         phase: phaseFilter || undefined,
         hasError: hasErrorFilter || undefined,
-      });
-      setOperations(result.data);
-      setTotal(result.total);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [workbookId, publishPlanId, page, pageSize, phaseFilter, hasErrorFilter]);
-
-  useEffect(() => {
-    if (opened) {
-      fetchOperations();
-    }
-  }, [opened, fetchOperations]);
-
-  // Reset page when filters change
-  useEffect(() => {
-    setPage(1);
-  }, [phaseFilter, hasErrorFilter]);
+      }),
+    { keepPreviousData: true, revalidateOnFocus: false, onError: (error) => console.error(error) },
+  );
+  const operations: PlanOperation[] = operationsPage?.data ?? [];
+  const total = operationsPage?.total ?? 0;
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -182,7 +168,10 @@ export function PlanEntriesModal({
               w={160}
               data={PHASE_OPTIONS}
               value={phaseFilter}
-              onChange={(v) => setPhaseFilter(v ?? '')}
+              onChange={(v) => {
+                setPhaseFilter(v ?? '');
+                setPage(1);
+              }}
               placeholder="Filter by phase"
               clearable={false}
             />
@@ -190,7 +179,10 @@ export function PlanEntriesModal({
               size="xs"
               label="Has Error"
               checked={hasErrorFilter}
-              onChange={(e) => setHasErrorFilter(e.currentTarget.checked)}
+              onChange={(e) => {
+                setHasErrorFilter(e.currentTarget.checked);
+                setPage(1);
+              }}
             />
             <Text size="xs" c="dimmed" ml="auto">
               {formatNumber(total)} operations

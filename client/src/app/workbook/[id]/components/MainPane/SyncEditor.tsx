@@ -73,7 +73,7 @@ import {
   X,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AddFolderMappingModal } from './AddFolderMappingModal';
 import {
   coerceUnknownToV2,
@@ -172,6 +172,22 @@ const LINE_HEIGHT = 18;
 const MAX_COLLAPSED_LINES = 3;
 const MAX_COLLAPSED_HEIGHT = LINE_HEIGHT * MAX_COLLAPSED_LINES;
 
+/**
+ * The list/get endpoints return the raw row with both columns; prefer the v2 column when present, otherwise the
+ * frozen v1 `mappings`. Normalize v1 → v2 in memory so the editor only ever works on the v2 shape.
+ */
+const normalizeExistingSyncMappingToV2 = (existingSync: Parameters<typeof resolveStoredMapping>[0]): SyncMappingV2 => {
+  const stored = resolveStoredMapping(existingSync);
+  if (stored) {
+    try {
+      return storedMappingToV2(stored);
+    } catch (err) {
+      console.debug('Failed to normalize sync mappings; starting from empty:', err);
+    }
+  }
+  return { version: 2, tableMappings: [] };
+};
+
 const formatPreviewValue = (value: unknown): string => {
   if (value === null) return 'null';
   if (value === undefined) return 'undefined';
@@ -203,7 +219,6 @@ function PreviewValueBox({
   useEffect(() => {
     const sourceOverflows = (sourceRef.current?.scrollHeight ?? 0) > MAX_COLLAPSED_HEIGHT;
     const destOverflows = (destRef.current?.scrollHeight ?? 0) > MAX_COLLAPSED_HEIGHT;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- DOM measurement requires post-render effect
     setIsOverflowing(sourceOverflows || destOverflows);
   }, [sourceValue, transformedValue]);
 
@@ -347,7 +362,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
 
   // Preview & row interaction state
   const [hoveredMappingIndex, setHoveredMappingIndex] = useState<number | null>(null);
-  const [selectedPreviewFile, setSelectedPreviewFile] = useState<string | null>(null);
+  const [userSelectedPreviewFile, setUserSelectedPreviewFile] = useState<string | null>(null);
   const [previewResults, setPreviewResults] = useState<PreviewFieldResult[] | null>(null);
   const [previewRecordId, setPreviewRecordId] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -391,6 +406,25 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         .map((f) => ({ value: f.path, label: f.name || f.path })),
     [previewFiles],
   );
+
+  // Preview: reset when the active pair changes
+  const activePairId = activePair?.id;
+  const [previousActivePairId, setPreviousActivePairId] = useState(activePairId);
+  if (activePairId !== previousActivePairId) {
+    setPreviousActivePairId(activePairId);
+    setUserSelectedPreviewFile(null);
+    setPreviewResults(null);
+    setPreviewRecordId(null);
+    setPreviewError(null);
+    setRecordMatchingWarning(null);
+  }
+
+  // Preview: the user's pick while it's still one of the options, otherwise the first file
+  const selectedPreviewFile =
+    previewFileOptions.length === 0 ||
+    (userSelectedPreviewFile !== null && previewFileOptions.some((f) => f.value === userSelectedPreviewFile))
+      ? userSelectedPreviewFile
+      : previewFileOptions[0].value;
 
   // Fetch schema paths if not in cache
   const ensureSchemaPaths = async (folderId: string) => {
@@ -450,8 +484,13 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     }
   };
 
-  // Initialize from existing sync
-  useEffect(() => {
+  // Seed the form from the existing sync (or clear it for a new one) whenever the sync identity or its updatedAt
+  // changes, e.g. after a save. The synchronous form state is seeded during render; the schedule fetch and the
+  // schema-path loading are side effects and run in the effect below. allFolders is read only at seed time.
+  const syncFormSeedKey = `${syncId}|${existingSync?.id ?? ''}|${existingSync?.updatedAt ?? ''}`;
+  const [previousSyncFormSeedKey, setPreviousSyncFormSeedKey] = useState<string | null>(null);
+  if (syncFormSeedKey !== previousSyncFormSeedKey) {
+    setPreviousSyncFormSeedKey(syncFormSeedKey);
     if (isNew) {
       setFolderPairs([]);
       setSyncName('');
@@ -462,67 +501,63 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       setEditorMode('visual');
       setJsonContent('');
       setJsonError(null);
-      return;
+    } else if (existingSync) {
+      setSyncName(existingSync.displayName);
+      setAutoPublish(existingSync.publishAfterSync ?? false);
+      setEditorMode('visual');
+      setJsonContent('');
+      setJsonError(null);
+
+      const normalizedV2 = normalizeExistingSyncMappingToV2(existingSync);
+      if (normalizedV2.tableMappings.length > 0) {
+        setFolderPairs(v2ToFolderPairs(normalizedV2, allFolders));
+        setSelectedPairIndex(0);
+      } else if (existingSync.syncTablePairs?.length) {
+        const pairs = existingSync.syncTablePairs.map((p: SyncTablePair) =>
+          createFolderPair({
+            sourceId: p.sourceDataFolderId,
+            sourceFolderExists: allFolders.some((f) => f.id === p.sourceDataFolderId),
+            destId: p.destinationDataFolderId,
+            destFolderExists: allFolders.some((f) => f.id === p.destinationDataFolderId),
+          }),
+        );
+        setFolderPairs(pairs);
+      } else {
+        setFolderPairs([]);
+      }
     }
+  }
 
-    if (!existingSync) return;
-
-    setSyncName(existingSync.displayName);
-    setAutoPublish(existingSync.publishAfterSync ?? false);
-    setEditorMode('visual');
+  // Load the existing sync's schedule and the schema paths of every folder its mapping references
+  useEffect(() => {
+    if (isNew || !existingSync) return;
+    let isSeedStale = false;
 
     // Fetch the SYNC schedule for this entity
     scratchApiClient.schedule
       .findByEntity(workbookId, ScheduleAction.SYNC, syncId)
       .then((syncSchedule) => {
+        if (isSeedStale) return;
         setSchedule(syncSchedule?.cronExpression ?? '');
         setScheduleTimezone(syncSchedule?.timezone ?? null);
       })
       .catch(() => {
+        if (isSeedStale) return;
         setSchedule('');
         setScheduleTimezone(null);
       });
-    setJsonContent('');
-    setJsonError(null);
 
-    // The list/get endpoints return the raw row with both columns; prefer the v2
-    // column when present, otherwise the frozen v1 `mappings`. Normalize v1 → v2 in
-    // memory so the editor only ever works on the v2 shape.
-    const stored = resolveStoredMapping(existingSync);
-    let normalizedV2: SyncMappingV2 = { version: 2, tableMappings: [] };
-    if (stored) {
-      try {
-        normalizedV2 = storedMappingToV2(stored);
-      } catch (err) {
-        console.debug('Failed to normalize sync mappings; starting from empty:', err);
-      }
-    }
+    const referencedFolderIds = new Set<string>();
+    normalizeExistingSyncMappingToV2(existingSync).tableMappings.forEach((tm) => {
+      referencedFolderIds.add(tm.sourceDataFolderId);
+      referencedFolderIds.add(tm.destinationDataFolderId);
+    });
+    referencedFolderIds.forEach((id) => ensureSchemaPaths(id));
 
-    if (normalizedV2.tableMappings.length > 0) {
-      const pairs = v2ToFolderPairs(normalizedV2, allFolders);
-      setFolderPairs(pairs);
-      setSelectedPairIndex(0);
-      const uniqueFolderIds = new Set<string>();
-      normalizedV2.tableMappings.forEach((tm) => {
-        uniqueFolderIds.add(tm.sourceDataFolderId);
-        uniqueFolderIds.add(tm.destinationDataFolderId);
-      });
-      uniqueFolderIds.forEach((id) => ensureSchemaPaths(id));
-    } else if (existingSync.syncTablePairs?.length) {
-      const pairs = existingSync.syncTablePairs.map((p: SyncTablePair) =>
-        createFolderPair({
-          sourceId: p.sourceDataFolderId,
-          sourceFolderExists: allFolders.some((f) => f.id === p.sourceDataFolderId),
-          destId: p.destinationDataFolderId,
-          destFolderExists: allFolders.some((f) => f.id === p.destinationDataFolderId),
-        }),
-      );
-      setFolderPairs(pairs);
-    } else {
-      setFolderPairs([]);
-    }
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      isSeedStale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only when the seed above re-runs
   }, [syncId, existingSync?.id, existingSync?.updatedAt]);
 
   // Capture saved state after initialization settles
@@ -537,29 +572,6 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       return () => clearTimeout(timer);
     }
   }, [isNew, existingSync, getCurrentStateSnapshot]);
-
-  // Preview: reset when active pair changes
-  useEffect(() => {
-    setSelectedPreviewFile(null);
-    setPreviewResults(null);
-    setPreviewRecordId(null);
-    setPreviewError(null);
-    setRecordMatchingWarning(null);
-  }, [activePair?.id]);
-
-  // Preview: auto-select first file
-  useEffect(() => {
-    if (!selectedPreviewFile && previewFileOptions.length > 0) {
-      setSelectedPreviewFile(previewFileOptions[0].value);
-    }
-    if (
-      selectedPreviewFile &&
-      previewFileOptions.length > 0 &&
-      !previewFileOptions.some((f) => f.value === selectedPreviewFile)
-    ) {
-      setSelectedPreviewFile(null);
-    }
-  }, [previewFileOptions, selectedPreviewFile]);
 
   // Preview: debounced auto-run. Only matched column-copy rules have a previewable
   // source value; constants and unmatched-side rules are skipped.
@@ -787,16 +799,17 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     }
   };
 
-  // Cmd+S / Ctrl+S keyboard shortcut to save
-  const handleSaveRef = useRef(handleSave);
-  handleSaveRef.current = handleSave;
+  // Cmd+S / Ctrl+S keyboard shortcut to save. The effect event always calls the latest handleSave.
+  const saveFromKeyboardShortcut = useEffectEvent(() => {
+    void handleSave();
+  });
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         const canSave = editorMode === 'visual' ? validPairsCount > 0 : !!jsonContent.trim();
         if (hasUnsavedChanges && canSave && !saving) {
-          handleSaveRef.current();
+          saveFromKeyboardShortcut();
         }
       }
     };
@@ -1199,7 +1212,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                 loadMorePreviewFiles();
                                 return;
                               }
-                              setSelectedPreviewFile(value);
+                              setUserSelectedPreviewFile(value);
                             }}
                             searchable
                             allowDeselect={false}

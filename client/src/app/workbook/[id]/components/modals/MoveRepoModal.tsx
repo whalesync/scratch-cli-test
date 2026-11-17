@@ -3,7 +3,7 @@
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 function toDeepPath(repoPath: string): string {
   return repoPath.replaceAll('--', '/');
@@ -21,10 +21,15 @@ export function MoveRepoModal({ opened, onClose, connectorAccountId, currentRepo
   const [newPath, setNewPath] = useState(currentRepoPath);
   const [isMoving, setIsMoving] = useState(false);
 
-  // Reset when modal opens
-  useEffect(() => {
-    if (opened) setNewPath(currentRepoPath);
-  }, [opened, currentRepoPath]);
+  // Reset to the current path whenever the modal opens (or the current path changes while open)
+  const newPathResetKeyWhileOpen = opened ? currentRepoPath : null;
+  const [previousNewPathResetKeyWhileOpen, setPreviousNewPathResetKeyWhileOpen] = useState(newPathResetKeyWhileOpen);
+  if (newPathResetKeyWhileOpen !== previousNewPathResetKeyWhileOpen) {
+    setPreviousNewPathResetKeyWhileOpen(newPathResetKeyWhileOpen);
+    if (newPathResetKeyWhileOpen !== null) {
+      setNewPath(newPathResetKeyWhileOpen);
+    }
+  }
 
   const handleMove = async () => {
     const trimmed = newPath.trim();

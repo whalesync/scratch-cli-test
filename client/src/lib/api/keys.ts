@@ -60,6 +60,8 @@ export const SWR_KEYS = {
   },
   devTools: {
     waitlistPending: () => ['dev-tools', 'waitlist-pending'] as const,
+    availableMigrations: () => ['dev-tools', 'available-migrations'] as const,
+    adminWorkbooks: (listParameters: object) => ['dev-tools', 'admin-workbooks', listParameters] as const,
   },
   billing: {
     plans: () => ['billing', 'plans'],
@@ -83,9 +85,48 @@ export const SWR_KEYS = {
       ['files', 'resolve-references', workbookId, path, branch] as const,
     repoFile: (workbookId: WorkbookId, filePath: string, connectorAccountId?: string, useConfigRepo?: boolean) =>
       ['files', 'repo-file', workbookId, filePath, connectorAccountId, useConfigRepo ? 'config' : undefined] as const,
+    // Flattened JSON key paths of a repo file on the default branch, used as path suggestions.
+    flattenedJsonPaths: (workbookId: WorkbookId, filePath: string) =>
+      ['files', 'flattened-json-paths', workbookId, filePath] as const,
     // Browse a path within a standalone scratch repo (DEV-10424): files + subdirectories on `main`.
     scratchBrowse: (workbookId: WorkbookId, gitFolderPath: string) =>
       ['files', 'scratch-browse', workbookId, gitFolderPath] as const,
+  },
+  git: {
+    graph: (workbookId: WorkbookId, connectorAccountId?: string, useConfigRepo?: boolean) =>
+      ['git', 'graph', workbookId, connectorAccountId, useConfigRepo ? 'config' : undefined] as const,
+    repoFolderListing: (
+      workbookId: WorkbookId,
+      branch: string,
+      folderPath: string,
+      connectorAccountId?: string,
+      useConfigRepo?: boolean,
+    ) =>
+      [
+        'git',
+        'folder-listing',
+        workbookId,
+        branch,
+        folderPath,
+        connectorAccountId,
+        useConfigRepo ? 'config' : undefined,
+      ] as const,
+    repoFileContent: (
+      workbookId: WorkbookId,
+      branch: string,
+      filePath: string,
+      connectorAccountId?: string,
+      useConfigRepo?: boolean,
+    ) =>
+      [
+        'git',
+        'file-content',
+        workbookId,
+        branch,
+        filePath,
+        connectorAccountId,
+        useConfigRepo ? 'config' : undefined,
+      ] as const,
   },
   jobs: {
     activeByWorkbook: (workbookId: WorkbookId) => ['jobs', 'active-by-workbook', workbookId] as const,
@@ -119,6 +160,18 @@ export const SWR_KEYS = {
       ['data-folders', 'schema', dataFolderId, mode] as const,
   },
   publishPlans: {
+    recordPlan: (workbookId: WorkbookId, planId: string, filePath: string) =>
+      ['publish-plans', 'record-plan', workbookId, planId, filePath] as const,
+    list: (workbookId: WorkbookId, page: number, pageSize: number, connectorAccountId: string | null) =>
+      ['publish-plans', 'list', workbookId, page, pageSize, connectorAccountId ?? ''] as const,
+    operations: (
+      workbookId: WorkbookId,
+      planId: string,
+      page: number,
+      pageSize: number,
+      phase: string,
+      hasError: boolean,
+    ) => ['publish-plans', 'operations', workbookId, planId, page, pageSize, phase, hasError] as const,
     detail: (workbookId: WorkbookId, planId: string) => ['publish-plans', 'detail', workbookId, planId] as const,
     records: (workbookId: WorkbookId, planId: string, page: number, dataFolderId?: string, phase?: string) =>
       ['publish-plans', 'records', workbookId, planId, page, dataFolderId ?? '', phase ?? ''] as const,

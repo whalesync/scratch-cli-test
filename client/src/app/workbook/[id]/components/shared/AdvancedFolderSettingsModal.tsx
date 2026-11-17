@@ -26,7 +26,7 @@ import {
 } from '@mantine/core';
 import type { ConnectorSettingDefinition, DataFolder, DataFolderOptions, TableList } from '@spinner/shared-types';
 import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import useSWR from 'swr';
 
 interface AdvancedFolderSettingsModalProps {
@@ -300,7 +300,20 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
     });
   };
 
-  useEffect(() => {
+  // (Re)initialize the form when the modal opens, and again while open when the folder's options or the
+  // connector's settings list change. The settings list loads asynchronously, often after the modal opens.
+  const [previousFormInitializationSource, setPreviousFormInitializationSource] = useState<{
+    opened: boolean;
+    folderOptions: typeof folder.options;
+    advancedSettings: typeof advancedSettings;
+  } | null>(null);
+  if (
+    previousFormInitializationSource === null ||
+    previousFormInitializationSource.opened !== opened ||
+    previousFormInitializationSource.folderOptions !== folder.options ||
+    previousFormInitializationSource.advancedSettings !== advancedSettings
+  ) {
+    setPreviousFormInitializationSource({ opened, folderOptions: folder.options, advancedSettings });
     if (opened) {
       const opts = (folder.options ?? {}) as DataFolderOptions;
       setFilter(opts.filter ?? '');
@@ -313,7 +326,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
       }
       setSettingValues(values);
     }
-  }, [opened, folder.options, advancedSettings]);
+  }
 
   // Build the merged options blob to send to the server. Preserves existing
   // keys so unrelated values (idFieldOverride, nameFieldOverride) survive.

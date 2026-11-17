@@ -7,7 +7,7 @@ import { Select, Stack, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { EMAIL_TEMPLATE_PAYLOADS, EmailTemplate } from '@spinner/shared-types';
 import { MailIcon } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 
 export default function EmailTestingDevPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
@@ -18,16 +18,16 @@ export default function EmailTestingDevPage() {
   const fields = selectedTemplate ? EMAIL_TEMPLATE_PAYLOADS[selectedTemplate] : [];
 
   // The server requires every field the template uses, so start each one blank rather than missing.
-  const handleTemplateChange = useCallback((value: EmailTemplate | null) => {
+  const handleTemplateChange = (value: EmailTemplate | null) => {
     setSelectedTemplate(value);
     setTemplateData(value ? Object.fromEntries(EMAIL_TEMPLATE_PAYLOADS[value].map((field) => [field, ''])) : {});
-  }, []);
+  };
 
-  const handleFieldChange = useCallback((key: string, value: string) => {
+  const handleFieldChange = (key: string, value: string) => {
     setTemplateData((prev) => ({ ...prev, [key]: value }));
-  }, []);
+  };
 
-  const handleSend = useCallback(async () => {
+  const handleSend = async () => {
     if (!selectedTemplate || !recipientEmail) return;
 
     setSending(true);
@@ -43,7 +43,7 @@ export default function EmailTestingDevPage() {
     } finally {
       setSending(false);
     }
-  }, [selectedTemplate, recipientEmail, templateData]);
+  };
 
   return (
     <MainContent>

@@ -1,3 +1,4 @@
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { BranchUserApi } from '@gitgraph/core';
 import { Gitgraph, templateExtend, TemplateName } from '@gitgraph/react';
@@ -8,7 +9,8 @@ import { WorkbookId } from '@spinner/shared-types';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { Code2, RefreshCw } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
+import useSWR from 'swr';
 
 // Import dayjs
 dayjs.extend(relativeTime);
@@ -68,50 +70,38 @@ export const GitGraphModal = ({
   connectorAccountId,
   useConfigRepo,
 }: GitGraphModalProps) => {
-  const [data, setData] = useState<GraphData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [renderKey, setRenderKey] = useState(0);
-
   const [showRaw, setShowRaw] = useState(false);
 
-  useEffect(() => {
-    if (opened) {
-      setRenderKey((k) => k + 1);
-      fetchGraph();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened, workbookId, connectorAccountId, useConfigRepo]);
-
-  const fetchGraph = async () => {
-    setLoading(true);
-    try {
-      const graphData = await scratchApiClient.git.getGraph(workbookId, connectorAccountId, useConfigRepo);
-      setData(graphData as GraphData);
-    } catch (e) {
-      console.error(e);
-      notifications.show({
-        title: 'Error',
-        message: 'Could not load git graph.',
-        color: 'red',
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Fetched on every open and on refresh. While a fetch is in flight the loader replaces the renderer, so the
+  // renderer (which only populates once per mount) always remounts with the fresh graph.
+  const {
+    data,
+    isValidating: loading,
+    mutate: refetchGraph,
+  } = useSWR(
+    opened ? SWR_KEYS.git.graph(workbookId, connectorAccountId, useConfigRepo) : null,
+    async () => (await scratchApiClient.git.getGraph(workbookId, connectorAccountId, useConfigRepo)) as GraphData,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      dedupingInterval: 0,
+      // Keep showing the last graph while the modal animates closed
+      keepPreviousData: true,
+      onError: (e) => {
+        console.error(e);
+        notifications.show({
+          title: 'Error',
+          message: 'Could not load git graph.',
+          color: 'red',
+        });
+      },
+    },
+  );
 
   const title = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <span>Git Graph</span>
-      <ActionIcon
-        size="sm"
-        variant="subtle"
-        onClick={() => {
-          setRenderKey((k) => k + 1);
-          fetchGraph();
-        }}
-        title="Refresh"
-        loading={loading}
-      >
+      <ActionIcon size="sm" variant="subtle" onClick={() => void refetchGraph()} title="Refresh" loading={loading}>
         <RefreshCw size={16} />
       </ActionIcon>
       {data && (
@@ -147,7 +137,7 @@ export const GitGraphModal = ({
           {JSON.stringify(data, null, 2)}
         </Code>
       ) : (
-        <GitGraphRenderer key={renderKey} data={data} />
+        <GitGraphRenderer data={data} />
       )}
     </Modal>
   );

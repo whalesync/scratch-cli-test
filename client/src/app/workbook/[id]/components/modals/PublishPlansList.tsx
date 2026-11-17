@@ -1,5 +1,6 @@
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import {
@@ -17,7 +18,6 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { useInterval } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { ConnectorAccount, PublishPlanEntity, PublishPlanStatus, WorkbookId } from '@spinner/shared-types';
 import dayjs from 'dayjs';
@@ -40,7 +40,8 @@ import {
   XIcon,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import useSWR from 'swr';
 
 dayjs.extend(relativeTime);
 
@@ -79,10 +80,7 @@ export function PublishPlansList({
   height = 400,
   showPlanAndRunButton = true,
 }: PublishPlansListProps) {
-  const [publishPlans, setPublishPlans] = useState<PublishPlanEntity[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [isLoading, setIsLoading] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
@@ -97,39 +95,39 @@ export function PublishPlansList({
 
   const connectorMap = new Map<string, ConnectorAccount>((connectorAccounts ?? []).map((ca) => [ca.id, ca]));
 
-  const fetchPublishPlans = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const res = await scratchApiClient.publish.listPublishPlans(workbookId, {
+  // Polled every 2s while enabled. keepPreviousData holds the table and total steady across page/filter changes
+  // (the page clamp below would otherwise snap back to page 1 while the next page loads).
+  const {
+    data: publishPlansPage,
+    isValidating: isLoading,
+    mutate: refetchPublishPlans,
+  } = useSWR(
+    enabled ? SWR_KEYS.publishPlans.list(workbookId, page, PUBLISH_PLANS_PAGE_SIZE, connectionFilter) : null,
+    () =>
+      scratchApiClient.publish.listPublishPlans(workbookId, {
         page,
         pageSize: PUBLISH_PLANS_PAGE_SIZE,
         connectorAccountId: connectionFilter ?? undefined,
-      });
-      setPublishPlans(res.data);
-      setTotal(res.total);
-    } catch (error) {
-      console.error(error);
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to list publish plans',
-        color: 'red',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [workbookId, page, connectionFilter]);
-
-  const { start, stop } = useInterval(fetchPublishPlans, 2000);
-
-  useEffect(() => {
-    if (enabled) {
-      fetchPublishPlans();
-      start();
-    } else {
-      stop();
-    }
-    return stop;
-  }, [enabled, fetchPublishPlans, start, stop]);
+      }),
+    {
+      refreshInterval: 2000,
+      keepPreviousData: true,
+      shouldRetryOnError: false,
+      onError: (error) => {
+        console.error(error);
+        notifications.show({
+          title: 'Error',
+          message: 'Failed to list publish plans',
+          color: 'red',
+        });
+      },
+    },
+  );
+  const publishPlans: PublishPlanEntity[] = publishPlansPage?.data ?? [];
+  const total = publishPlansPage?.total ?? 0;
+  const fetchPublishPlans = () => {
+    void refetchPublishPlans();
+  };
 
   const handlePlanAll = async (runAfterPlan: boolean) => {
     setIsPlanning(true);
@@ -226,11 +224,9 @@ export function PublishPlansList({
 
   // If the current page falls past the end (e.g. after deleting the last row on
   // the last page), step back so the user doesn't land on an empty page.
-  useEffect(() => {
-    if (page > totalPages) {
-      setPage(totalPages);
-    }
-  }, [page, totalPages]);
+  if (page > totalPages) {
+    setPage(totalPages);
+  }
 
   return (
     <>
