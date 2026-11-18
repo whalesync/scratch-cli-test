@@ -157,12 +157,17 @@ The VM has never been stopped since it was created (2026-09-18), so a pause make
 - **The startup script runs on every boot** (`terraform/modules/scratch_git_gce/scripts/startup.sh`). It mounts the
   data disk, reads two secrets, prunes Docker, pulls `spinner-scratch-git:latest` and `nginx:alpine`, and recreates the
   blue, green, and proxy containers. Its copy in the VM's metadata matches the repo, byte for byte, as of 2026-11-16.
-- **The mount race.** The data disk isn't in `/etc/fstab`, and the containers run with `--restart unless-stopped`.
-  On boot, Docker can restart the old blue and green containers before the startup script has mounted the data disk.
-  They then run against the empty mount point on the boot disk until the script recreates them.
-  - This is harmless because nothing calls scratch-git until the wake has seen the startup script finish.
-  - It does leave a little junk under the mount point on the boot disk.
-  - A follow-up could have Docker wait for the mount.
+- **The mount race.** The containers run with `--restart unless-stopped`, so Docker restarts them as soon as it
+  starts at boot, while the startup script mounts the data disk in parallel. A container that wins the race runs
+  against the empty mount point on the boot disk until the script recreates it. On the 2026-11-17 14:35 UTC boot, the
+  disk mounted only 9 s before Docker finished starting.
+  - **Fixed in MR !3490** (2026-11-18, `75e46a10c`). The startup script adds the disk to `/etc/fstab` (`nofail`) and
+    makes `docker.service` require the mount, so Docker waits for the disk, and doesn't start at all without it. It
+    also starts only the active slot. Before, it started both blue and green, and both ran against the disk until the
+    next deploy.
+  - Terraform doesn't push startup-script changes to a running VM, so the fix reaches each VM only through
+    [runbook-scratch-git-startup-script-rollout.md](../runbook-scratch-git-startup-script-rollout.md). It then takes
+    effect from the boot after the one that writes the `/etc/fstab` line. Until then, each boot can still hit the race.
 - **How the wake knows the script finished.** The VM's guest agent (google-guest-agent's
   `gce_metadata_script_runner`, version 20260715) logs "Finished running startup scripts" whatever the outcome, and
   `Script "startup-script" failed with error: exit status N` just before it when the script fails. **A successful run
@@ -182,7 +187,8 @@ The VM has never been stopped since it was created (2026-09-18), so a pause make
     retry after a failed startup script would find the VM running, see the proxy report healthy, and wake the services
     against containers that may not be using the data disk. Each retry fails the same way until someone fixes the cause
     and runs a pause and a wake to boot the VM again.
-- **Each boot posts two scratch-git startup messages** to Slack, one from each container.
+- **Each boot posts scratch-git startup messages** to Slack: two (one from each container) before MR !3490's
+  startup script reaches the VM, one after.
 - **The master pipeline's scratch-git deploy** (`deploy scratch-git to test environment`) runs in the deploy stage,
   after `wake test` has waited for the startup script. So the two never overlap.
 
@@ -366,8 +372,9 @@ Still open:
 
 - **The hang itself.** It needs evidence from the VM while it happens: `docker ps`, the container's logs, and thread
   stacks. A restart wipes that evidence.
-- **The boot path.** After a boot, `startup.sh` runs both the blue and the green containers against the data disk
-  until the next deploy, and it doesn't wait for the data disk to mount (see [Follow-ups](#follow-ups)).
+- **The boot path.** After a boot, `startup.sh` ran both the blue and the green containers against the data disk
+  until the next deploy, and didn't wait for the data disk to mount. Fixed in MR !3490, which still has to be rolled
+  out to each VM (see [The scratch-git boot](#the-scratch-git-boot)).
 
 ## Rollout
 
@@ -483,10 +490,9 @@ pipeline, and changes nothing on an awake test. To remove it entirely, revert th
 
 - Fold `cron-service` into `worker-service` in test ([cost review](../dev-11808-scratch-hosting-cost-review.md) #5).
   It's the same image, and it would save about $54/mo around the clock, more than this pause saves on Cloud Run.
-- Have Docker on the scratch-git VM wait for the data disk to mount (`/etc/fstab`, or `RequiresMountsFor` on
-  `docker.service`), so a boot never starts the containers against the empty mount point. It needs the out-of-band
-  startup-script rollout, because Terraform ignores changes to the VM's startup script.
-- Have `startup.sh` start only the active slot on boot, not both blue and green.
+- ~~Have Docker on the scratch-git VM wait for the data disk to mount, and have `startup.sh` start only the active
+  slot on boot.~~ Done in MR !3490. **Still to do:** roll it out to test, then production, per
+  [runbook-scratch-git-startup-script-rollout.md](../runbook-scratch-git-startup-script-rollout.md).
 - Find out why scratch-git hangs ([Incident 2026-11-17](#incident-2026-11-17-scratch-git-stopped-answering)).
 
 ## Appendix: reproducing the numbers

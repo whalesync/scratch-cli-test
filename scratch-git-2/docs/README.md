@@ -177,79 +177,46 @@ Docker images are built automatically by the GitLab CI/CD pipeline and pushed to
 
 The scratch-git service runs on a GCE instance (Debian 12) managed by Terraform in `terraform/modules/scratch_git_gce/`. It is deployed to **Test** (`spv1eu-test`) and **Production** (`spv1eu-production`) in the EU region.
 
-### Deploy via gcloud
+### Deploy
 
-To update the running container without a full Terraform apply, SSH into the instance and re-run the startup script. This pulls the latest image and restarts the container.
+Every merge to `master` deploys scratch-git to **Test**, and every push to `prod` deploys it to **Production**: the
+`deploy scratch-git to … environment` jobs in [`gitlab-ci/stages/05-deploy.yml`](../../gitlab-ci/stages/05-deploy.yml).
+Each job runs [`scripts/ci/deploy-scratch-git.sh`](../../scripts/ci/deploy-scratch-git.sh), which SSHes into the VM and
+runs the blue/green [`deploy.sh`](../../terraform/modules/scratch_git_gce/scripts/deploy.sh):
 
-**Test:**
+1. Read the active slot (`blue` or `green`) from `/mnt/disks/data/.active-slot`.
+2. Start the new image in the other slot, and wait for its `/health`.
+3. Switch the nginx proxy (`scratch-git-proxy`, which owns ports 3100 and 3101) to it.
+4. Stop the old slot, with up to 60 s for in-flight requests.
 
-```bash
-gcloud compute ssh scratch-git \
-  --project spv1eu-test \
-  --zone europe-west1-b \
-  --tunnel-through-iap \
-  -- 'sudo google_metadata_script_runner startup'
-```
+So between deploys one scratch-git container runs, plus the proxy. To redeploy by hand, retry the deploy job of the
+latest pipeline.
 
-**Production:**
+Don't rerun the startup script (`sudo google_metadata_script_runner startup`) to update the container. It runs the copy
+of the startup script in the VM's metadata, which Terraform ignores after the VM is created, so it may be out of date.
+It also recreates the containers, with downtime. The startup script runs on its own at every boot. To change what it
+does on a running VM, follow
+[runbook-scratch-git-startup-script-rollout.md](../../docs/ops/runbook-scratch-git-startup-script-rollout.md).
 
-```bash
-gcloud compute ssh scratch-git \
-  --project spv1eu-production \
-  --zone europe-west1-b \
-  --tunnel-through-iap \
-  -- 'sudo google_metadata_script_runner startup'
-```
+### Inspecting the VM
 
-Alternatively, SSH in and interact with the instance directly:
-
-```bash
-gcloud compute ssh scratch-git \
-  --project spv1eu-test \
-  --zone europe-west1-b \
-  --tunnel-through-iap
-```
-
-#### Docker commands
-
-When you SSH in via `gcloud` it will login as your service account which is unable to use `docker` commands directly,
-so you need to sudo any docker command.
-
-# View running containers
+Developers get a restricted shell with read-only wrappers. It lands on your read-only account, which can't run `docker`
+directly:
 
 ```bash
-sudo docker ps
+./terraform/tools/connect_to_git_service_ssh.sh test
 ```
 
-# View logs
+Use `production` instead of `test` for production. In that shell:
 
-```bash
-sudo docker logs scratch-git
-```
+- `sudo gitops-ps` lists the containers (`docker ps -a`).
+- `sudo gitops-logs scratch-git-blue 200` prints a container's last 200 log lines. The container is
+  `scratch-git-blue`, `scratch-git-green`, or `scratch-git-proxy`.
+- `sudo gitops-disk` shows disk usage.
+- `sudo gitops-git <org_../wkb_../coa_..> log -5` runs read-only git on one repo.
 
-# Follow logs in real-time
-
-```bash
-sudo docker logs -f scratch-git
-```
-
-# Open a shell inside the container
-
-```bash
-sudo docker exec -it scratch-git /bin/sh
-```
-
-# Restart the container
-
-```bash
-sudo docker restart scratch-git
-```
-
-# Check container resource usage
-
-```bash
-sudo docker stats scratch-git
-```
+Everything else (`docker exec`, `docker restart`, cleanup) needs a break-glass `role_operations@` admin session. The
+active container is `scratch-git-blue` or `scratch-git-green`, whichever `/mnt/disks/data/.active-slot` names.
 
 ### Accessing the service locally
 

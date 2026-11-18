@@ -37,7 +37,7 @@ Key git facts the design leans on (verified on git 2.39, the prod image):
 `src/service/maintenance.rs`. A single tokio task, tick every 60 s (a long tick delays the next;
 no overlap):
 
-1. Re-read the switch from the DB (both blue/green containers run permanently and share the
+1. Re-read the switch from the DB (during a blue/green deploy both containers run and share the
    disk; a flip through either must reach the other within a tick — and deleting the DB reads as
    *off*).
 2. If off: do nothing.

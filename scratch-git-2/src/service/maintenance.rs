@@ -192,10 +192,12 @@ impl MaintenanceState {
         &self.db
     }
 
-    /// Re-read the switch from the DB and adopt it if it changed. Called once per tick: both
-    /// blue/green containers run permanently and a `PUT /config` only reaches the one behind the
-    /// proxy, so the other must converge within a tick — especially for DISABLE. A missing or
-    /// unreadable DB reads as off, so deleting the DB also stops running loops within a tick.
+    /// Re-read the switch from the DB and adopt it if it changed. Called once per tick: during a
+    /// blue/green deploy both containers run and share the disk (`deploy.sh` starts the new slot,
+    /// switches nginx to it, then stops the old one), and a `PUT /config` only reaches the one
+    /// behind the proxy, so the other must converge within a tick — especially for DISABLE. A
+    /// missing or unreadable DB reads as off, so deleting the DB also stops running loops within a
+    /// tick.
     pub fn reload_switch_from_db(&self) {
         let (enabled, updated_at_ms) = self.db.read_enabled();
         let mut guard = self.updated_at_ms.lock().unwrap();
@@ -1994,8 +1996,8 @@ mod tests {
         assert_eq!(ours.config(), partner.config());
     }
 
-    /// Both blue/green containers run permanently; a flip through one must reach the other's
-    /// loop within a tick — and deleting the DB must stop a running loop.
+    /// While both blue/green containers run (during a deploy), a flip through one must reach the
+    /// other's loop within a tick — and deleting the DB must stop a running loop.
     #[test]
     fn switch_flips_and_db_deletion_reach_a_running_instance_via_tick_reload() {
         let tmp = tempfile::tempdir().unwrap();
