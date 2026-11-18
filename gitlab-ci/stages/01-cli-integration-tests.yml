@@ -68,7 +68,11 @@ cli integration tests:
 notify slack on cli integration test failure:
   stage: build and test
   dependencies: []
+  # Also `wake test`: when it fails (test's API can't reach scratch-git, say),
+  # the CLI tests don't run at all, and this should still post.
   needs:
+    - job: wake test
+      optional: true
     - job: cli integration tests
       optional: true
   script:

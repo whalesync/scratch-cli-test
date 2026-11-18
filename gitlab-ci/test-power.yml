@@ -39,7 +39,9 @@ include:
 .wake_test:
   extends: .test_power
   script:
-    - terraform/tools/test_power.sh wake
+    # TEST_POWER_WAKE_ARGUMENTS is "--before-deploy" in the master pipeline's `wake test`
+    # (stages/01-build-and-test.yml) and unset everywhere else.
+    - terraform/tools/test_power.sh wake ${TEST_POWER_WAKE_ARGUMENTS:-}
 
 # The manual and scheduled pipelines. Only on `master`, so they run the reviewed script.
 wake test now:

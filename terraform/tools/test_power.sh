@@ -20,6 +20,13 @@ set -euo pipefail
 # startup script and for scratch-git to report healthy behind its load balancer, then starts api and worker, and cron
 # last, so the worker exists before the cron's reapers run (the same order as maintenance_mode.sh).
 #
+# Every wake, including one that finds nothing paused, ends by asking the API's /service-check whether the API can
+# actually reach Redis and both scratch-git ports. A running VM and a healthy load balancer don't prove that: the load
+# balancer only opens a TCP connection to nginx, which stays up even when the scratch-git process behind it has hung.
+# When scratch-git doesn't answer, a wake fails, so nothing goes on to test against a broken stack. `wake --before-deploy`
+# only warns instead: the master pipeline uses it, because its own scratch-git deploy restarts scratch-git, and failing
+# the wake would skip that deploy.
+#
 # Test's alerts email the team, and a pause trips some of them, so a pause snoozes those policies for up to 7 days
 # before it changes anything, and a wake ends the snooze.
 #
@@ -34,12 +41,15 @@ set -euo pipefail
 # that macOS ships.
 #
 # Usage:
-#   ./test_power.sh status   # show each service's scaling, the database, the VM, scratch-git's health, and the snooze
-#   ./test_power.sh wake     # if anything is paused: start the database and the VM, then the services
-#   ./test_power.sh pause    # snooze the alerts, stop the services, then the VM and the database
+#   ./test_power.sh status                 # show each service's scaling, the database, the VM, scratch-git's health,
+#                                          # whether the API can reach scratch-git, and the snooze
+#   ./test_power.sh wake                   # if anything is paused: start the database and the VM, then the services.
+#                                          # Then fail unless the API can reach scratch-git.
+#   ./test_power.sh wake --before-deploy   # the same, but only warn when the API can't reach scratch-git
+#   ./test_power.sh pause                  # snooze the alerts, stop the services, then the VM and the database
 
 usage() {
-    echo "usage: $0 status | wake | pause" >&2
+    echo "usage: $0 status | wake [--before-deploy] | pause" >&2
     exit 1
 }
 
@@ -50,6 +60,11 @@ SCRATCH_GIT_INSTANCE_ZONE="europe-west1-b"
 # The internal TCP load balancer's backend in front of the scratch-git VM (terraform/modules/scratch_git_gce/main.tf).
 SCRATCH_GIT_BACKEND_SERVICE_NAME="scratch-git-backend-service"
 API_HEALTH_URL="https://test-api.scratch.md/health"
+# Reports whether the API can reach each service it depends on (server/src/health/health.controller.ts). The API probes
+# scratch-git's /health on both of its ports with a 5 s timeout, so a hung scratch-git shows up here as an error.
+API_SERVICE_CHECK_URL="https://test-api.scratch.md/service-check"
+# The /service-check components a wake requires to report "ok".
+API_SERVICE_CHECK_REQUIRED_COMPONENTS="redis scratch_git scratch_git_http"
 
 # Test's maintenance-mode lockdown rule (terraform/modules/env/maintenance.tf, flipped by maintenance_mode.sh).
 MAINTENANCE_SECURITY_POLICY_NAME="eu-test-maintenance"
@@ -71,11 +86,20 @@ SCRATCH_GIT_DRAIN_SECONDS=60
 WORKER_SETTLE_SECONDS_BEFORE_CRON=45
 # The startup script prunes Docker and pulls the scratch-git and nginx images, so it takes a few minutes.
 STARTUP_SCRIPT_TIMEOUT_SECONDS=720
+# What the guest agent logs when the startup script ends (see scratch_git_startup_script_outcome_lines_since), as awk
+# regular expressions.
+STARTUP_SCRIPT_FINISHED_PATTERN='Finished running startup scripts'
+STARTUP_SCRIPT_FAILED_PATTERN='[Ss]cript "startup-script" failed with error.*|startup-script exit status [1-9][0-9]*'
 # A wake checks the startup script whenever the VM booted this recently, even if this run didn't start it: an earlier
 # wake that failed partway, and then retried, may have.
 RECENT_BOOT_WINDOW_SECONDS=1800
 SCRATCH_GIT_HEALTHY_TIMEOUT_SECONDS=300
 API_HEALTHY_TIMEOUT_SECONDS=300
+# How long a wake waits for /service-check to report every required component "ok". A freshly started API reaches a
+# freshly booted scratch-git within seconds; this only covers a slow first request.
+API_SERVICE_CHECK_TIMEOUT_SECONDS_AFTER_A_FULL_WAKE=180
+# Shorter when nothing was paused: everything should already answer, and this wake runs in every master pipeline.
+API_SERVICE_CHECK_TIMEOUT_SECONDS_WHEN_ALREADY_AWAKE=45
 
 # The alert policies a pause trips (terraform/modules/env/monitoring.tf), by display name. Requests to the paused
 # services get 503s; "Scratch Git Memory > 85%" has an absence condition, so it fires once the VM stops; and a boot can
@@ -347,33 +371,49 @@ start_or_stop_scratch_git_instance() {
     echo "  $SCRATCH_GIT_INSTANCE_NAME: ${start_or_stop} finished in $(duration_since "$started_at_seconds")."
 }
 
-# The guest agent's lines about the startup script since $2, "Finished running startup scripts" and
-# "startup-script exit status N", each as "<UTC timestamp to the second><tab><line>", oldest first. It reads them from
-# two places and prints whatever either one has:
+# The guest agent's own lines about how the startup script ended, since $2, each as "<UTC timestamp to the
+# second><tab><line>", oldest first. The guest agent on the VM (google-guest-agent's gce_metadata_script_runner, version
+# 20260715 in November 2026) logs:
+#   - "Finished running startup scripts" once the script is done, whatever its outcome;
+#   - 'Script "startup-script" failed with error: exit status N' just before that when the script exits non-zero, or
+#     'run script "startup-script" failed with error: ...' when it couldn't start the script. A successful run logs
+#     nothing else.
+# Older guest agents logged "startup-script exit status N" whatever the outcome, so a non-zero one counts as a failure
+# too. The agent logs each line of the script's own output as 'Metadata key("startup-script"), command("/bin/bash"):
+# <line>'. Those lines are skipped, so the script's output is never printed and can't look like an outcome.
+#
+# It reads two places and prints whatever either one has:
 #   - the serial console, where syslog lines start with an ISO 8601 UTC timestamp (2026-10-05T12:12:00.528360+00:00).
 #     Only lines stamped at or after $2 count, so an earlier boot's lines never do, whether or not the console kept them
 #     across the stop and start. Lines in any other format are ignored. It's immediate, but the API only returns the
 #     last 1 MB;
-#   - Cloud Logging (GCEMetadataScripts, or syslog through the ops agent), from $2 on, which can lag a little.
-# $1 = the instance id, $2 = the earliest UTC timestamp, as 2026-11-17T12:45:00Z. Only these lines are printed, never the
-# script's own output.
-scratch_git_startup_script_lines_since() {
+#   - Cloud Logging (the guest agent's google_metadata_script_runner log, GCEMetadataScripts from older agents, or
+#     syslog through the ops agent), from $2 on, which can lag a little.
+# $1 = the instance id, $2 = the earliest UTC timestamp, as 2026-11-17T12:45:00Z.
+scratch_git_startup_script_outcome_lines_since() {
     local instance_id="$1" earliest_timestamp="$2" serial_console_output cloud_logging_entries
+    local outcome_pattern="$STARTUP_SCRIPT_FINISHED_PATTERN|$STARTUP_SCRIPT_FAILED_PATTERN"
     local log_filter="resource.type=\"gce_instance\" AND resource.labels.instance_id=\"$instance_id\""
-    log_filter+=" AND (logName=\"projects/$GCP_PROJECT_ID/logs/GCEMetadataScripts\" OR logName=\"projects/$GCP_PROJECT_ID/logs/syslog\")"
+    log_filter+=" AND (logName=\"projects/$GCP_PROJECT_ID/logs/google_metadata_script_runner\""
+    log_filter+=" OR logName=\"projects/$GCP_PROJECT_ID/logs/GCEMetadataScripts\""
+    log_filter+=" OR logName=\"projects/$GCP_PROJECT_ID/logs/syslog\")"
     log_filter+=" AND timestamp>=\"$earliest_timestamp\""
-    log_filter+=" AND (\"Finished running startup scripts\" OR \"startup-script exit status\")"
+    log_filter+=" AND (\"Finished running startup scripts\" OR \"failed with error\" OR \"startup-script exit status\")"
     serial_console_output="$(gcloud_in_target_project compute instances get-serial-port-output \
         "$SCRATCH_GIT_INSTANCE_NAME" --zone="$SCRATCH_GIT_INSTANCE_ZONE" 2>/dev/null || true)"
-    cloud_logging_entries="$(gcloud_in_target_project logging read "$log_filter" --limit=20 \
+    cloud_logging_entries="$(gcloud_in_target_project logging read "$log_filter" --limit=50 \
         --format='value(timestamp,jsonPayload.message,textPayload)' 2>/dev/null || true)"
     {
-        printf '%s\n' "$serial_console_output" | awk -v earliest_timestamp="$earliest_timestamp" '
-            $1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ &&
-            substr($1, 1, 19) >= substr(earliest_timestamp, 1, 19) &&
-            /Finished running startup scripts|startup-script exit status [0-9]+/ { print substr($1, 1, 19) "\t" $0 }'
-        printf '%s\n' "$cloud_logging_entries" | awk -F '\t' '
-            $1 != "" { print substr($1, 1, 19) "\t" ($2 != "" ? $2 : $3) }'
+        printf '%s\n' "$serial_console_output" |
+            awk -v earliest_timestamp="$earliest_timestamp" -v outcome_pattern="$outcome_pattern" '
+                $1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ &&
+                substr($1, 1, 19) >= substr(earliest_timestamp, 1, 19) &&
+                index($0, "Metadata key(") == 0 && $0 ~ outcome_pattern { print substr($1, 1, 19) "\t" $0 }'
+        printf '%s\n' "$cloud_logging_entries" | awk -F '\t' -v outcome_pattern="$outcome_pattern" '
+            { message = ($2 != "" ? $2 : $3) }
+            $1 != "" && index(message, "Metadata key(") == 0 && message ~ outcome_pattern {
+                print substr($1, 1, 19) "\t" message
+            }'
     } | sort
 }
 
@@ -382,22 +422,25 @@ scratch_git_startup_script_lines_since() {
 # the old containers against the not-yet-mounted data directory, and the master pipeline's scratch-git deploy mustn't
 # run alongside it. $1 = the instance id, $2 = when the current boot started, in UTC.
 #
-# Returns 0 when the script finished and its latest exit status is 0, 1 when its latest exit status is anything else,
-# and 2 when no finish showed up in time (the caller then relies on scratch-git's health check alone).
+# Returns 0 when the script finished and no failure was logged in this boot, 1 when a failure was logged in this boot,
+# and 2 when no finish showed up in time (the caller then relies on the health checks alone). A failure anywhere in the
+# boot counts, even if someone ran the script again by hand afterwards: a successful run leaves no line to tell it
+# apart, so only a new boot clears it.
 wait_until_scratch_git_startup_script_finished() {
-    local instance_id="$1" boot_started_at="$2" elapsed_seconds=0 startup_script_lines latest_exit_status
+    local instance_id="$1" boot_started_at="$2" elapsed_seconds=0 startup_script_outcome_lines
+    local startup_script_failure
     while [ "$elapsed_seconds" -le "$STARTUP_SCRIPT_TIMEOUT_SECONDS" ]; do
-        startup_script_lines="$(scratch_git_startup_script_lines_since "$instance_id" "$boot_started_at")"
-        case "$startup_script_lines" in
-            *"Finished running startup scripts"*)
-                latest_exit_status="$(printf '%s\n' "$startup_script_lines" |
-                    grep -Eo 'startup-script exit status [0-9]+' | tail -1 | awk '{ print $4 }' || true)"
-                if [ -z "$latest_exit_status" ]; then
-                    warn "the startup script finished, but its exit status wasn't found. Relying on scratch-git's health check."
-                    return 0
-                fi
-                echo "  The startup script finished with exit status $latest_exit_status."
-                [ "$latest_exit_status" = "0" ] || return 1
+        startup_script_outcome_lines="$(scratch_git_startup_script_outcome_lines_since "$instance_id" "$boot_started_at")"
+        startup_script_failure="$(printf '%s\n' "$startup_script_outcome_lines" |
+            awk -F '\t' -v failed_pattern="$STARTUP_SCRIPT_FAILED_PATTERN" '
+                match($2, failed_pattern) { failure = substr($2, RSTART) } END { print failure }')"
+        if [ -n "$startup_script_failure" ]; then
+            echo "  The startup script failed in this boot: $startup_script_failure"
+            return 1
+        fi
+        case "$startup_script_outcome_lines" in
+            *"$STARTUP_SCRIPT_FINISHED_PATTERN"*)
+                echo "  The startup script finished, and no failure was logged."
                 return 0
                 ;;
         esac
@@ -441,6 +484,85 @@ wait_until_api_is_healthy() {
         elapsed_seconds=$((elapsed_seconds + POLL_INTERVAL_SECONDS))
     done
     return 1
+}
+
+# Prints one line for each of API_SERVICE_CHECK_REQUIRED_COMPONENTS that /service-check doesn't report as "ok", as
+# "<component>: <status>: <error>", or one line saying why /service-check itself couldn't be read. Prints nothing when the
+# API reaches every required service.
+api_service_check_problems() {
+    local response_file http_status_code
+    response_file="$(mktemp)"
+    # 60 s: test's api-service scales to 0 when idle, and a cold start took 23 s on 2026-11-17.
+    http_status_code="$(curl --silent --output "$response_file" --write-out '%{http_code}' --max-time 60 \
+        "$API_SERVICE_CHECK_URL" 2>/dev/null || true)"
+    if [ "$http_status_code" != "200" ]; then
+        case "$http_status_code" in
+            "" | 000) echo "/service-check: no response" ;;
+            *) echo "/service-check: HTTP $http_status_code" ;;
+        esac
+    elif ! jq -r --arg required_components "$API_SERVICE_CHECK_REQUIRED_COMPONENTS" '
+        . as $response
+        | $required_components | split(" ")[]
+        | . as $component_name
+        | ($response[$component_name] // {}) as $component
+        | select(($component.status // "missing") != "ok")
+        | "\($component_name): \($component.status // "missing")"
+            + (if $component.error then ": \($component.error | tostring | gsub("[\\r\\n]+"; " ") | .[0:200])"
+               else "" end)' "$response_file" 2>/dev/null; then
+        echo "/service-check: the response wasn't JSON"
+    fi
+    rm -f "$response_file"
+}
+
+# Polls /service-check until every required component reports "ok", for up to $1 seconds. Leaves the last problems, one
+# per line, in last_api_service_check_problems. Must be called directly, not inside $(...), so they survive.
+last_api_service_check_problems=""
+wait_until_the_api_reaches_every_required_service() {
+    local timeout_seconds="$1" elapsed_seconds=0
+    while true; do
+        last_api_service_check_problems="$(api_service_check_problems)"
+        if [ -z "$last_api_service_check_problems" ]; then
+            echo "  ${elapsed_seconds}s: $API_SERVICE_CHECK_URL -> ok ($API_SERVICE_CHECK_REQUIRED_COMPONENTS)"
+            return 0
+        fi
+        echo "  ${elapsed_seconds}s: $API_SERVICE_CHECK_URL -> $(joined_on_one_line "$last_api_service_check_problems")"
+        [ "$elapsed_seconds" -lt "$timeout_seconds" ] || return 1
+        sleep "$POLL_INTERVAL_SECONDS"
+        elapsed_seconds=$((elapsed_seconds + POLL_INTERVAL_SECONDS))
+    done
+}
+
+# Prints $1's lines joined with "; ".
+joined_on_one_line() {
+    printf '%s\n' "$1" | awk 'NF { printf "%s%s", (joined_count++ ? "; " : ""), $0 }'
+}
+
+# Ends a wake by checking, through /service-check, that the API can reach Redis and both scratch-git ports, for up to
+# $1 seconds. A running VM and a healthy load balancer don't prove that: the load balancer only opens a TCP connection to
+# nginx, which stays up when the scratch-git process behind it has hung. Fails the wake when the API can't, unless the
+# wake runs before a deploy (--before-deploy): that pipeline's own scratch-git deploy restarts scratch-git, and failing
+# here would skip it, so then it only warns.
+require_the_api_to_reach_every_required_service() {
+    local timeout_seconds="$1" problem_summary recovery_hint=""
+    echo "Checking that the API can reach Redis and scratch-git..."
+    if wait_until_the_api_reaches_every_required_service "$timeout_seconds"; then
+        return 0
+    fi
+    problem_summary="$(joined_on_one_line "$last_api_service_check_problems")"
+    if [ "$(maintenance_lockdown_state)" = "ON" ]; then
+        problem_summary+=". Test is in maintenance mode, and its lockdown blocks /service-check"
+    fi
+    case "$last_api_service_check_problems" in
+        *scratch_git*)
+            recovery_hint=" The scratch-git process may have hung: its VM and load balancer can look healthy while it answers nothing. Retry the 'deploy scratch-git to test environment' job of the latest master pipeline, which restarts it, then run this wake again."
+            ;;
+    esac
+    if [ "$wake_runs_before_a_deploy" = "true" ]; then
+        warn "the API can't reach every service it needs after ${timeout_seconds}s: $problem_summary. This pipeline's scratch-git deploy restarts scratch-git, so the wake goes on."
+        notify_slack ":warning: *The test API can't reach every service it needs:* $problem_summary. This master pipeline's scratch-git deploy should restart scratch-git; if its post-deploy environment tests still fail, check scratch-git."
+        return 0
+    fi
+    die "the API can't reach every service it needs after ${timeout_seconds}s: ${problem_summary}.${recovery_hint}"
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
@@ -498,16 +620,21 @@ snooze_the_alerts_a_pause_trips() {
 
 # Ends every active snooze this script made. A failure only warns: the snooze ends on its own within 7 days.
 end_the_alert_snooze() {
-    local active_snooze_names active_snooze_name
+    local active_snooze_names active_snooze_name snooze_cancel_output
     if ! active_snooze_names="$(active_test_is_paused_snooze_names)"; then
         warn "couldn't list the alert snoozes, so they weren't ended."
         return 0
     fi
     for active_snooze_name in $active_snooze_names; do
-        if gcloud_in_target_project monitoring snoozes cancel "$active_snooze_name" --format=none; then
+        if snooze_cancel_output="$(gcloud_in_target_project monitoring snoozes cancel "$active_snooze_name" \
+            --format=none 2>&1)"; then
             echo "  Ended the alert snooze."
         else
-            warn "couldn't end the alert snooze $active_snooze_name."
+            case "$snooze_cancel_output" in
+                # Another wake (a manual one, say) ended it between the list and the cancel.
+                *"already ended"* | *"was canceled"*) echo "  The alert snooze had already ended." ;;
+                *) warn "couldn't end the alert snooze $active_snooze_name: $snooze_cancel_output" ;;
+            esac
         fi
     done
 }
@@ -584,7 +711,7 @@ wake_is_noop() {
 }
 
 command_status() {
-    local service_name snooze_line="not snoozed" active_snooze_names
+    local service_name snooze_line="not snoozed" active_snooze_names api_service_check_problems_now
     load_primary_database_instance_name
     for service_name in $ALL_PAUSED_SERVICES; do
         printf '%-30s %s\n' "$service_name" "$(cloud_run_service_status_line "$service_name")"
@@ -593,6 +720,12 @@ command_status() {
     printf '%-30s %s\n' "$SCRATCH_GIT_INSTANCE_NAME" \
         "$(scratch_git_instance_status | sed -e 's/^TERMINATED$/PAUSED (TERMINATED)/' -e 's/^$/unreadable/')"
     printf '%-30s %s\n' "$SCRATCH_GIT_BACKEND_SERVICE_NAME" "$(scratch_git_backend_health_state | sed 's/^$/unreadable/')"
+    api_service_check_problems_now="$(api_service_check_problems)"
+    if [ -z "$api_service_check_problems_now" ]; then
+        printf '%-30s %s\n' "api /service-check" "ok ($API_SERVICE_CHECK_REQUIRED_COMPONENTS)"
+    else
+        printf '%-30s %s\n' "api /service-check" "$(joined_on_one_line "$api_service_check_problems_now")"
+    fi
     if ! active_snooze_names="$(active_test_is_paused_snooze_names 2>/dev/null)"; then
         snooze_line="unknown: couldn't list the snoozes"
     elif [ -n "$active_snooze_names" ]; then
@@ -610,6 +743,11 @@ command_wake() {
     require_gcloud_with_scaling_flag
     load_primary_database_instance_name
     if wake_is_noop; then
+        echo "Nothing is paused."
+        # Set so that a failure below posts to Slack, which this quiet path otherwise doesn't.
+        operation_in_flight_description="Checking that test is awake"
+        require_the_api_to_reach_every_required_service "$API_SERVICE_CHECK_TIMEOUT_SECONDS_WHEN_ALREADY_AWAKE"
+        operation_in_flight_description=""
         echo "Test is already awake."
         end_the_alert_snooze
         return 0
@@ -657,7 +795,7 @@ command_wake() {
         scratch_git_boot_started_at="$scratch_git_start_requested_at"
     fi
     if [ -z "$scratch_git_boot_started_at" ]; then
-        warn "couldn't read when the scratch-git VM booted, so its startup script wasn't checked. Relying on scratch-git's health check."
+        warn "couldn't read when the scratch-git VM booted, so its startup script wasn't checked. Relying on the health checks."
     elif [ -n "$scratch_git_start_process_id" ] ||
         [[ "$scratch_git_boot_started_at" > "$(utc_timestamp_seconds_ago "$RECENT_BOOT_WINDOW_SECONDS")" ]]; then
         echo "Waiting for the scratch-git VM's startup script (boot at $scratch_git_boot_started_at)..."
@@ -665,8 +803,8 @@ command_wake() {
             startup_script_wait_result=$?
         case "$startup_script_wait_result" in
             0) ;;
-            1) die "the scratch-git VM's startup script failed in its current boot, so its containers may not be using the data disk. The services were left paused. Read its output with 'gcloud compute instances get-serial-port-output $SCRATCH_GIT_INSTANCE_NAME --zone=$SCRATCH_GIT_INSTANCE_ZONE --project=$GCP_PROJECT_ID' or in Cloud Logging (GCEMetadataScripts), fix the cause, then pause and wake test to boot it again." ;;
-            *) warn "no finished startup script showed up within ${STARTUP_SCRIPT_TIMEOUT_SECONDS}s. Relying on scratch-git's health check." ;;
+            1) die "the scratch-git VM's startup script failed in its current boot, so its containers may not be using the data disk. The services were left paused. Read its output with 'gcloud compute instances get-serial-port-output $SCRATCH_GIT_INSTANCE_NAME --zone=$SCRATCH_GIT_INSTANCE_ZONE --project=$GCP_PROJECT_ID' or in Cloud Logging (google_metadata_script_runner), fix the cause, then pause and wake test to boot it again." ;;
+            *) warn "no finished startup script showed up within ${STARTUP_SCRIPT_TIMEOUT_SECONDS}s. Relying on the health checks." ;;
         esac
     fi
     echo "Waiting for scratch-git to report healthy behind its load balancer..."
@@ -686,6 +824,7 @@ command_wake() {
     echo "Waiting for the API to report healthy..."
     wait_until_api_is_healthy ||
         die "the API didn't report healthy within ${API_HEALTHY_TIMEOUT_SECONDS}s. Is Postgres accepting connections? api exits at boot when it isn't."
+    require_the_api_to_reach_every_required_service "$API_SERVICE_CHECK_TIMEOUT_SECONDS_AFTER_A_FULL_WAKE"
 
     end_the_alert_snooze
     operation_in_flight_description=""
@@ -747,15 +886,35 @@ command_pause() {
     notify_slack ":zzz: Test is paused, in $(duration_since "$pause_started_at_seconds")."
 }
 
+# Set by `wake --before-deploy`: the caller deploys test right after this wake (the master pipeline's `wake test`), and
+# that deploy restarts scratch-git, so an API that can't reach scratch-git only warns.
+wake_runs_before_a_deploy="false"
+
 main() {
-    local required_tool
+    local required_tool command_name="${1:-}"
+    [ $# -eq 0 ] || shift
     for required_tool in gcloud jq curl; do
         command -v "$required_tool" >/dev/null 2>&1 || die "'$required_tool' is required but not installed."
     done
-    case "${1:-}" in
-        status) command_status ;;
-        wake) command_wake ;;
-        pause) command_pause ;;
+    case "$command_name" in
+        status)
+            [ $# -eq 0 ] || usage
+            command_status
+            ;;
+        wake)
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --before-deploy) wake_runs_before_a_deploy="true" ;;
+                    *) usage ;;
+                esac
+                shift
+            done
+            command_wake
+            ;;
+        pause)
+            [ $# -eq 0 ] || usage
+            command_pause
+            ;;
         *) usage ;;
     esac
 }

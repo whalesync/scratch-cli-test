@@ -3,8 +3,11 @@
 - **Created:** 2026-11-16
 - **Author:** Chris Hoefgen
 - **Linear:** [DEV-12906](https://linear.app/whalesync/issue/DEV-12906) (label _Infra_)
-- **Status:** The script and the CI jobs are written. The two schedules haven't been created yet, so test still runs
-  around the clock.
+- **Status:** The script and the CI jobs are merged (`818da9beb`). Both schedules exist but were inactive on 2026-11-17,
+  after test's scratch-git stopped answering (see
+  [Incident 2026-11-17](#incident-2026-11-17-scratch-git-stopped-answering)). Chris restarted test by hand, and the
+  schedules stay inactive for now. "Pause test env" is set to `0 22 * * *` in GitLab, not the `0 23 * * *` this plan
+  assumed.
 - **Related:**
   - Whalesync shipped the same thing for `wsv1-test` the same day: [DEV-12904](https://linear.app/whalesync/issue/DEV-12904),
     `tools/ops/test_power.sh` and `docs/plans/2026-11-16-pause-test-overnight.md` in the whalesync repo. This plan
@@ -116,25 +119,35 @@ and every gcloud call passes `--project` and `--billing-project` set to `spv1eu-
 
 **`wake`:**
 
-1. If nothing is paused, change nothing and post nothing, but end any snooze left over. Nothing is paused when no
-   service is at manual scaling, the database's activation policy is `ALWAYS`, and the VM is `RUNNING`. Anything the
-   script can't read counts as paused. This keeps the wake in every master pipeline quiet and fast (about 15 s).
+1. If nothing is paused, change nothing and post nothing, but check that the API can reach scratch-git (step 7), and
+   end any snooze left over. Nothing is paused when no service is at manual scaling, the database's activation policy
+   is `ALWAYS`, and the VM is `RUNNING`. Anything the script can't read counts as paused. This keeps the wake in every
+   master pipeline quiet and fast (about 20 s).
 2. Refuse for a read-only account or during maintenance mode, as for `pause`.
 3. Post to Slack, then start the database and the VM in parallel.
-4. If the VM booted in the last 30 minutes, including just now, wait for its startup script to finish with exit
-   status 0 (see [The scratch-git boot](#the-scratch-git-boot)). Then wait for the internal load balancer to report
-   scratch-git `HEALTHY`.
+4. If the VM booted in the last 30 minutes, including just now, wait for its startup script to finish without a
+   logged failure (see [The scratch-git boot](#the-scratch-git-boot)). Then wait for the internal load balancer to
+   report scratch-git `HEALTHY`.
 5. Set `api-service` and `worker-service` to automatic scaling. Wait 45 s, then do the same for `cron-service`. This is
    `maintenance_mode.sh`'s resume order: the worker exists before the cron's scheduler and reapers run.
 6. Wait for `https://test-api.scratch.md/health` to return 200. api exits at boot when Postgres is unreachable
    (`server/src/db/db.service.ts`), so a 200 also means the database is back.
-7. End the snooze, then post ":sunny: Test is awake".
+7. Wait for `https://test-api.scratch.md/service-check` to report `redis`, `scratch_git`, and `scratch_git_http` as
+   `ok`: up to 3 minutes after a full wake, 45 s when nothing was paused. The API probes scratch-git's `/health` on both
+   ports with a 5 s timeout, so this catches a scratch-git process that has hung behind a running VM and a healthy load
+   balancer, which only opens a TCP connection to nginx. If the API can't reach all three, the wake fails, and says to
+   retry the latest master pipeline's `deploy scratch-git to test environment` job, which restarts scratch-git.
+   - `wake --before-deploy` only warns and posts a warning to Slack instead. The master pipeline uses it: its own
+     scratch-git deploy restarts scratch-git, and a failed wake would skip that deploy, leaving every later master
+     pipeline stuck the same way.
+8. End the snooze, then post ":sunny: Test is awake".
 
 A full wake takes about 6 to 9 minutes. In a master pipeline it runs alongside the build jobs, so the deploy stage
 rarely waits for it.
 
 **`status`** shows each service's scaling, the database's activation policy and state, the VM's status, scratch-git's
-health behind its load balancer, whether the alerts are snoozed, and the maintenance lockdown. It's read-only, so
+health behind its load balancer, what `/service-check` reports, whether the alerts are snoozed, and the maintenance
+lockdown. It's read-only, so
 developers' read-only accounts can run it.
 
 ### The scratch-git boot
@@ -150,14 +163,21 @@ The VM has never been stopped since it was created (2026-09-18), so a pause make
   - This is harmless because nothing calls scratch-git until the wake has seen the startup script finish.
   - It does leave a little junk under the mount point on the boot disk.
   - A follow-up could have Docker wait for the mount.
-- **How the wake knows the script finished.** The guest agent logs "Finished running startup scripts" and
-  "startup-script exit status N". The wake polls two places and takes whichever answers first:
-  - the serial console, counting only lines stamped at or after the start;
-  - Cloud Logging (`GCEMetadataScripts`, or `syslog` through the ops agent).
+- **How the wake knows the script finished.** The VM's guest agent (google-guest-agent's
+  `gce_metadata_script_runner`, version 20260715) logs "Finished running startup scripts" whatever the outcome, and
+  `Script "startup-script" failed with error: exit status N` just before it when the script fails. **A successful run
+  logs nothing else**: no "exit status 0" line. It logs each line of the script's output as
+  `Metadata key("startup-script"), command("/bin/bash"): <line>` (stderr ones at ERROR severity, even on a clean
+  boot); the wake skips those lines, so the script's output is never printed and can't look like an outcome. Older
+  guest agents logged `startup-script exit status N` either way, so a non-zero one counts too. The wake polls two
+  places and takes whichever answers first:
+  - the serial console, counting only lines stamped at or after the boot;
+  - Cloud Logging (the agent's `google_metadata_script_runner` log, `GCEMetadataScripts` from older agents, or `syslog`
+    through the ops agent).
 
-  - **The latest exit status counts.** A non-zero one fails the wake, and the services stay paused. If neither source
-    shows a finish within 12 minutes, the wake warns and relies on the load balancer's health check. The first manual
-    wake confirms which source answers.
+  - **Any failure in the boot fails the wake**, and the services stay paused. A successful re-run by hand leaves no
+    line to tell it apart, so only a new boot (a pause and a wake) clears it. If neither source shows a finish within
+    12 minutes, the wake warns and relies on the health checks.
   - **The check also runs on any VM that booted in the last 30 minutes**, even one this run didn't start. Otherwise a
     retry after a failed startup script would find the VM running, see the proxy report healthy, and wake the services
     against containers that may not be using the data disk. Each retry fails the same way until someone fixes the cause
@@ -204,8 +224,12 @@ maintenance runbook asks.
 The jobs are in `gitlab-ci/test-power.yml`:
 
 - **`wake test`** (`gitlab-ci/stages/01-build-and-test.yml`) runs in the build and test stage with `needs: []`, in:
-  - every master pipeline that deploys test (the `on_merge_to_master` rule);
-  - every "Scheduled CLI Tests" run. `cli integration tests` lists it in `needs:`, because the two share a stage.
+  - every master pipeline that deploys test (the `on_merge_to_master` rule, written out so it can set
+    `TEST_POWER_WAKE_ARGUMENTS=--before-deploy`). There, an API that can't reach scratch-git only warns, because the
+    pipeline's own scratch-git deploy restarts scratch-git;
+  - every "Scheduled CLI Tests" run. `cli integration tests` lists it in `needs:`, because the two share a stage, so the
+    tests don't run when the wake fails. `notify slack on cli integration test failure` lists it too, so a failed wake
+    still posts to `#feed-scratch-test`.
 
   The test migrations, deploys, and post-deploy environment tests have no `needs:`, so they wait for the whole stage,
   wake included. Each has a comment saying a future `needs:` must list `wake test`.
@@ -248,6 +272,7 @@ cron-service                   PAUSED (manual, 0 instances), revision cron-servi
 eu-test-postgres-7442e8bc      PAUSED (stopped), state STOPPED
 scratch-git                    PAUSED (TERMINATED)
 scratch-git-backend-service    UNHEALTHY
+api /service-check             /service-check: HTTP 503
 alerts                         snoozed ("Test is paused")
 maintenance lockdown           OFF
 ```
@@ -267,6 +292,11 @@ by hand, run `connect_to_gcp_db_readonly.sh test`, SSH to scratch-git, or apply 
   Cloud Logging. A stop and start (a pause and a wake) reruns it.
 - **The VM didn't start** (for example, `ZONE_RESOURCE_POOL_EXHAUSTED`). The job retries; run the wake again later.
 - **The API didn't come up.** Check that the database is `RUNNABLE` (`status`), then the api-service logs.
+- **The API can't reach scratch-git** (`scratch_git: error: The operation was aborted due to timeout`). The scratch-git
+  process has probably hung, even though `status` shows the VM `RUNNING` and its load balancer `HEALTHY`. Retry the
+  `deploy scratch-git to test environment` job of the latest master pipeline: it starts the other slot, switches nginx
+  to it, and stops the hung one. Then run the wake again. Before restarting, consider capturing evidence with
+  `sudo gitops-ps` and `sudo gitops-logs scratch-git-<slot> 200` through `connect_to_git_service_ssh.sh test`.
 
 ## Risks and accepted gaps
 
@@ -302,6 +332,42 @@ by hand, run `connect_to_gcp_db_readonly.sh test`, SSH to scratch-git, or apply 
   the Docker Hub pull, and the extra Slack posts.
 - **A pause cuts in-flight work.** A BullMQ job running on the worker stalls and is retried after the wake. scratch-git
   gets 60 s to finish a request before its VM stops, and the VM's shutdown stops its containers gracefully.
+
+## Incident 2026-11-17: scratch-git stopped answering
+
+The scheduled CLI integration tests (pipeline
+[3080788047](https://gitlab.com/whalesync/spinner/-/pipelines/3080788047)) failed: 13 of 14 suites hit timeouts, and
+the job ran out its 45 minutes.
+
+- **What happened.** The active scratch-git container (`scratch-git-blue`) stopped answering at 19:00:01 UTC, 8
+  minutes after a successful deploy. From then on it logged nothing, not even its once-a-minute GC tick, and nginx
+  returned 504 for every request after 300 s. CPU stayed idle, memory stayed flat, and the kernel logged no disk or
+  hung-task errors. The other slot (`scratch-git-green`) had done the same at 00:00:01 the night before, until a VM
+  restart at 01:43.
+- **Same trigger both times.** The last line each container logged was the hourly scheduled pull of one test
+  workbook (`org_Tsj56xOrgB/wkb_WvDLkQvKJw`), which pulls two folders at once. That pull had run 48 times a day for 30
+  days without a hang. Both hangs came within a day of the VM first rebooting (2026-11-16), and no scratch-git code
+  changed after 2026-10-30. The root cause isn't known yet.
+- **Why the wake didn't catch it.** The CI wake found nothing paused, so it only checked that the VM was running. The
+  load balancer's health check only opens a TCP connection to nginx, which stays up. The startup-script check also
+  never saw a success, because the guest agent logs no exit-status line on success, so it always fell back to the load
+  balancer check.
+
+What changed:
+
+- Every wake now ends with the `/service-check` gate (wake step 7). It fails the wake, except in the master pipeline,
+  where it warns so that pipeline's scratch-git deploy can still restart scratch-git.
+- The startup-script check matches the current guest agent's lines (see
+  [The scratch-git boot](#the-scratch-git-boot)).
+- `status` shows what `/service-check` reports.
+- A failed `wake test` in the CLI pipeline posts to `#feed-scratch-test`.
+
+Still open:
+
+- **The hang itself.** It needs evidence from the VM while it happens: `docker ps`, the container's logs, and thread
+  stacks. A restart wipes that evidence.
+- **The boot path.** After a boot, `startup.sh` runs both the blue and the green containers against the data disk
+  until the next deploy, and it doesn't wait for the data disk to mount (see [Follow-ups](#follow-ups)).
 
 ## Rollout
 
@@ -340,7 +406,7 @@ pipeline, and changes nothing on an awake test. To remove it entirely, revert th
 
 - `shellcheck` passes on the script.
 - **A fake `gcloud`, `curl`, and `sleep`** ran the script under bash 3.2 (macOS) and bash 5.2 with busybox `awk`
-  and `date` (in `unawareguitar/gcp-dind`): 181 checks, all passing.
+  and `date` (in `unawareguitar/gcp-dind`): 248 checks, all passing.
   - `status` on an awake and on a paused test.
   - **Waking an awake test** makes no updates and no posts, and doesn't read the Slack secret. A leftover snooze still
     ends; an expired one is left alone.
@@ -350,15 +416,26 @@ pipeline, and changes nothing on an awake test. To remove it entirely, revert th
   - **Startup-script signal:**
     - The serial console and Cloud Logging each work on their own.
     - Lines from an earlier boot, or in a non-ISO format, never count.
-    - The script's own output is never printed.
-    - A failed run followed by a successful re-run counts as a success.
+    - The script's own output is never printed, and output lines that look like an outcome don't count.
+    - The current guest agent's failure line, and the older agent's `exit status N` lines, each count. So does a
+      failure followed by a successful re-run by hand.
     - A VM that is already running but booted recently is still checked, so a retry after a failed startup script
       fails too.
     - A VM that booted long ago isn't checked.
   - **Wake failures:**
     - A startup script with a non-zero exit, a scratch-git that never turns healthy, a VM that won't start, or an API
       that never returns 200 each fail the wake, leave the services paused, and post the failure.
-    - With no logged finish, the wake falls back to the health check.
+    - With no logged finish, the wake falls back to the health checks.
+  - **`/service-check`:**
+    - It runs after a full wake and after a wake that found nothing paused: 3 minutes and 45 s of polling.
+    - A hung scratch-git, Redis down, a component missing from the response, a response that isn't JSON, no response,
+      and an HTTP error each fail the wake. The message names each failing component, and the failure posts to Slack.
+    - A slow first response is retried.
+    - `--before-deploy` only warns, and posts a warning; the full wake still ends the snooze and posts that test is
+      awake.
+    - Only a scratch-git failure suggests the deploy retry, and a maintenance lockdown is named as the likely cause.
+  - **A snooze another wake already ended** is reported as ended, not as a warning.
+  - **Arguments:** an unknown `wake` flag, or an extra argument to `status`, prints the usage.
   - **Pause order:** the snooze comes before the first change; then cron and api; then worker; the 60 s drain; then
     the VM and the database.
   - **Pause failures:**
@@ -371,6 +448,10 @@ pipeline, and changes nothing on an awake test. To remove it entirely, revert th
     and `client-service` is never touched.
 - **Live, read-only:** `test_power.sh status` against `spv1eu-test` on 2026-11-16 read every resource correctly. All
   six snoozed policy names exist in test.
+  - On 2026-11-17, while scratch-git was hung, `status` showed the VM `RUNNING` and its load balancer `HEALTHY`, and
+    `api /service-check` showed `scratch_git: error: The operation was aborted due to timeout` on both ports.
+  - The new startup-script matching, run on the real serial console and Cloud Logging lines of the 14:35 UTC boot that
+    day, found "Finished running startup scripts" and no failure.
 - **The CI image:** `unawareguitar/gcp-dind` (gcloud 586) has every subcommand and flag the script uses.
 - **GitLab CI**, simulated with `gitlab-ci-local` against the config before and after the change:
   - a push to `master` (and a manual pipeline with no `TEST_POWER`) gains only `wake test`;
@@ -405,6 +486,8 @@ pipeline, and changes nothing on an awake test. To remove it entirely, revert th
 - Have Docker on the scratch-git VM wait for the data disk to mount (`/etc/fstab`, or `RequiresMountsFor` on
   `docker.service`), so a boot never starts the containers against the empty mount point. It needs the out-of-band
   startup-script rollout, because Terraform ignores changes to the VM's startup script.
+- Have `startup.sh` start only the active slot on boot, not both blue and green.
+- Find out why scratch-git hangs ([Incident 2026-11-17](#incident-2026-11-17-scratch-git-stopped-answering)).
 
 ## Appendix: reproducing the numbers
 
