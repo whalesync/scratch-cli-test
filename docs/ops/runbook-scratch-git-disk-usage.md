@@ -58,7 +58,7 @@ Attribute the usage: **git repos** under the data mount, **Docker** images/layer
 ### Grow the data disk (durable fix)
 
 Growing the data disk is an **online, two-step** operation with **no downtime** — the VM keeps running
-and both blue/green containers keep serving. A Terraform bump **alone frees no space**: the startup
+and scratch-git keeps serving. A Terraform bump **alone frees no space**: the startup
 script never runs `resize2fs`, so the filesystem must be grown separately in step 2.
 
 1. **Grow the persistent disk (Terraform).** Increase `scratch_git_disk_size_gb` in

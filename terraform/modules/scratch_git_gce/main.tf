@@ -195,8 +195,9 @@ resource "google_compute_instance" "scratch_git" {
     # that. Ignoring it means: a freshly-created instance still bakes in the current script (ignore_changes only
     # suppresses UPDATES, not create-time values), so the wrappers are durable across rebuilds; an EXISTING instance is
     # never replaced by a script change. The tradeoff: terraform no longer pushes startup/deploy-script edits to a live
-    # instance — activate those out-of-band (`sudo google_metadata_script_runner startup`, or paste the idempotent
-    # block). Routine deploys are unaffected (blue/green happens over SSH via deploy.sh, never touching this resource).
+    # instance. Roll them out by updating its startup-script metadata out of band, per
+    # docs/ops/runbook-scratch-git-startup-script-rollout.md; rerunning the script on the VM only reruns the old copy.
+    # Routine deploys are unaffected (blue/green happens over SSH via deploy.sh, never touching this resource).
     ignore_changes       = [metadata["ssh-keys"], metadata_startup_script]
     replace_triggered_by = [google_compute_disk.data.id]
   }

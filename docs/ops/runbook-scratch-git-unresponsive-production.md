@@ -129,7 +129,7 @@ gcloud compute instances start scratch-git \
 
 These commands use the [Compute Engine instances API](https://cloud.google.com/compute/docs/reference/rest/v1/instances) (`stop` / `start`).
 
-On boot, the instance runs its startup script: it mounts the data disk, ensures Docker, pulls the configured image, starts **blue/green** scratch-git containers and the **nginx** proxy, and starts the Ops Agent. Allow several minutes before expecting a clean `service-check`.
+On boot, the instance runs its startup script: it mounts the data disk, ensures Docker, pulls the configured image, starts the active scratch-git slot (**blue** or **green**, from `/mnt/disks/data/.active-slot`) and the **nginx** proxy, and starts the Ops Agent. Allow several minutes before expecting a clean `service-check`.
 
 ## Confirm recovery
 

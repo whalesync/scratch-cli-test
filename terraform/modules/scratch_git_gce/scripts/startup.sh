@@ -23,6 +23,23 @@ fi
 mkdir -p "$MOUNT_POINT"
 mountpoint -q "$MOUNT_POINT" || mount "$DEVICE" "$MOUNT_POINT"
 
+# ---------- make Docker wait for the data disk on every boot ----------
+# At boot, Docker restarts the containers (`--restart unless-stopped`) as soon as it starts, and this script runs in
+# parallel with it. Until this script mounts the data disk, a container that starts runs against the empty mount point
+# on the boot disk, and Docker creates empty directories there in place of the proxy's config files. So the disk is
+# mounted from /etc/fstab, and docker.service requires that mount: if the disk is missing, Docker doesn't start at all,
+# rather than starting the containers without their data. `nofail` keeps a missing disk from dropping the VM into
+# emergency mode. Both take effect from the next boot; this boot already mounted the disk above.
+if ! awk -v mount_point="$MOUNT_POINT" '$1 !~ /^#/ && $2 == mount_point { found = 1 } END { exit !found }' /etc/fstab; then
+  echo "$DEVICE $MOUNT_POINT auto defaults,nofail 0 2" >> /etc/fstab
+fi
+mkdir -p /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/10-wait-for-the-scratch-git-data-disk.conf << EOF
+[Unit]
+RequiresMountsFor=$MOUNT_POINT
+EOF
+systemctl daemon-reload
+
 # Install Docker if not already present
 if ! command -v docker &>/dev/null; then
   apt-get update -y
@@ -37,6 +54,9 @@ if ! command -v docker &>/dev/null; then
   apt-get install -y docker-ce docker-ce-cli containerd.io
   systemctl enable --now docker
 fi
+# Docker doesn't start at boot while the data disk is missing (it requires the mount). The disk is mounted now, so start
+# it if it isn't running. When it's already running, this does nothing.
+systemctl start docker
 
 # Install the Ops Agent for memory/disk monitoring metrics
 if ! systemctl is-active --quiet google-cloud-ops-agent; then
@@ -101,6 +121,8 @@ NGINX_CONF
 
 # ---------- read or initialize active slot ----------
 ACTIVE=$(cat "$STATE_FILE" 2>/dev/null || echo "blue")
+# Anything but "blue" has always meant green's ports; name the container to match.
+[ "$ACTIVE" = "blue" ] || ACTIVE="green"
 
 if [ "$ACTIVE" = "blue" ]; then
   ACTIVE_API=3200; ACTIVE_GIT=3201
@@ -123,34 +145,24 @@ docker system prune -af
 journalctl --vacuum-size=100M 2>/dev/null || true
 docker pull "$IMAGE"
 
-# Stop existing app containers (not proxy)
+# Remove the app containers from before this boot (not the proxy). Docker has already restarted whichever of them
+# existed, so this also stops them.
 docker rm -f scratch-git-blue 2>/dev/null || true
 docker rm -f scratch-git-green 2>/dev/null || true
 # Also remove the old single-container setup if it exists
 docker rm -f scratch-git 2>/dev/null || true
 
-# Start both blue and green
+# Start only the active slot. A deploy (deploy.sh) starts the other slot, switches nginx to it, and stops this one, so
+# between deploys only one scratch-git runs. Starting both here used to leave two copies of scratch-git, each with its
+# own background maintenance loop, working on the same disk until the next deploy.
 docker run -d \
-  --name scratch-git-blue \
+  --name "scratch-git-$ACTIVE" \
   --restart unless-stopped \
   --network host \
   --log-driver=gcplogs \
   --log-opt labels=service,env,slot \
-  --label service=scratch-git --label env="$GCP_PROJECT_ID" --label slot=blue \
-  -e PORT=3200 -e GIT_BACKEND_PORT=3201 \
-  -e SLACK_NOTIFICATION_WEBHOOK_URL="$SLACK_NOTIFICATION_WEBHOOK_URL" \
-  -e SCRATCH_GIT_AUTH_TOKEN="$SCRATCH_GIT_AUTH_TOKEN" \
-  -v /mnt/disks/data:/data \
-  "$IMAGE"
-
-docker run -d \
-  --name scratch-git-green \
-  --restart unless-stopped \
-  --network host \
-  --log-driver=gcplogs \
-  --log-opt labels=service,env,slot \
-  --label service=scratch-git --label env="$GCP_PROJECT_ID" --label slot=green \
-  -e PORT=3300 -e GIT_BACKEND_PORT=3301 \
+  --label service=scratch-git --label env="$GCP_PROJECT_ID" --label slot="$ACTIVE" \
+  -e PORT="$ACTIVE_API" -e GIT_BACKEND_PORT="$ACTIVE_GIT" \
   -e SLACK_NOTIFICATION_WEBHOOK_URL="$SLACK_NOTIFICATION_WEBHOOK_URL" \
   -e SCRATCH_GIT_AUTH_TOKEN="$SCRATCH_GIT_AUTH_TOKEN" \
   -v /mnt/disks/data:/data \
