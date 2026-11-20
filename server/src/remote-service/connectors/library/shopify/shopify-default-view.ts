@@ -73,6 +73,33 @@ const HIDDEN_FIELDS = new Set([
 ]);
 
 /**
+ * Customer and order fields that are links, tokens, or personal identifiers rather than data a
+ * destination needs (DEV-12935). A hidden column is dropped from Live Export field selection, so
+ * none of these reach a destination other people can read; the record on disk keeps them, as
+ * Shopify sent them (Connector Prime Directive). Matched by top-level field name, like HIDDEN_FIELDS.
+ * - `statusPageUrl`: the order status page link Shopify sends the buyer, which can show the order
+ *   and its shipping address.
+ * - `cartToken`, `checkoutToken`: the buyer's cart and checkout session tokens.
+ * - `paymentCollectionDetails`: holds `additionalPaymentCollectionUrl`, a link to pay for the order.
+ * - `clientIp`: the buyer's IP address.
+ * - `taxSettings`: holds only `taxId`, which can be a national tax number.
+ * - `identityProviderSubjects`, `multipassIdentifier`: the customer's ids at outside sign-in providers.
+ * A customer's `lastOrder` embeds all of the order fields above, so it exports as a link to Orders
+ * instead (see NESTED_FOREIGN_KEY_COLS). Addresses keep their `latitude`/`longitude`: they only
+ * locate an address that's already exported.
+ */
+const LINK_TOKEN_AND_PERSONAL_IDENTIFIER_FIELDS_HIDDEN_FROM_EXPORT = new Set([
+  'statusPageUrl',
+  'cartToken',
+  'checkoutToken',
+  'paymentCollectionDetails',
+  'clientIp',
+  'taxSettings',
+  'identityProviderSubjects',
+  'multipassIdentifier',
+]);
+
+/**
  * Object fields whose column should DISPLAY a single inner leaf ("pluck") instead of the
  * raw object — the same idea as the count/money shape detectors, but keyed by field name
  * where the shape is entity-specific rather than a recognizable `{count, precision}` /
@@ -117,6 +144,9 @@ const NESTED_FOREIGN_KEY_COLS: Record<string, { idPath: string; linkedTableId: s
   // orders.customer is the verbatim `{ id }` reference to the customer who placed the order (null for
   // a guest checkout).
   'orders.customer': { idPath: 'customer.id', linkedTableId: 'customers', name: 'Customer' },
+  // customers.lastOrder is a whole Order, its tokens, links, and buyer IP included (DEV-12935). Export
+  // only its id, as a link to Orders.
+  'customers.lastOrder': { idPath: 'lastOrder.id', linkedTableId: 'orders', name: 'Last Order' },
 };
 
 /**
@@ -355,8 +385,13 @@ function buildCol(fieldId: string, fieldSchema: TSchema): TableViewCol {
   // Hide named system fields and Relay connection objects (`{ edges, nodes, pageInfo }`). The
   // latter are to-many relations we don't pull (e.g. `blogs.articles`, `articles.comments`),
   // so they'd otherwise render as an empty/confusing JSON blob column (DEV-11049). The forward
-  // side of each such relation is already surfaced as an FK on the child entity.
-  const hidden = HIDDEN_FIELDS.has(fieldId) || isRelayConnectionObject(fieldSchema) || undefined;
+  // side of each such relation is already surfaced as an FK on the child entity. Links, tokens,
+  // and personal identifiers on customers and orders are hidden too, to keep them out of exports.
+  const hidden =
+    HIDDEN_FIELDS.has(fieldId) ||
+    LINK_TOKEN_AND_PERSONAL_IDENTIFIER_FIELDS_HIDDEN_FROM_EXPORT.has(fieldId) ||
+    isRelayConnectionObject(fieldSchema) ||
+    undefined;
 
   const col: TableViewCol = {
     kind: 'col',

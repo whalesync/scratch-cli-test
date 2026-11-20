@@ -49,20 +49,22 @@ export function buildShopifyUpdatedAtSearchQuery(since: Date): string {
 const READ_ORDERS_SCOPE = { scope: 'read_orders', reason: 'to read orders' };
 const READ_ALL_ORDERS_SCOPE = { scope: 'read_all_orders', reason: 'to read orders older than 60 days' };
 const READ_CUSTOMERS_SCOPE = { scope: 'read_customers', reason: 'to read customers' };
+const READ_LOCATIONS_SCOPE = { scope: 'read_locations', reason: "to read each order's store location" };
 
 /**
  * Access scopes a table's pull needs beyond what the rest of the connector uses. A token missing
  * one fails the pull up front with a message naming the scope, instead of Shopify's mid-pull
  * ACCESS_DENIED, or (for `read_all_orders`) a pull that quietly returns only the last 60 days of
  * orders. The Customers query also selects each customer's `lastOrder` (an Order, so `read_orders`),
- * and the Orders query selects each order's `customer` (so `read_customers`). The order child tables
- * list their parent orders by id only, so they don't need `read_customers`.
+ * and the Orders query selects each order's `customer` (so `read_customers`) and `retailLocation`
+ * (a Location: every field but `id` needs `read_locations`). The order child tables list their
+ * parent orders by id only, so they need neither `read_customers` nor `read_locations`.
  */
 const SHOPIFY_REQUIRED_ACCESS_SCOPES_BY_ENTITY_TYPE: Partial<
   Record<EntityType, ReadonlyArray<{ scope: string; reason: string }>>
 > = {
   customers: [READ_CUSTOMERS_SCOPE, READ_ORDERS_SCOPE],
-  orders: [READ_ORDERS_SCOPE, READ_ALL_ORDERS_SCOPE, READ_CUSTOMERS_SCOPE],
+  orders: [READ_ORDERS_SCOPE, READ_ALL_ORDERS_SCOPE, READ_CUSTOMERS_SCOPE, READ_LOCATIONS_SCOPE],
   order_line_items: [READ_ORDERS_SCOPE, READ_ALL_ORDERS_SCOPE],
   order_shipping_lines: [READ_ORDERS_SCOPE, READ_ALL_ORDERS_SCOPE],
 };

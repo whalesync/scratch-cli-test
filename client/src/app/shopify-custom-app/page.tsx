@@ -8,13 +8,15 @@ import { useSearchParams } from 'next/navigation';
 import React, { Suspense, useState } from 'react';
 
 // `read_customers` and `read_all_orders` let Scratch read Customers and every order (not just the last
-// 60 days). Shopify grants them to the merchant's own app without review.
+// 60 days), and `read_locations` lets it read the store location each order was placed at. Shopify grants
+// them to the merchant's own app without review.
 const SCOPES = [
   'read_all_orders',
   'read_content',
   'read_customers',
   'read_files',
   'read_inventory',
+  'read_locations',
   'read_metaobject_definitions',
   'read_metaobjects',
   'read_online_store_pages',

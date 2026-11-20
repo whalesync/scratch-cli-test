@@ -27,7 +27,8 @@ on a version Shopify still supports.
 Customers, Orders, Order Line Items, and Order Shipping Lines are on every Shopify plan, not just
 Plus. Their names, emails, phone numbers, and addresses are Shopify "protected customer data": a
 merchant's own custom app reads them with the `read_customers` scope, and needs `read_all_orders`
-to see orders older than 60 days.
+to see orders older than 60 days. The Orders query also needs `read_locations`, for each order's
+`retailLocation`.
 
 ## Overview
 

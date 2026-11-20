@@ -30,7 +30,13 @@ describe('buildShopifyUpdatedAtSearchQuery', () => {
 });
 
 describe('findMissingShopifyAccessScopesForEntity', () => {
-  const everyScopeTheSetupGuideGrants = new Set(['read_customers', 'read_orders', 'read_all_orders', 'read_products']);
+  const everyScopeTheSetupGuideGrants = new Set([
+    'read_customers',
+    'read_orders',
+    'read_all_orders',
+    'read_locations',
+    'read_products',
+  ]);
 
   it('finds nothing missing for a token from the current setup guide', () => {
     for (const entityType of ['customers', 'orders', 'order_line_items', 'order_shipping_lines'] as const) {
@@ -40,7 +46,7 @@ describe('findMissingShopifyAccessScopesForEntity', () => {
 
   it('names every scope the Orders table needs that the token lacks', () => {
     const missing = findMissingShopifyAccessScopesForEntity('orders', new Set(['read_orders', 'read_products']));
-    expect(missing.map(({ scope }) => scope)).toEqual(['read_all_orders', 'read_customers']);
+    expect(missing.map(({ scope }) => scope)).toEqual(['read_all_orders', 'read_customers', 'read_locations']);
   });
 
   it('needs read_orders for Customers, whose lastOrder is an Order', () => {
@@ -59,7 +65,7 @@ describe('findMissingShopifyAccessScopesForEntity', () => {
   it('counts a write scope as its read scope', () => {
     const missing = findMissingShopifyAccessScopesForEntity(
       'orders',
-      new Set(['write_orders', 'write_customers', 'read_all_orders']),
+      new Set(['write_orders', 'write_customers', 'write_locations', 'read_all_orders']),
     );
     expect(missing).toEqual([]);
   });

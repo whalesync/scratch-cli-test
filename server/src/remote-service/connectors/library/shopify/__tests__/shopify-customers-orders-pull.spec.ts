@@ -48,7 +48,13 @@ function listEntitiesYielding(...pages: ListEntitiesPage[]) {
   };
 }
 
-const everyScopeTheSetupGuideGrants = new Set(['read_customers', 'read_orders', 'read_all_orders', 'read_products']);
+const everyScopeTheSetupGuideGrants = new Set([
+  'read_customers',
+  'read_orders',
+  'read_all_orders',
+  'read_locations',
+  'read_products',
+]);
 
 async function pullAll(
   connector: ShopifyConnector,
@@ -203,7 +209,8 @@ describe('ShopifyConnector Customers and Orders', () => {
     await expect(pull).rejects.toMatchObject({ statusCode: 403, code: 'MISSING_ACCESS_SCOPES' });
     await expect(pull).rejects.toThrow(
       "This Shopify connection's access token is missing scopes needed for Orders: " +
-        'read_all_orders (to read orders older than 60 days), read_customers (to read customers).',
+        'read_all_orders (to read orders older than 60 days), read_customers (to read customers), ' +
+        "read_locations (to read each order's store location).",
     );
     expect(mockListEntities).not.toHaveBeenCalled();
   });
