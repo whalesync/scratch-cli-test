@@ -2,12 +2,15 @@ import { PrismaClient } from '@prisma/client';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
+import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
+import type { BaseJsonTableSpec } from '../../../remote-service/connectors/types';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { PullFilesJobHandler } from './pull-files.job';
 
@@ -26,6 +29,7 @@ describe('PullFilesJobHandler', () => {
   let mockAssetExtractorService: jest.Mocked<AssetExtractorService>;
   let mockAssetIndexService: jest.Mocked<AssetIndexService>;
   let mockPostHogService: jest.Mocked<PostHogService>;
+  let mockDataFolderTableSpecStore: jest.Mocked<DataFolderTableSpecStoreService>;
 
   const WORKBOOK_ID = 'wkb_123' as WorkbookId;
   const DATA_FOLDER_ID = 'dfld_123' as DataFolderId;
@@ -95,7 +99,6 @@ describe('PullFilesJobHandler', () => {
     mockRebaseDirty = jest.fn().mockResolvedValue(undefined);
     mockScratchGitService = {
       resolveConnectionRepoPath: mockResolveConnectionRepoPath,
-      readSchemaFromGit: jest.fn().mockResolvedValue(null),
       commitFilesToBranch: mockCommitFilesToBranch,
       rebaseDirty: mockRebaseDirty,
     } as unknown as jest.Mocked<ScratchGitService>;
@@ -123,6 +126,10 @@ describe('PullFilesJobHandler', () => {
       trackPullCompleted: jest.fn(),
     } as unknown as jest.Mocked<PostHogService>;
 
+    mockDataFolderTableSpecStore = {
+      readTableSpec: jest.fn().mockResolvedValue(null),
+    } as unknown as jest.Mocked<DataFolderTableSpecStoreService>;
+
     handler = new PullFilesJobHandler(
       mockPrisma,
       mockConnectorService,
@@ -134,30 +141,50 @@ describe('PullFilesJobHandler', () => {
       mockAssetExtractorService,
       mockAssetIndexService,
       mockPostHogService,
+      mockDataFolderTableSpecStore,
     );
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   const RESOLVED_REPO_ID = 'org_123/wkb_123/coa_123';
 
   describe('null-schema guard', () => {
-    it('should throw when git schema is not found', async () => {
+    it('should throw when the folder has no stored schema', async () => {
       const dataFolder = createMockDataFolder();
       (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
-      (mockScratchGitService.readSchemaFromGit as jest.Mock).mockResolvedValue(null);
+      mockDataFolderTableSpecStore.readTableSpec.mockResolvedValue(null);
 
       const params = createMockParams();
 
       await expect(handler.run(params)).rejects.toThrow(`Schema not found for DataFolder ${DATA_FOLDER_ID}`);
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- a jest mock passed to expect()
+      expect(mockDataFolderTableSpecStore.readTableSpec).toHaveBeenCalledWith({
+        dataFolderId: DATA_FOLDER_ID,
+        connectorAccountId: 'coa_123',
+        folderPath: '/test-folder',
+      });
     });
 
-    it('should throw when readSchemaFromGit throws', async () => {
+    it('should log and throw when reading the stored schema throws', async () => {
       const dataFolder = createMockDataFolder();
       (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
-      (mockScratchGitService.readSchemaFromGit as jest.Mock).mockRejectedValue(new Error('git error'));
+      const storedSchemaReadError = new Error('stored schema read error');
+      mockDataFolderTableSpecStore.readTableSpec.mockRejectedValue(storedSchemaReadError);
+      const wsLoggerErrorSpy = jest.spyOn(WSLogger, 'error').mockImplementation();
 
       const params = createMockParams();
 
       await expect(handler.run(params)).rejects.toThrow(`Schema not found for DataFolder ${DATA_FOLDER_ID}`);
+      expect(wsLoggerErrorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'PullFilesJob',
+          error: storedSchemaReadError,
+          dataFolderId: DATA_FOLDER_ID,
+        }),
+      );
     });
   });
 
@@ -172,7 +199,7 @@ describe('PullFilesJobHandler', () => {
     function setupHappyPath() {
       const dataFolder = createMockDataFolder();
       (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
-      (mockScratchGitService.readSchemaFromGit as jest.Mock).mockResolvedValue(TABLE_SPEC);
+      mockDataFolderTableSpecStore.readTableSpec.mockResolvedValue(TABLE_SPEC as unknown as BaseJsonTableSpec);
       mockCommitFilesToBranch.mockResolvedValue({
         created: ['test-folder/file1.json'],
         updated: [],

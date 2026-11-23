@@ -33,7 +33,7 @@ const VALID_BODY: WhalesyncImportPreviewBody = {
 function buildService(overrides?: { dataFolders?: ReturnType<typeof makeDataFolder>[] }) {
   const dataFolderService = {
     listAll: jest.fn().mockResolvedValue(overrides?.dataFolders ?? []),
-    readSchema: jest.fn().mockResolvedValue(null),
+    readStoredTableSpecForDataFolder: jest.fn().mockResolvedValue(null),
   } as unknown as DataFolderService;
 
   const configService = {
@@ -126,14 +126,18 @@ describe('WhalesyncImportApiService', () => {
         }),
       ];
       const { service, dataFolderService } = buildService({ dataFolders });
-      // Mock readSchema to return schemas from git
+      // Mock each folder's stored table spec
       const airtableSpec = { schema: makeAirtableSchema(['Title']) } as unknown;
       const webflowSpec = { schema: makeWebflowSchema(['name']) } as unknown;
-      (dataFolderService as unknown as { readSchema: jest.Mock }).readSchema
-        .mockResolvedValueOnce(airtableSpec)
-        .mockResolvedValueOnce(webflowSpec);
+      const readStoredTableSpecForDataFolder = (
+        dataFolderService as unknown as { readStoredTableSpecForDataFolder: jest.Mock }
+      ).readStoredTableSpecForDataFolder;
+      readStoredTableSpecForDataFolder.mockResolvedValueOnce(airtableSpec).mockResolvedValueOnce(webflowSpec);
 
       const result = await service.previewImport(WORKBOOK_ID, VALID_BODY, ACTOR);
+
+      expect(readStoredTableSpecForDataFolder).toHaveBeenCalledWith(dataFolders[0]);
+      expect(readStoredTableSpecForDataFolder).toHaveBeenCalledWith(dataFolders[1]);
 
       expect(result.syncs).toHaveLength(1);
       expect(result.syncs[0].mappings.tableMappings).toHaveLength(1);
@@ -215,7 +219,7 @@ describe('WhalesyncImportApiService', () => {
       );
     });
 
-    it('should handle readSchema failure for one folder gracefully', async () => {
+    it('should handle a stored table spec read failure for one folder gracefully', async () => {
       const leftCol = makeWhalesyncColumn({ name: 'Title' });
       const rightCol = makeWhalesyncColumn({ name: 'name', connectorType: 'webflow' });
       const leftTable = makeWhalesyncTable({ remoteId: 'tblPROD', connectorType: 'airtable', columns: [leftCol] });
@@ -247,8 +251,8 @@ describe('WhalesyncImportApiService', () => {
 
       // First folder's schema fails, second succeeds
       const webflowSpec = { schema: makeWebflowSchema(['name']) } as unknown;
-      (dataFolderService as unknown as { readSchema: jest.Mock }).readSchema
-        .mockRejectedValueOnce(new Error('git error'))
+      (dataFolderService as unknown as { readStoredTableSpecForDataFolder: jest.Mock }).readStoredTableSpecForDataFolder
+        .mockRejectedValueOnce(new Error('stored table spec read error'))
         .mockResolvedValueOnce(webflowSpec);
 
       const result = await service.previewImport(WORKBOOK_ID, VALID_BODY, ACTOR);
@@ -401,7 +405,7 @@ describe('WhalesyncImportApiService', () => {
 
       const dataFolderService = {
         listAll: jest.fn().mockRejectedValue(new NotFoundException('Workbook not found')),
-        readSchema: jest.fn().mockResolvedValue(null),
+        readStoredTableSpecForDataFolder: jest.fn().mockResolvedValue(null),
       } as unknown as DataFolderService;
       const configService = {
         getWhalesyncApiUrl: jest.fn().mockReturnValue('https://production-bottlenose-frontend-service.whalesync.com'),

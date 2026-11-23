@@ -466,7 +466,7 @@ export class PublishPlanBuildService {
         renameFilesPlanned: 0,
         step: 'Refreshing schemas from remote',
       });
-      await this.schemaService.refreshSchemasForConnection(workbookId, connectorAccountId, repoId);
+      await this.schemaService.refreshSchemasForConnection(workbookId, connectorAccountId);
     }
 
     // Running counts — updated as each entry is planned and passed to onProgress

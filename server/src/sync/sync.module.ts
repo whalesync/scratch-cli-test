@@ -8,6 +8,7 @@ import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { ScheduleModule } from 'src/schedule/schedule.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
+import { DataFolderTableSpecStoreModule } from 'src/workbook/table-spec-store/data-folder-table-spec-store.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
 import { SyncController } from './sync.controller';
@@ -24,6 +25,7 @@ import { WhalesyncImportApiService } from './whalesync-import';
     PosthogModule,
     ScheduleModule,
     ScratchGitModule,
+    DataFolderTableSpecStoreModule,
     WorkbookModule,
     ScratchConfigModule,
     WorkerEnqueuerModule,

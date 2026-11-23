@@ -10,6 +10,7 @@ import { Connector } from '../../remote-service/connectors/connector';
 import { ConnectorsService } from '../../remote-service/connectors/connectors.service';
 import { PartialBatchCreateError } from '../../remote-service/connectors/error';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
+import { DataFolderTableSpecStoreService } from '../../workbook/table-spec-store/data-folder-table-spec-store.service';
 import type { TableSpecStore } from '../../workbook/table-spec-store/table-spec-store';
 import {
   clearWorkerProcessShutdownStarted,
@@ -124,6 +125,7 @@ describe('PublishPlanRunService', () => {
   let experimentsService: jest.Mocked<ExperimentsService>;
   let recreatedIdMapService: jest.Mocked<RecreatedIdMapService>;
   let metricsService: { logValue: jest.Mock };
+  let dataFolderTableSpecStore: jest.Mocked<DataFolderTableSpecStoreService>;
 
   beforeEach(async () => {
     db = makeDbMock();
@@ -207,6 +209,11 @@ describe('PublishPlanRunService', () => {
     // Spy-backed stub so tests can assert the anomaly counter is (or isn't) emitted.
     metricsService = { logValue: jest.fn() };
 
+    // The classic run's default table spec store. `schemaService` is mocked, so the store is only passed through.
+    dataFolderTableSpecStore = {
+      readTableSpec: jest.fn().mockResolvedValue(null),
+    } as unknown as jest.Mocked<DataFolderTableSpecStoreService>;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PublishPlanRunService,
@@ -222,6 +229,7 @@ describe('PublishPlanRunService', () => {
         { provide: RecreatedIdMapService, useValue: recreatedIdMapService },
         { provide: RefCleanerService, useValue: refCleanerService },
         { provide: CustomMetricsService, useValue: metricsService },
+        { provide: DataFolderTableSpecStoreService, useValue: dataFolderTableSpecStore },
       ],
     }).compile();
 
@@ -983,6 +991,7 @@ describe('PublishPlanRunService', () => {
         fileIndexService,
         fileReferenceService,
         refResolverService,
+        dataFolderTableSpecStore,
       );
       const suppliedTableSpecStore: TableSpecStore = { readTableSpec: jest.fn() };
       const suppliedPseudoRefResolver: PublishPseudoRefResolver = {

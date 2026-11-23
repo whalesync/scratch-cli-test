@@ -11,6 +11,7 @@ import { FileReferenceService } from './file-reference.service';
 
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { ScratchGitModule } from '../scratch-git/scratch-git.module';
+import { DataFolderTableSpecStoreModule } from '../workbook/table-spec-store/data-folder-table-spec-store.module';
 import { WorkerEnqueuerModule } from '../worker-enqueuer/worker-enqueuer.module';
 import { ApplyPatchesService } from './apply-patches.service';
 import { PublishPlanBuildService } from './publish-plan-build.service';
@@ -29,6 +30,7 @@ import { SchemaHelperService } from './schema-helper.service';
     MetricsModule,
     RateLimiterModule,
     ScratchGitModule,
+    DataFolderTableSpecStoreModule,
     WorkerEnqueuerModule,
     ConnectorsModule,
     CredentialEncryptionModule,

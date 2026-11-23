@@ -59,8 +59,14 @@ async function storeAfterSync(): Promise<InMemoryRunStoreClient> {
   const client = new InMemoryRunStoreClient();
   await client.createOrClearRunStore(RUN_STORE_KEY);
   const tableSpecStore = new RunStoreTableSpecStore(client, RUN_STORE_KEY);
-  await tableSpecStore.writeTableSpec({ connectorAccountId: CONNECTOR_ACCOUNT_ID, folderPath: '/Tags' }, TAGS_SPEC);
-  await tableSpecStore.writeTableSpec({ connectorAccountId: CONNECTOR_ACCOUNT_ID, folderPath: '/Posts' }, POSTS_SPEC);
+  await tableSpecStore.writeTableSpec(
+    { dataFolderId: 'dfd_tags', connectorAccountId: CONNECTOR_ACCOUNT_ID, folderPath: '/Tags' },
+    TAGS_SPEC,
+  );
+  await tableSpecStore.writeTableSpec(
+    { dataFolderId: 'dfd_posts', connectorAccountId: CONNECTOR_ACCOUNT_ID, folderPath: '/Posts' },
+    POSTS_SPEC,
+  );
   await client.putEntries(RUN_STORE_KEY, runStoreRecordsCollection('dfd_tags'), [
     record('Tags/t1.json', { id: 't1', name: 'One' }),
     record('Tags/t2.json', { id: 't2', name: 'Two' }),

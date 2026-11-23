@@ -6,6 +6,7 @@ import { RUN_STORE_SCHEMAS_COLLECTION, runStoreTableSpecKey } from './run-store-
 /**
  * Table specs in the run store: the pull writes the spec it just fetched from the connector, and the
  * sync and publish of the same run read it back. Reads are cached for the life of this object (a job).
+ * Keyed by connection + folder path; the location's `dataFolderId` is ignored.
  */
 export class RunStoreTableSpecStore implements TableSpecStore {
   private readonly tableSpecByKey = new Map<string, Promise<BaseJsonTableSpec | null>>();

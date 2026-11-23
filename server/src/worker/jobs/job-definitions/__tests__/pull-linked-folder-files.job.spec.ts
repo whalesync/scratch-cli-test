@@ -15,6 +15,7 @@ import { ConnectorsService } from '../../../../remote-service/connectors/connect
 import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../../remote-service/connectors/types';
 import { ScratchGitService } from '../../../../scratch-git/scratch-git.service';
 import { JsonSafeObject } from '../../../../utils/objects';
+import { DataFolderTableSpecStoreService } from '../../../../workbook/table-spec-store/data-folder-table-spec-store.service';
 import { WorkbookEventService } from '../../../../workbook/workbook-event.service';
 import { JobCanceledError } from '../../../../worker/job-errors';
 import {
@@ -43,6 +44,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   let mockAssetIndexService: jest.Mocked<AssetIndexService>;
   let mockPostHogService: jest.Mocked<PostHogService>;
   let mockExperimentsService: jest.Mocked<ExperimentsService>;
+  let mockDataFolderTableSpecStore: jest.Mocked<DataFolderTableSpecStoreService>;
 
   const defaultTableSpec: BaseJsonTableSpec = {
     idPath: dotPath('id'),
@@ -194,6 +196,13 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       isGenericConnectorEnabledForUser: jest.fn().mockResolvedValue(true),
     } as unknown as jest.Mocked<ExperimentsService>;
 
+    mockDataFolderTableSpecStore = {
+      readTableSpec: jest.fn().mockResolvedValue(null),
+      readDefaultView: jest.fn().mockResolvedValue(null),
+      writeTableSpec: jest.fn().mockResolvedValue('created'),
+      writeDefaultView: jest.fn().mockResolvedValue('updated'),
+    } as unknown as jest.Mocked<DataFolderTableSpecStoreService>;
+
     handler = new PullLinkedFolderFilesJobHandler(
       mockPrisma,
       mockConnectorService,
@@ -206,6 +215,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       mockAssetIndexService,
       mockPostHogService,
       mockExperimentsService,
+      mockDataFolderTableSpecStore,
     );
   });
 
@@ -405,6 +415,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         mockAssetIndexService,
         mockPostHogService,
         mockExperimentsService,
+        mockDataFolderTableSpecStore,
         () => pullSink,
       );
 
@@ -537,7 +548,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     });
 
     describe('default view writing', () => {
-      it('should call writeViewToGit when the connector builds a default view', async () => {
+      it('should store the table spec and the default view when the connector builds one', async () => {
         const defaultView = { name: 'Default', cols: [] };
         const mockConnector = createMockConnector();
         mockConnector.buildDefaultView.mockReturnValue(defaultView);
@@ -563,15 +574,20 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         await handler.run(params);
 
-        expect(mockScratchGitService.writeViewToGit).toHaveBeenCalledWith(
-          'org/wkb/coa',
-          '/Products',
-          'default',
+        const tableSpecLocation = { dataFolderId: 'dfld_123', connectorAccountId: 'coa_123', folderPath: '/Products' };
+        expect(mockDataFolderTableSpecStore.writeTableSpec).toHaveBeenCalledWith(
+          tableSpecLocation,
+          expect.objectContaining({ idPath: 'id' }),
+          'pull',
+        );
+        expect(mockDataFolderTableSpecStore.writeDefaultView).toHaveBeenCalledWith(
+          tableSpecLocation,
           defaultView,
+          'pull',
         );
       });
 
-      it('should not call writeViewToGit when tableSpec has no defaultView', async () => {
+      it('should not store a default view when the connector builds none', async () => {
         const { mockConnector, params } = setupStandardMocks();
 
         mockConnector.pullRecordFiles.mockResolvedValue(undefined);
@@ -586,7 +602,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         await handler.run(params);
 
-        expect(mockScratchGitService.writeViewToGit).not.toHaveBeenCalled();
+        expect(mockDataFolderTableSpecStore.writeTableSpec).toHaveBeenCalledTimes(1);
+        expect(mockDataFolderTableSpecStore.writeDefaultView).not.toHaveBeenCalled();
       });
     });
 
@@ -1417,7 +1434,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         await createHandlerWritingTo(pullSink).run(params);
 
         expect(pullSink.prepareStorageBeforeLoadingFolders).toHaveBeenCalledTimes(1);
-        const tableSpecLocation = { connectorAccountId: 'coa_123', folderPath: '/Products' };
+        const tableSpecLocation = { dataFolderId: 'dfld_123', connectorAccountId: 'coa_123', folderPath: '/Products' };
         expect(pullSink.storeFolderTableSpec).toHaveBeenCalledWith(
           tableSpecLocation,
           expect.objectContaining({ idPath: 'id' }),
@@ -1433,6 +1450,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         expect(pullSink.finalizeStorageAfterAllFoldersFinished).toHaveBeenCalledTimes(1);
         for (const gitMethod of Object.values(mockScratchGitService)) {
           expect(gitMethod).not.toHaveBeenCalled();
+        }
+        for (const storedTableSpecMethod of Object.values(mockDataFolderTableSpecStore)) {
+          expect(storedTableSpecMethod).not.toHaveBeenCalled();
         }
         expect(mockFileIndexService.readRecordIdToFilenameMapForFolder).not.toHaveBeenCalled();
         expect(mockFileIndexService.upsertBatch).not.toHaveBeenCalled();

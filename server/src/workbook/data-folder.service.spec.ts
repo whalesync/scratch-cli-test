@@ -17,6 +17,7 @@ import type { ConnectorsService } from '../remote-service/connectors/connectors.
 import { BaseJsonTableSpec, dotPath } from '../remote-service/connectors/types';
 import { DataFolderService } from './data-folder.service';
 import type { FilesService } from './files.service';
+import type { DataFolderTableSpecStoreService } from './table-spec-store/data-folder-table-spec-store.service';
 import type { WorkbookEventService } from './workbook-event.service';
 import type { WorkbookService } from './workbook.service';
 
@@ -180,6 +181,7 @@ describe('DataFolderService.ensureUniquePath', () => {
       stub as WorkbookEventService,
       stub as FileIndexService,
       stub as FileReferenceService,
+      stub as DataFolderTableSpecStoreService,
     );
   });
 
@@ -302,6 +304,7 @@ describe('DataFolderService dotfile filtering', () => {
       stub as WorkbookEventService,
       stub as FileIndexService,
       stub as FileReferenceService,
+      stub as DataFolderTableSpecStoreService,
     );
   });
 
@@ -473,6 +476,7 @@ describe('DataFolderService.deleteFolder', () => {
       mockWorkbookEventService,
       mockFileIndexService,
       mockFileReferenceService,
+      stub as DataFolderTableSpecStoreService,
     );
   });
 
@@ -633,6 +637,7 @@ describe('DataFolderService.refreshSchemasForConnection', () => {
       stub as WorkbookEventService,
       stub as FileIndexService,
       stub as FileReferenceService,
+      stub as DataFolderTableSpecStoreService,
     );
   });
 
@@ -741,6 +746,7 @@ describe('DataFolderService.createFolder connector-account scoping', () => {
       stub as WorkbookEventService,
       stub as FileIndexService,
       stub as FileReferenceService,
+      stub as DataFolderTableSpecStoreService,
     );
   });
 

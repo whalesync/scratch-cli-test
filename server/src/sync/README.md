@@ -531,7 +531,7 @@ See `transformers/implementations/` for the complete set of transformers.
 - `SyncDestinationOutputSink` — queues the table's writes, lands them as one unit, then applies Pass 3 deletions.
 - `SyncLookupDataProvider` — what `LookupTools` reads (referenced-folder mappings, the `lookup_field` cache, assets).
 
-- `TableSpecStore` ([../workbook/table-spec-store/](../workbook/table-spec-store/table-spec-store.ts)) — where the folders' table specs are read from (shared with publish).
+- `TableSpecStore` ([../workbook/table-spec-store/](../workbook/table-spec-store/table-spec-store.ts)) — where the folders' table specs are read from (shared with publish). Classic: `DataFolderTableSpecStoreService` (Postgres `DataFolderTableSpec`, mirrored to git, DEV-12616).
 
 The default is the classic implementation in [storage/classic-sync-storage.ts](storage/classic-sync-storage.ts) (git `dirty` branch + Postgres). A caller can pass its own ports as `syncTableMapping`'s last argument; this is the seam the Live Export run store plugs into ([plan](../../../docs/plans/2026-09-25-live-export-git-free-run-store/2026-09-25-live-export-git-free-run-store.md)).
 

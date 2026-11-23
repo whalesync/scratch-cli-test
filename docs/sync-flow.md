@@ -19,7 +19,7 @@ All of the core logic lives in `SyncService.syncTableMapping()` (`server/src/syn
 
 ### 1. Load source and destination DataFolders
 
-Fetches both DataFolder records from the database, reads their schemas from git (falling back to DB), and resolves the destination git repo ID.
+Fetches both DataFolder records from the database, reads their table specs from the folder table-spec store (Postgres `DataFolderTableSpec`, falling back to the git copy for folders not yet imported — DEV-12616), and resolves the destination git repo ID.
 
 ### 2. Pass 1 — Populate caches (DATA phase only)
 

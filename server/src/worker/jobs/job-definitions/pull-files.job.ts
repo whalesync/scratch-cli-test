@@ -25,6 +25,7 @@ import { recomputeRecordCountsForWorkbook } from 'src/record-count/record-count.
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
@@ -76,6 +77,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
     private readonly assetExtractorService: AssetExtractorService,
     private readonly assetIndexService: AssetIndexService,
     private readonly postHogService: PostHogService,
+    private readonly dataFolderTableSpecStore: DataFolderTableSpecStoreService,
   ) {}
 
   async run(params: {
@@ -109,16 +111,26 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
       throw new Error(`DataFolder ${data.dataFolderId} does not have a connector service`);
     }
 
-    // Resolve the repo path for this connection (used for both reading schema and writing files)
+    // Resolve the repo path for this connection (the pulled files are written there)
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder.connectorAccountId);
 
-    // Read schema from git
+    // Read the folder's stored schema
     let tableSpec: BaseJsonTableSpec | null = null;
     if (dataFolder.path) {
       try {
-        tableSpec = await this.scratchGitService.readSchemaFromGit(repoId, dataFolder.path);
-      } catch {
-        // schema will remain null
+        tableSpec = await this.dataFolderTableSpecStore.readTableSpec({
+          dataFolderId: dataFolder.id,
+          connectorAccountId: dataFolder.connectorAccountId,
+          folderPath: dataFolder.path,
+        });
+      } catch (error) {
+        WSLogger.error({
+          source: 'PullFilesJob',
+          message: 'Failed to read the stored table spec',
+          error,
+          dataFolderId: dataFolder.id,
+          folderPath: dataFolder.path,
+        });
       }
     }
 

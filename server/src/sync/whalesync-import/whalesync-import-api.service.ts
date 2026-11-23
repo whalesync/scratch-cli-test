@@ -44,23 +44,20 @@ export class WhalesyncImportApiService {
 
     const wsExport = await this.fetchBottlenoseExport(parsed.data.whalesyncApiToken, parsed.data.coreBaseId);
     const dataFolders = await this.dataFolderService.listAll(workbookId, actor);
-    const schemas = await this.hydrateSchemas(dataFolders, workbookId);
+    const schemas = await this.hydrateSchemas(dataFolders);
     return convertWhalesyncExport(dataFolders, wsExport, schemas);
   }
 
   /**
-   * Hydrate each DataFolder with schema from git (.schema.json).
+   * Hydrate each DataFolder with its stored table spec's schema.
    * Returns a map of folder ID -> schema for use by the converter.
    */
-  private async hydrateSchemas(
-    dataFolders: DataFolder[],
-    workbookId: WorkbookId,
-  ): Promise<Map<string, Record<string, unknown>>> {
+  private async hydrateSchemas(dataFolders: DataFolder[]): Promise<Map<string, Record<string, unknown>>> {
     const schemaMap = new Map<string, Record<string, unknown>>();
     await Promise.all(
       dataFolders.map(async (folder) => {
         try {
-          const spec = await this.dataFolderService.readSchema(workbookId, folder.connectorAccountId, folder.path);
+          const spec = await this.dataFolderService.readStoredTableSpecForDataFolder(folder);
           if (spec?.schema) {
             schemaMap.set(folder.id, spec.schema as Record<string, unknown>);
           }

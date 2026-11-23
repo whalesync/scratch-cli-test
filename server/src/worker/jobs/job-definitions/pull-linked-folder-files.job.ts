@@ -35,6 +35,7 @@ import { Service as ServiceConst } from 'src/remote-service/connectors/service-c
 import { isTransientRemoteServiceFailure } from 'src/remote-service/connectors/transient-remote-service-failure';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { extractApiDomain } from 'src/utils/urls';
+import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import { JobCanceledError } from 'src/worker/job-errors';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
@@ -226,6 +227,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     private readonly assetIndexService: AssetIndexService,
     private readonly postHogService: PostHogService,
     private readonly experimentsService: ExperimentsService,
+    private readonly dataFolderTableSpecStore: DataFolderTableSpecStoreService,
     /** Optional override of where pulled records are written. Omitted → `ClassicGitPullSink`. */
     private readonly createPullSinkOverride?: PullSinkFactory,
   ) {}
@@ -239,6 +241,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       {
         prisma: this.prisma,
         scratchGitService: this.scratchGitService,
+        dataFolderTableSpecStore: this.dataFolderTableSpecStore,
         fileIndexService: this.fileIndexService,
         fileReferenceService: this.fileReferenceService,
         assetExtractorService: this.assetExtractorService,
@@ -683,7 +686,11 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     // Store the refreshed schema, then the default view the connector builds from it
     if (dataFolder.path) {
-      const tableSpecLocation = { connectorAccountId: dataFolder.connectorAccountId, folderPath: dataFolder.path };
+      const tableSpecLocation = {
+        dataFolderId: dataFolder.id,
+        connectorAccountId: dataFolder.connectorAccountId,
+        folderPath: dataFolder.path,
+      };
       await pullSink.storeFolderTableSpec(tableSpecLocation, tableSpec);
       const defaultView = connector.buildDefaultView(tableSpec);
       if (defaultView) {

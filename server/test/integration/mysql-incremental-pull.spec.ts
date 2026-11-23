@@ -60,6 +60,7 @@ import { MAIN_BRANCH, type ScratchGitService } from 'src/scratch-git/scratch-git
 import { EncryptionService, type EncryptedData } from 'src/utils/encryption';
 import { type WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { PullLinkedFolderFilesJobHandler } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
+import { createIntegrationTestDataFolderTableSpecStore } from './data-folder-table-spec-store-test-helper';
 import { createIntegrationTestDbService } from './integration-db-service';
 import {
   buildMySqlConnectorCredentialsForIntegrationTest,
@@ -465,9 +466,14 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL incremental pull through 
       dbService,
       {} as unknown as ExperimentsService,
     );
+    // Real Postgres-backed table spec store; reads and the mirror go through the git double above.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({
+      prisma,
+      scratchGitService: scratchGitServiceDouble,
+    });
     const schemaHelperService = new SchemaHelperService(
       dbService,
-      scratchGitServiceDouble,
+      dataFolderTableSpecStore,
       realConnectorsService,
       new CredentialEncryptionService(),
     );
@@ -496,6 +502,7 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL incremental pull through 
       { upsertBatch: jest.fn().mockResolvedValue(undefined) } as unknown as AssetIndexService,
       { trackPullCompleted: jest.fn() } as unknown as PostHogService,
       { isGenericConnectorEnabledForUser: jest.fn().mockResolvedValue(true) } as unknown as ExperimentsService,
+      dataFolderTableSpecStore,
     );
   }
 

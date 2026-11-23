@@ -456,6 +456,9 @@ model DataFolder {
   foreignKeyRecords       SyncForeignKeyRecord[]
   remoteIdMappings        SyncRemoteIdMapping[]
   assets                  Asset[]
+  // The folder's table spec + default view (DEV-12616). Read and write it only through
+  // DataFolderTableSpecStoreService — never `include` it on a DataFolder query.
+  storedTableSpecRow      DataFolderTableSpec?
   // publishPipelines        PublishPipeline[] // REMOVED in V2 refactor (scoped to ConnectorAccount)
 
   // Table ID path for connectors that represent tables as a path (e.g., ["database", "schema", "table"])
@@ -1049,6 +1052,33 @@ model RoutineDefinition {
 
   @@unique([workbookId, filePath])
   @@index([workbookId])
+}
+
+/// A linked DataFolder's table spec (the connector-derived `BaseJsonTableSpec`) and the connector's
+/// default view (`TableView`), DEV-12616. Postgres is the source of truth. Every write is mirrored
+/// one-way to `.scratch/{folder}/schema.json` and `.scratch/{folder}/views/default.json` in the
+/// connection's git repo (TABLE_SPEC_GIT_MIRROR_ENABLED) because the scratchmd CLI, Desktop, and
+/// the scratch-git index build still read those files. A folder with no row falls back to the git
+/// copy on read; the `data-folder-table-spec-git-import` code migration copies the git copies in.
+/// Read and write it only through `DataFolderTableSpecStoreService`.
+///
+/// TEXT, not Json/jsonb: jsonb reorders object keys (property order drives column order) and
+/// Prisma's Json input can round numbers (DEV-12614). The bytes are `formatRecordJson(...)`, the
+/// same bytes as the mirrored files, which the CLI's validation hash (DEV-10518) depends on.
+model DataFolderTableSpec {
+  dataFolder   DataFolder @relation(fields: [dataFolderId], references: [id], onDelete: Cascade)
+  dataFolderId String     @id
+
+  /// formatRecordJson(BaseJsonTableSpec), with the folder's id/name overrides already applied.
+  tableSpecContent   String
+  /// formatRecordJson(TableView) of the connector's default view; null when none is stored.
+  defaultViewContent String?
+  /// The last writer: "create-folder" | "refresh-schema" | "publish-plan-build" | "pull" | "git-import".
+  source             String
+
+  createdAt DateTime @default(now())
+  /// Moves only on a real change: a spec that differs only in `generatedAt` is not rewritten.
+  updatedAt DateTime @updatedAt
 }
 
 /// Execution history for a single run of a routine (a file-defined workflow pipeline).

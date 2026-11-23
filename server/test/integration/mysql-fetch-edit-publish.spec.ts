@@ -68,6 +68,7 @@ import { EncryptionService, type EncryptedData } from 'src/utils/encryption';
 import { type WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { PullFilesJobHandler } from 'src/worker/jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobHandler } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
+import { createIntegrationTestDataFolderTableSpecStore } from './data-folder-table-spec-store-test-helper';
 import { createIntegrationTestDbService } from './integration-db-service';
 import {
   buildMySqlConnectorCredentialsForIntegrationTest,
@@ -611,11 +612,16 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL through the real pull and
       {} as unknown as ExperimentsService,
     );
     const credentialEncryptionService = new CredentialEncryptionService();
+    // Real Postgres-backed table spec store; reads and the mirror go through the git double above.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({
+      prisma,
+      scratchGitService: scratchGitServiceDouble,
+    });
     const fileIndexService = new FileIndexService(dbService);
     const refCleanerService = new RefCleanerService();
     const schemaHelperService = new SchemaHelperService(
       dbService,
-      scratchGitServiceDouble,
+      dataFolderTableSpecStore,
       realConnectorsService,
       credentialEncryptionService,
     );
@@ -656,6 +662,7 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL through the real pull and
         getBooleanFlag: jest.fn().mockResolvedValue(false),
         isGenericConnectorEnabledForUser: jest.fn().mockResolvedValue(true),
       } as unknown as ExperimentsService,
+      dataFolderTableSpecStore,
     );
     pullFilesByIdJobHandler = new PullFilesJobHandler(
       prisma,
@@ -668,6 +675,7 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL through the real pull and
       assetExtractorServiceDouble,
       assetIndexServiceDouble,
       postHogServiceDouble,
+      dataFolderTableSpecStore,
     );
     publishPlanBuildService = new PublishPlanBuildService(
       dbService,
@@ -702,6 +710,7 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL through the real pull and
       } as unknown as RecreatedIdMapService,
       refCleanerService,
       new StubMetricsService(),
+      dataFolderTableSpecStore,
     );
   }
 

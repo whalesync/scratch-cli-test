@@ -9,6 +9,7 @@ import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { NotionApiClient } from 'src/remote-service/connectors/library/notion/notion-api-client';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { CodeMigrationsController } from '../code-migrations.controller';
 import { ConnectionDrainTimeoutError, ConnectionQuiesceService } from '../connection-quiesce.service';
@@ -38,6 +39,7 @@ describe('CodeMigrationsController', () => {
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let connectionQuiesceService: jest.Mocked<ConnectionQuiesceService>;
   let metricsService: jest.Mocked<CustomMetricsService>;
+  let dataFolderTableSpecStore: jest.Mocked<DataFolderTableSpecStoreService>;
 
   beforeEach(() => {
     dbService = {
@@ -105,6 +107,10 @@ describe('CodeMigrationsController', () => {
       withLoggedExecTimeForConnector: jest.fn(),
     } as unknown as jest.Mocked<CustomMetricsService>;
 
+    dataFolderTableSpecStore = {
+      importTableSpecFromGitIfAbsent: jest.fn().mockResolvedValue({ kind: 'imported', importedDefaultView: true }),
+    } as unknown as jest.Mocked<DataFolderTableSpecStoreService>;
+
     controller = new CodeMigrationsController(
       dbService,
       workbookRepoService,
@@ -114,6 +120,7 @@ describe('CodeMigrationsController', () => {
       scratchGitService,
       connectionQuiesceService,
       metricsService,
+      dataFolderTableSpecStore,
     );
   });
 
@@ -1319,6 +1326,42 @@ describe('CodeMigrationsController', () => {
       expect(connectionQuiesceService.unquiesceConnection).toHaveBeenCalledWith('wkb_1', 'acct_1');
       expect(result.migratedIds).toEqual([]);
       expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
+    });
+  });
+  describe('data-folder-table-spec-git-import', () => {
+    const adminRequest = () => makeReqWithUser();
+
+    it('is listed with dry-run support', () => {
+      const descriptor = controller
+        .getAvailableMigrations(adminRequest())
+        .migrations.find((migration) => migration.name === 'data-folder-table-spec-git-import');
+      expect(descriptor?.supportsDryRun).toBe(true);
+    });
+
+    it('imports the requested workbooks and reports the summary and remaining candidates', async () => {
+      dbService.client.dataFolder.findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'dfd_a', connectorAccountId: 'coa_1', path: '/Base/Contacts' }]);
+      (dbService.client.dataFolder as unknown as { count: jest.Mock }).count = jest.fn().mockResolvedValue(4);
+
+      const result = await controller.runMigration(adminRequest(), {
+        migration: 'data-folder-table-spec-git-import',
+        ids: ['wkb_1'],
+      });
+
+      expect(dataFolderTableSpecStore.importTableSpecFromGitIfAbsent).toHaveBeenCalledWith(
+        { dataFolderId: 'dfd_a', connectorAccountId: 'coa_1', folderPath: '/Base/Contacts' },
+        { dryRun: false },
+      );
+      expect(result).toMatchObject({
+        migrationName: 'data-folder-table-spec-git-import',
+        migratedIds: ['dfd_a'],
+        remainingCount: 4,
+        dryRun: false,
+      });
+      expect(result.summary).toEqual(
+        expect.arrayContaining([{ label: 'folders whose table spec was imported', count: 1 }]),
+      );
     });
   });
 });

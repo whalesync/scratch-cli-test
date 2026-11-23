@@ -27,6 +27,7 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { createTableSpecStoreReadingMockedGitByFolderPath } from './data-folder-table-spec-store-test-helper';
 import { createIntegrationTestDbService } from './integration-db-service';
 import { createReadRepoFilesByFolderMock } from './sync-test-helpers';
 
@@ -151,6 +152,8 @@ describe('SyncService - Pass 3 unmatched-destination DELETE', () => {
     } as unknown as ScratchGitService;
 
     const scheduleService = { create: jest.fn(), update: jest.fn(), delete: jest.fn() } as unknown as ScheduleService;
+    // These fixture folders have no connection, so read each folder's spec from the mocked readSchemaFromGit by path.
+    const dataFolderTableSpecStore = createTableSpecStoreReadingMockedGitByFolderPath(scratchGitService);
     syncService = new SyncService(
       dbService,
       dataFolderService,
@@ -159,6 +162,7 @@ describe('SyncService - Pass 3 unmatched-destination DELETE', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      dataFolderTableSpecStore,
     );
 
     const org = await prisma.organization.create({

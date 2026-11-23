@@ -43,6 +43,7 @@ import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { SyncDataFoldersJobHandler } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
+import { createIntegrationTestDataFolderTableSpecStore } from './data-folder-table-spec-store-test-helper';
 import { createIntegrationTestDbService } from './integration-db-service';
 
 type ParsedRecord = Record<string, unknown>;
@@ -282,9 +283,11 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
 
     // ---- Real services ----
     fileIndexService = new FileIndexService(dbService);
+    // Real Postgres-backed table spec store; reads and the mirror go through the mocked git service.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({ prisma, scratchGitService });
     publishSchemaService = new SchemaHelperService(
       dbService,
-      scratchGitService,
+      dataFolderTableSpecStore,
       connectorsService,
       credentialEncryptionService,
     );
@@ -306,6 +309,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       scratchGitService,
       {} as never,
       {} as WorkbookService,
+      dataFolderTableSpecStore,
     );
 
     // ---- Instantiate Publish services (real, with mocked I/O) ----
@@ -340,6 +344,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       new RecreatedIdMapService(dbService),
       refCleanerService,
       new StubMetricsService(),
+      dataFolderTableSpecStore,
     );
 
     // ---- Create DB entities ----
@@ -1443,9 +1448,11 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
 
     // ---- Real services ----
     fileIndexService = new FileIndexService(dbService);
+    // Real Postgres-backed table spec store; reads and the mirror go through the mocked git service.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({ prisma, scratchGitService });
     publishSchemaService = new SchemaHelperService(
       dbService,
-      scratchGitService,
+      dataFolderTableSpecStore,
       connectorsService,
       credentialEncryptionService,
     );
@@ -1467,6 +1474,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       scratchGitService,
       {} as never,
       {} as WorkbookService,
+      dataFolderTableSpecStore,
     );
 
     // ---- Instantiate Publish services ----
@@ -1501,6 +1509,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       new RecreatedIdMapService(dbService),
       refCleanerService,
       new StubMetricsService(),
+      dataFolderTableSpecStore,
     );
 
     // ---- Create DB entities ----

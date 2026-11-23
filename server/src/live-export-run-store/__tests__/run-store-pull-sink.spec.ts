@@ -33,7 +33,10 @@ describe('RunStorePullSink', () => {
     const recordPulledRecordCount = jest.fn().mockResolvedValue(undefined);
     const sink = new RunStorePullSink(client, RUN_STORE_KEY, recordPulledRecordCount);
     await sink.prepareStorageBeforeLoadingFolders();
-    await sink.storeFolderTableSpec({ connectorAccountId: 'coa_1', folderPath: '/Shop/Products' }, TABLE_SPEC);
+    await sink.storeFolderTableSpec(
+      { dataFolderId: 'dfd_products', connectorAccountId: 'coa_1', folderPath: '/Shop/Products' },
+      TABLE_SPEC,
+    );
 
     await sink.writeConnectorRecordPage(FOLDER, [
       { id: 'gid://shopify/Product/1', title: 'A' },
@@ -66,6 +69,7 @@ describe('RunStorePullSink', () => {
     expect(summary).toMatchObject({ created: 0, updated: 0, deleted: 0 });
     expect(
       await new RunStoreTableSpecStore(client, RUN_STORE_KEY).readTableSpec({
+        dataFolderId: 'dfd_products',
         connectorAccountId: 'coa_1',
         folderPath: 'Shop/Products',
       }),

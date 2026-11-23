@@ -156,6 +156,12 @@ export enum CustomMetric {
   WHALESYNC_RUN_NOTIFY_FAILED = 'whalesync_run_notify_failed',
   WHALESYNC_RUN_NOTIFY_GAVE_UP = 'whalesync_run_notify_gave_up',
   WHALESYNC_RUN_NOTIFY_BACKFILLED = 'whalesync_run_notify_backfilled',
+
+  // Table specs in Postgres (DEV-12616). Counts reads of a folder's table spec or default view that found no
+  // `DataFolderTableSpec` row (or a row with no view) and fell back to the git copy. Only emitted once reads
+  // come from Postgres (TABLE_SPEC_POSTGRES_READS_ENABLED). Holding at 0 is the signal that every folder has
+  // been imported and the git fallback can be removed.
+  DATA_FOLDER_TABLE_SPEC_READ_FELL_BACK_TO_GIT = 'data_folder_table_spec_read_fell_back_to_git',
 }
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
@@ -235,6 +241,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.WHALESYNC_RUN_NOTIFY_FAILED:
     case CustomMetric.WHALESYNC_RUN_NOTIFY_GAVE_UP:
     case CustomMetric.WHALESYNC_RUN_NOTIFY_BACKFILLED:
+    case CustomMetric.DATA_FOLDER_TABLE_SPEC_READ_FELL_BACK_TO_GIT:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -318,6 +325,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.WHALESYNC_RUN_NOTIFY_FAILED:
     case CustomMetric.WHALESYNC_RUN_NOTIFY_GAVE_UP:
     case CustomMetric.WHALESYNC_RUN_NOTIFY_BACKFILLED:
+    case CustomMetric.DATA_FOLDER_TABLE_SPEC_READ_FELL_BACK_TO_GIT:
       return CustomMetricUnit.EVENT_COUNT;
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
       // A gauge: how many syncs remain on the frozen v1 column right now, not a

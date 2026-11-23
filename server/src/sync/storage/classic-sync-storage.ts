@@ -16,7 +16,7 @@ import { DIRTY_BRANCH, type RepoId, ScratchGitService } from 'src/scratch-git/sc
 import type { AssetMappingResult } from 'src/sync/transformers/transformer.types';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
-import { GitTableSpecStore } from 'src/workbook/table-spec-store/git-table-spec-store';
+import type { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import type {
   AssetContentHashIndexForFolderPair,
   DestinationFolderPageReadLogContext,
@@ -81,11 +81,14 @@ export function createClassicSyncStoragePorts(dependencies: {
   db: DbService;
   dataFolderService: DataFolderService;
   scratchGitService: ScratchGitService;
+  /** Each folder's stored table spec (DEV-12616). */
+  dataFolderTableSpecStore: DataFolderTableSpecStoreService;
   syncId: SyncId;
   workbookId: WorkbookId;
   actor: Actor;
 }): SyncStoragePorts {
-  const { db, dataFolderService, scratchGitService, syncId, workbookId, actor } = dependencies;
+  const { db, dataFolderService, scratchGitService, dataFolderTableSpecStore, syncId, workbookId, actor } =
+    dependencies;
   const resolveConnectionRepoPath = createMemoizedConnectionRepoPathResolver(scratchGitService);
   return {
     recordSource: new ClassicGitDirtyBranchRecordSource(
@@ -95,7 +98,7 @@ export function createClassicSyncStoragePorts(dependencies: {
       actor,
       resolveConnectionRepoPath,
     ),
-    tableSpecStore: new GitTableSpecStore(scratchGitService),
+    tableSpecStore: dataFolderTableSpecStore,
     matchIndex: new ClassicPostgresSyncMatchIndex(db, syncId),
     lookupDataProvider: new ClassicPostgresSyncLookupDataProvider(db, syncId, workbookId),
     openDestinationOutputSink: async (destinationFolder) => {

@@ -28,6 +28,7 @@ import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
+import { DataFolderTableSpecStoreService } from '../workbook/table-spec-store/data-folder-table-spec-store.service';
 import { ApplyPatchesJobHandler } from './jobs/job-definitions/apply-patches.job';
 import { ApplySyncDraftJobHandler } from './jobs/job-definitions/apply-sync-draft.job';
 import { CleanupConnectionIndexRowsJobHandler } from './jobs/job-definitions/cleanup-connection-index-rows.job';
@@ -67,6 +68,7 @@ export class JobHandlerService {
     private readonly syncDraftService: SyncDraftService,
     private readonly refCleanerService: RefCleanerService,
     @Inject(RUN_STORE_CLIENT) private readonly runStoreClient: RunStoreClient,
+    private readonly dataFolderTableSpecStore: DataFolderTableSpecStoreService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
   }
@@ -90,6 +92,7 @@ export class JobHandlerService {
           this.assetIndexService,
           this.postHogService,
           this.experimentsService,
+          this.dataFolderTableSpecStore,
           // A Live Export run on the run-store engine writes its pulls to the run store.
           data.liveExportRunStoreKey
             ? () =>
@@ -115,6 +118,7 @@ export class JobHandlerService {
           this.assetExtractorService,
           this.assetIndexService,
           this.postHogService,
+          this.dataFolderTableSpecStore,
         ) as JobHandler<JobDefinition>;
 
       case JobType.SyncDataFolders:

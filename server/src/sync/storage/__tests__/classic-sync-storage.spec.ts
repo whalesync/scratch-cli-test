@@ -4,6 +4,7 @@ import { DbService } from 'src/db/db.service';
 import { DIRTY_BRANCH, type RepoId, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import type { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import { ClassicStagedGitCommitOutputSink, createClassicSyncStoragePorts } from '../classic-sync-storage';
 import type { SyncDestinationFolderLocation } from '../sync-storage-ports';
 
@@ -146,6 +147,7 @@ describe('createClassicSyncStoragePorts', () => {
       db: {} as DbService,
       dataFolderService: {} as DataFolderService,
       scratchGitService,
+      dataFolderTableSpecStore: {} as DataFolderTableSpecStoreService,
       syncId: SYNC_ID,
       workbookId: 'wkb_1' as WorkbookId,
       actor: { userId: 'usr_1', organizationId: 'org_1' } as Actor,
@@ -165,6 +167,7 @@ describe('createClassicSyncStoragePorts', () => {
       db: {} as DbService,
       dataFolderService: {} as DataFolderService,
       scratchGitService,
+      dataFolderTableSpecStore: {} as DataFolderTableSpecStoreService,
       syncId: SYNC_ID,
       workbookId: 'wkb_1' as WorkbookId,
       actor: { userId: 'usr_1', organizationId: 'org_1' } as Actor,

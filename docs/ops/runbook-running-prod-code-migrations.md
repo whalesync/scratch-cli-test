@@ -15,30 +15,32 @@ no-dry-run and per-migration-`ids` caveats come from.
 
 ## Context
 
-| Item                       | Value                                                                                                                                                                            |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Endpoint                   | `POST /code-migrations/run`, admin-gated — [code-migrations.controller.ts](../../server/src/code-migrations/code-migrations.controller.ts)                                       |
-| Admin UI                   | **Settings → Dev → Migrations** — [client/.../settings/dev/migrations/page.tsx](../../client/src/app/settings/dev/migrations/page.tsx)                                            |
-| Who can run it             | `role === ADMIN` with a `jwt` or `api-token` auth — [permissions.ts](../../server/src/auth/permissions.ts) (`hasAdminToolsPermission`)                                           |
-| Request shape              | `{ migration, qty \| ids, dryRun }` — [code-migrations.dto.ts](../../packages/shared-types/src/dto/code-migrations/code-migrations.dto.ts) (`runMigrationSchema`)                |
-| `ids` semantics            | **Per-migration — check before you paste.** Most take workbook ids, but not all; see [What `ids` means](#what-ids-means). `qty` takes the N oldest candidates. Provide exactly one of `ids` / `qty`. |
-| Result shape               | `{ migratedIds, remainingCount, dryRun, summary }` — `summary` is a per-outcome breakdown; on a **dry-run** `migratedIds` is the _would-be_ set                                  |
-| Read-only DB (verify)      | `terraform/tools/connect_to_gcp_db_readonly.sh production "<SQL>"` — read-only, `statement_timeout=30s`                                                                          |
-| Prod logs                  | `gcloud logging read '<filter>' --project=spv1eu-production --billing-project=spv1eu-production` (the `--billing-project` is **required** — see [CLAUDE.md](../../CLAUDE.md))     |
+| Item                  | Value                                                                                                                                                                                                |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Endpoint              | `POST /code-migrations/run`, admin-gated — [code-migrations.controller.ts](../../server/src/code-migrations/code-migrations.controller.ts)                                                           |
+| Admin UI              | **Settings → Dev → Migrations** — [client/.../settings/dev/migrations/page.tsx](../../client/src/app/settings/dev/migrations/page.tsx)                                                               |
+| Who can run it        | `role === ADMIN` with a `jwt` or `api-token` auth — [permissions.ts](../../server/src/auth/permissions.ts) (`hasAdminToolsPermission`)                                                               |
+| Request shape         | `{ migration, qty \| ids, dryRun }` — [code-migrations.dto.ts](../../packages/shared-types/src/dto/code-migrations/code-migrations.dto.ts) (`runMigrationSchema`)                                    |
+| `ids` semantics       | **Per-migration — check before you paste.** Most take workbook ids, but not all; see [What `ids` means](#what-ids-means). `qty` takes the N oldest candidates. Provide exactly one of `ids` / `qty`. |
+| Result shape          | `{ migratedIds, remainingCount, dryRun, summary }` — `summary` is a per-outcome breakdown; on a **dry-run** `migratedIds` is the _would-be_ set                                                      |
+| Read-only DB (verify) | `terraform/tools/connect_to_gcp_db_readonly.sh production "<SQL>"` — read-only, `statement_timeout=30s`                                                                                              |
+| Prod logs             | `gcloud logging read '<filter>' --project=spv1eu-production --billing-project=spv1eu-production` (the `--billing-project` is **required** — see [CLAUDE.md](../../CLAUDE.md))                        |
 
 ## What `ids` means
 
 `ids` is a bare `string[]` on the wire ([`runMigrationSchema`](../../packages/shared-types/src/dto/code-migrations/code-migrations.dto.ts)) — **the entity type it refers to is chosen by each migration's own handler**, and there is no server-side validation that the ids you pasted are of the right kind. Pass workbook ids to a migration that filters on `Sync.id` and every id simply matches nothing: the run reports `Migrated: 0` and succeeds. **That looks identical to "already done."** Check this table first.
 
-| Migration                              | `ids` refers to | Filter                                            |
-| -------------------------------------- | --------------- | ------------------------------------------------- |
-| `init-workbook-repos`                  | Workbook ids    | `Workbook.id IN ids`                              |
-| `init-scratch-repos`                   | Workbook ids    | `Workbook.id IN ids`                              |
-| `notion-data-source-backfill`          | Workbook ids    | `DataFolder.workbookId IN ids`                    |
-| **`sync-mapping-v2-backfill`**         | **Sync ids**    | **`Sync.id IN ids AND mappingsV2 IS NULL`**       |
-| `fileindex-connector-account-backfill` | Workbook ids    | `FileIndex` rows scoped per workbook              |
-| `webflow-folder-restructure`           | Workbook ids    | `DataFolder.workbookId IN ids`                    |
-| `webflow-folder-restructure-inverse`   | Workbook ids    | `DataFolder.workbookId IN ids`                    |
+| Migration                                      | `ids` refers to | Filter                                                                                                                                |
+| ---------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `init-workbook-repos`                          | Workbook ids    | `Workbook.id IN ids`                                                                                                                  |
+| `init-scratch-repos`                           | Workbook ids    | `Workbook.id IN ids`                                                                                                                  |
+| `notion-data-source-backfill`                  | Workbook ids    | `DataFolder.workbookId IN ids`                                                                                                        |
+| **`sync-mapping-v2-backfill`**                 | **Sync ids**    | **`Sync.id IN ids AND mappingsV2 IS NULL`**                                                                                           |
+| `fileindex-connector-account-backfill`         | Workbook ids    | `FileIndex` rows scoped per workbook                                                                                                  |
+| `webflow-folder-restructure`                   | Workbook ids    | `DataFolder.workbookId IN ids`                                                                                                        |
+| `webflow-folder-restructure-inverse`           | Workbook ids    | `DataFolder.workbookId IN ids`                                                                                                        |
+| `data-folder-table-spec-git-import`            | Workbook ids    | `DataFolder.workbookId IN ids` (connector-linked, path and `tableId` set, no `DataFolderTableSpec` row)                               |
+| `data-folder-table-spec-git-divergence-report` | Workbook ids    | `DataFolder.workbookId IN ids` (connector-linked, path set, HAS a row). Read-only; `migratedIds` = folders whose row differs from git |
 
 When adding a migration, state its `ids` entity in the [`AVAILABLE_MIGRATIONS`](../../server/src/code-migrations/code-migrations.controller.ts) `description` (the admin UI renders it on selection) and add a row here.
 
@@ -46,8 +48,8 @@ When adding a migration, state its `ids` entity in the [`AVAILABLE_MIGRATIONS`](
 
 Two capabilities the process below assumes are per-migration, not universal:
 
-- **`supportsDryRun`** — the admin UI disables the checkbox and the server rejects a dry-run request (400) when it is false, so you can never believe you dry-ran something that wrote. As of this writing only `webflow-folder-restructure`, `webflow-folder-restructure-inverse`, and `fileindex-connector-account-backfill` support it. **For the rest, step 3 below is unavailable** — substitute an offline pre-flight: dump the candidate rows read-only and run the migration's own parse/transform against them locally. See [Offline pre-flight](#offline-pre-flight-when-a-migration-cannot-dry-run).
-- **`summary`** — the per-outcome breakdown is optional on `MigrationResult`; only the two Webflow migrations populate it. Without it, outcomes like "skipped, a concurrent writer won" are invisible in the UI (they just shrink the `Migrated` count) and the errored ids live only in Cloud Logging. Verify from the DB, per step 5.
+- **`supportsDryRun`** — the admin UI disables the checkbox and the server rejects a dry-run request (400) when it is false, so you can never believe you dry-ran something that wrote. As of this writing only `webflow-folder-restructure`, `webflow-folder-restructure-inverse`, `fileindex-connector-account-backfill`, and `data-folder-table-spec-git-import` support it. **For the rest, step 3 below is unavailable** — substitute an offline pre-flight: dump the candidate rows read-only and run the migration's own parse/transform against them locally. See [Offline pre-flight](#offline-pre-flight-when-a-migration-cannot-dry-run).
+- **`summary`** — the per-outcome breakdown is optional on `MigrationResult`; only the two Webflow migrations, `data-folder-table-spec-git-import`, and `data-folder-table-spec-git-divergence-report` populate it. Without it, outcomes like "skipped, a concurrent writer won" are invisible in the UI (they just shrink the `Migrated` count) and the errored ids live only in Cloud Logging. Verify from the DB, per step 5.
 
 ## Properties you can rely on
 

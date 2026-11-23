@@ -158,6 +158,30 @@ export class ScratchConfigService {
     return this.getOptionalFlagVariable('SLACK_NOTIFICATION_ENABLED', false);
   }
 
+  /**
+   * DEV-12616: whether every write of a folder's table spec or default view to Postgres
+   * (`DataFolderTableSpec`) is also mirrored to `.scratch/{folder}/schema.json` and `views/default.json`
+   * in the connection's git repo. Defaults to true. Do NOT turn it off yet: the scratchmd CLI, Desktop,
+   * the web "Show hidden files" viewer, and the scratch-git index build still read the git copies. Turning
+   * it off is the follow-up that gives those readers another source.
+   */
+  isTableSpecGitMirrorEnabled(): boolean {
+    return this.getOptionalFlagVariable('TABLE_SPEC_GIT_MIRROR_ENABLED', true);
+  }
+
+  /**
+   * DEV-12616: whether table specs and default views are READ from Postgres (`DataFolderTableSpec`, falling
+   * back to git when a folder has no row). Defaults to false: writes go to both Postgres and git, reads stay on
+   * git until (1) every api/worker/cron revision dual-writes, (2) the `data-folder-table-spec-git-import` code
+   * migration has drained, and (3) the read-only `data-folder-table-spec-git-divergence-report` finds no folder
+   * whose row differs from git (Refresh Schema any it lists). Re-run the report after any code rollback past
+   * DEV-12616: specs pulled while rolled back land in git only. Rolling back reads is flipping this off; the git
+   * mirror keeps git current.
+   */
+  isTableSpecPostgresReadsEnabled(): boolean {
+    return this.getOptionalFlagVariable('TABLE_SPEC_POSTGRES_READS_ENABLED', false);
+  }
+
   getRedisHost(): string {
     return this.getOptionalEnvVariable<string>('REDIS_HOST') ?? 'localhost';
   }

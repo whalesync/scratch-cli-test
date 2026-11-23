@@ -46,6 +46,7 @@ import { escapeConnectorFolderPathSegment } from './connector-folder-path.util';
 import { DataFolderEntity, DataFolderGroupEntity } from './entities/data-folder.entity';
 import { FilesService } from './files.service';
 import { validateScratchRelativePath, validateScratchSegmentName } from './scratch-path-validation';
+import { DataFolderTableSpecStoreService } from './table-spec-store/data-folder-table-spec-store.service';
 import { WorkbookEventService } from './workbook-event.service';
 import { WorkbookService } from './workbook.service';
 
@@ -67,6 +68,7 @@ export class DataFolderService {
     private readonly workbookEventService: WorkbookEventService,
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
+    private readonly dataFolderTableSpecStore: DataFolderTableSpecStoreService,
   ) {}
 
   /**
@@ -160,12 +162,13 @@ export class DataFolderService {
    * instantiating the connector or hitting any remote API. The connector
    * registry answers from the persisted `options` + `tableId` alone for most
    * connectors; only those that auto-detect their last-modified field from the
-   * table schema (Airtable, WordPress) need the schema, which we read locally
-   * from git — and only when the schemaless answer isn't already SUPPORTED, so a
-   * folder with an explicit `modifiedAtField` (or a non-incremental connector)
-   * never pays for a git read.
+   * table schema (Airtable, WordPress) need the schema, which we read from the
+   * folder's stored spec — and only when the schemaless answer isn't already
+   * SUPPORTED, so a folder with an explicit `modifiedAtField` (or a
+   * non-incremental connector) never pays for a spec read.
    */
   private async computeIncrementalPullSupport(folder: {
+    id: string;
     connectorService: string | null;
     connectorAccountId: string | null;
     workbookId: string;
@@ -190,7 +193,7 @@ export class DataFolderService {
     });
 
     if (support !== IncrementalPullSupport.SUPPORTED && registration.incrementalPullAutoDetectsFromSchema) {
-      const tableSpec = await this.readSchema(folder.workbookId as WorkbookId, folder.connectorAccountId, folder.path);
+      const tableSpec = await this.readStoredTableSpecForDataFolder(folder);
       if (tableSpec) {
         support = resolveIncrementalPullSupportForService({ service, options, tableSpec, tableId: folder.tableId });
       }
@@ -526,18 +529,19 @@ export class DataFolderService {
       include: { connectorAccount: true },
     });
 
-    // Write schema and default view to git repo
+    // Store the schema and default view (Postgres, mirrored to the connection's git repo). Non-fatal: the
+    // pull enqueued below stores them again.
     try {
-      const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
-      await this.scratchGitService.writeSchemaToGit(repoId, folderPath, tableSpec);
+      const tableSpecLocation = { dataFolderId, connectorAccountId, folderPath };
+      await this.dataFolderTableSpecStore.writeTableSpec(tableSpecLocation, tableSpec, 'create-folder');
       const defaultView = connector.buildDefaultView(tableSpec);
       if (defaultView) {
-        await this.scratchGitService.writeViewToGit(repoId, folderPath, 'default', defaultView);
+        await this.dataFolderTableSpecStore.writeDefaultView(tableSpecLocation, defaultView, 'create-folder');
       }
     } catch (error) {
       WSLogger.error({
         source: 'DataFolderService.createFolder',
-        message: 'Failed to write schema to git',
+        message: 'Failed to store the table spec',
         error,
         workbookId,
         dataFolderId,
@@ -953,11 +957,7 @@ export class DataFolderService {
         decryptedCredentials: connectorAccount as unknown as DecryptedCredentials,
       });
 
-      const schema = await this.readSchema(
-        dataFolder.workbookId as WorkbookId,
-        dataFolder.connectorAccountId,
-        dataFolder.path,
-      );
+      const schema = await this.readStoredTableSpecForDataFolder(dataFolder);
 
       if (!schema) {
         // Fallback if no schema is present (shouldn't happen for valid connected folders but safe to handle)
@@ -1140,64 +1140,67 @@ export class DataFolderService {
   }
 
   /**
-   * Reads schema from git.
+   * The folder's stored table spec (DEV-12616: Postgres, falling back to the git copy). Null for a folder with no
+   * path or no connection (scratch folders have no schema by design), and when it can't be read (logged).
    */
-  async readSchema(
-    workbookId: WorkbookId,
-    connectorAccountId: string | null | undefined,
-    folderPath: string | null,
-  ): Promise<BaseJsonTableSpec | null> {
-    if (!folderPath) return null;
-    // Scratch (connector-less) folders have no schema by design.
-    if (!connectorAccountId) return null;
+  async readStoredTableSpecForDataFolder(dataFolder: {
+    id: string;
+    workbookId: string;
+    connectorAccountId: string | null;
+    path: string | null;
+  }): Promise<BaseJsonTableSpec | null> {
+    if (!dataFolder.path || !dataFolder.connectorAccountId) return null;
     try {
-      const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
-      const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
-      if (gitSchema) return gitSchema;
+      return await this.dataFolderTableSpecStore.readTableSpec({
+        dataFolderId: dataFolder.id,
+        connectorAccountId: dataFolder.connectorAccountId,
+        folderPath: dataFolder.path,
+      });
     } catch (error) {
       WSLogger.error({
-        source: 'DataFolderService.readSchema',
-        message: 'Failed to read schema from git',
+        source: 'DataFolderService.readStoredTableSpecForDataFolder',
+        message: 'Failed to read the stored table spec',
         error,
-        workbookId,
-        folderPath,
+        workbookId: dataFolder.workbookId,
+        dataFolderId: dataFolder.id,
+        folderPath: dataFolder.path,
       });
+      return null;
     }
-    return null;
   }
 
   /**
-   * Returns the schema already stored in the DB for a data folder, without calling the connector.
+   * Returns the folder's stored schema, without calling the connector.
    */
   async getStoredSchema(id: DataFolderId, actor: Actor): Promise<Record<string, unknown> | null> {
     const folder = await this.findOne(id, actor);
-    return await this.readSchema(folder.workbookId, folder.connectorAccountId, folder.path);
+    return await this.readStoredTableSpecForDataFolder(folder);
   }
 
   /**
-   * Reads a stored TableView from git for a data folder. The connector's curated
-   * default view is persisted separately from `schema.json` (see
-   * `ScratchGitService.writeViewToGit`), so this is the read complement of
-   * `readSchema`. Returns null if the view is missing or unreadable.
+   * The connector's stored default TableView for a folder (DEV-12616: Postgres, falling back to the git copy) —
+   * the read complement of the default view the pull, schema refresh, and publish build store. Null when the
+   * folder has no path or connection, has no stored view, or it can't be read (logged).
    */
-  async readView(
-    connectorAccountId: string | null | undefined,
-    folderPath: string | null,
-    viewName: string,
-  ): Promise<TableView | null> {
-    if (!folderPath) return null;
-    // Scratch (connector-less) folders have no stored view by design.
-    if (!connectorAccountId) return null;
+  async readStoredDefaultViewForDataFolder(dataFolder: {
+    id: string;
+    connectorAccountId: string | null;
+    path: string | null;
+  }): Promise<TableView | null> {
+    if (!dataFolder.path || !dataFolder.connectorAccountId) return null;
     try {
-      const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
-      return await this.scratchGitService.readViewFromGit(repoId, folderPath, viewName);
+      return await this.dataFolderTableSpecStore.readDefaultView({
+        dataFolderId: dataFolder.id,
+        connectorAccountId: dataFolder.connectorAccountId,
+        folderPath: dataFolder.path,
+      });
     } catch (error) {
       WSLogger.error({
-        source: 'DataFolderService.readView',
-        message: 'Failed to read view from git',
+        source: 'DataFolderService.readStoredDefaultViewForDataFolder',
+        message: 'Failed to read the stored default view',
         error,
-        folderPath,
-        viewName,
+        dataFolderId: dataFolder.id,
+        folderPath: dataFolder.path,
       });
       return null;
     }
@@ -1211,7 +1214,7 @@ export class DataFolderService {
    */
   async getStoredView(id: DataFolderId, actor: Actor): Promise<TableView | null> {
     const folder = await this.findOne(id, actor);
-    return await this.readView(folder.connectorAccountId, folder.path, 'default');
+    return await this.readStoredDefaultViewForDataFolder(folder);
   }
 
   /**
@@ -1253,26 +1256,30 @@ export class DataFolderService {
         tableSpec.titlePath = dotPath(nameOverride.join('.'));
       }
 
-      // Write schema and default view to git repo
+      // Store the schema and default view (Postgres, mirrored to the connection's git repo)
       try {
-        const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
         if (folder.path) {
-          await this.scratchGitService.writeSchemaToGit(repoId, folder.path, tableSpec);
+          const tableSpecLocation = {
+            dataFolderId: folder.id,
+            connectorAccountId: folder.connectorAccountId,
+            folderPath: folder.path,
+          };
+          await this.dataFolderTableSpecStore.writeTableSpec(tableSpecLocation, tableSpec, 'refresh-schema');
           const defaultView = connector.buildDefaultView(tableSpec);
           if (defaultView) {
-            await this.scratchGitService.writeViewToGit(repoId, folder.path, 'default', defaultView);
+            await this.dataFolderTableSpecStore.writeDefaultView(tableSpecLocation, defaultView, 'refresh-schema');
           }
         } else {
           WSLogger.error({
             source: 'DataFolderService.fetchSchemaSpec',
-            message: 'Folder path is missing — unable to write schema to git',
+            message: 'Folder path is missing — unable to store the table spec',
             dataFolderId: id,
           });
         }
       } catch (error) {
         WSLogger.error({
           source: 'DataFolderService.fetchSchemaSpec',
-          message: 'Failed to write schema to git',
+          message: 'Failed to store the table spec',
           error,
           dataFolderId: id,
         });
@@ -1293,8 +1300,8 @@ export class DataFolderService {
   /**
    * Re-derives the schema (and default view) for every data folder belonging to a single
    * connection (connector account), in one pass. Reuses the per-folder {@link fetchSchemaSpec},
-   * which fetches the spec from the connector and writes `schema.json` + `views/default.json`
-   * back to the connection's git repo.
+   * which fetches the spec from the connector and stores it with the default view (Postgres,
+   * mirrored to `schema.json` + `views/default.json` in the connection's git repo).
    *
    * Folders are processed sequentially to stay gentle on the connector's metadata API. A folder
    * whose refresh fails (connector error, missing path, no linked table, etc.) is recorded as
@@ -1366,14 +1373,14 @@ export class DataFolderService {
 
   /**
    * Returns schema paths (dot notation) for a data folder.
-   * Tries to read the schema from the git repo first, falling back to the connector.
+   * Tries the folder's stored schema first, falling back to the connector.
    */
   async getSchemaPaths(id: DataFolderId, actor: Actor): Promise<SchemaField[]> {
     let spec = (await this.getStoredSchema(id, actor)) as BaseJsonTableSpec | null;
     if (!spec || !spec.schema) {
       WSLogger.warn({
         source: 'DataFolderService.getSchemaPaths',
-        message: 'Schema missing from git, fetching from connector',
+        message: 'No stored table spec, fetching from connector',
         dataFolderId: id,
       });
       spec = await this.fetchSchemaSpec(id, actor);

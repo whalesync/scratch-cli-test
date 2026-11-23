@@ -55,4 +55,29 @@ export default tseslint.config(
       'no-restricted-syntax': 'off',
     },
   },
+  {
+    // DEV-12616: folder table specs and default views live in Postgres (DataFolderTableSpec). The git
+    // primitives are its fallback and one-way mirror, so only the store may call them.
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        ...['readSchemaFromGit', 'writeSchemaToGit', 'readViewFromGit', 'writeViewToGit'].map((property) => ({
+          property,
+          message:
+            'Folder table specs and default views live in Postgres (DEV-12616). Read and write them through DataFolderTableSpecStoreService; only the store calls the git fallback and mirror.',
+        })),
+      ],
+    },
+  },
+  {
+    files: [
+      'src/workbook/table-spec-store/data-folder-table-spec-store.service.ts',
+      'src/scratch-git/scratch-git.service.ts',
+      '**/__tests__/**',
+      '**/*.spec.ts',
+    ],
+    rules: {
+      'no-restricted-properties': 'off',
+    },
+  },
 );

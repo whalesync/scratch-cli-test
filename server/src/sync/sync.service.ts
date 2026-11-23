@@ -89,7 +89,7 @@ import { readFieldValueAtPath, setFieldValueAtPath } from 'src/utils/field-path'
 import { safeJsonParse } from 'src/utils/helpers';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
-import { GitTableSpecStore } from 'src/workbook/table-spec-store/git-table-spec-store';
+import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import { readTableSpecOrNullLoggingFailure, type TableSpecStore } from 'src/workbook/table-spec-store/table-spec-store';
 import { deduplicateFileName, resolveBaseFileName } from 'src/workbook/util';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
@@ -246,12 +246,9 @@ export class SyncService {
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookRepoService: WorkbookRepoService,
     private readonly workbookService: WorkbookService,
-  ) {
-    this.gitTableSpecStore = new GitTableSpecStore(scratchGitService);
-  }
-
-  /** Where table specs are read from outside a sync run (AI context, preview): the git copy. */
-  private readonly gitTableSpecStore: TableSpecStore;
+    /** Where table specs are read from outside a sync run (AI context, preview): the folder's stored spec. */
+    private readonly dataFolderTableSpecStore: DataFolderTableSpecStoreService,
+  ) {}
 
   /**
    * Read choke point — fetches a Sync row and resolves its on-disk mappings
@@ -327,18 +324,17 @@ export class SyncService {
   }
 
   /**
-   * Reads a folder's table spec from `tableSpecStore` (the git copy unless the caller supplies its own
-   * store); null when there is none or it can't be read.
+   * Reads a folder's table spec from `tableSpecStore` (the folder's stored spec unless the caller supplies its
+   * own store); null when there is none or it can't be read.
    */
   private readTableSpecOrNull(
     workbookId: string,
-    connectorAccountId: string | null,
-    folderPath: string | null,
-    tableSpecStore: TableSpecStore = this.gitTableSpecStore,
+    dataFolder: { id: string; connectorAccountId: string | null; path: string | null },
+    tableSpecStore: TableSpecStore = this.dataFolderTableSpecStore,
   ): Promise<BaseJsonTableSpec | null> {
     return readTableSpecOrNullLoggingFailure(
       tableSpecStore,
-      { connectorAccountId, folderPath },
+      { dataFolderId: dataFolder.id, connectorAccountId: dataFolder.connectorAccountId, folderPath: dataFolder.path },
       { source: 'SyncService.readTableSpecOrNull', workbookId },
     );
   }
@@ -795,7 +791,7 @@ export class SyncService {
       const service = folder.connectorService ? folder.connectorService : null;
       if (service) allServices.add(service);
 
-      const schemaJson = await this.readTableSpecOrNull(workbookId, folder.connectorAccountId, folder.path);
+      const schemaJson = await this.readTableSpecOrNull(workbookId, folder);
       const fields = schemaJson?.schema ? extractSchemaFields(schemaJson.schema) : [];
 
       const accountId = folder.connectorAccountId;
@@ -1078,6 +1074,7 @@ export class SyncService {
       db: this.db,
       dataFolderService: this.dataFolderService,
       scratchGitService: this.scratchGitService,
+      dataFolderTableSpecStore: this.dataFolderTableSpecStore,
       syncId,
       workbookId,
       actor,
@@ -1185,20 +1182,10 @@ export class SyncService {
       throw new NotFoundException(`Destination DataFolder ${tableMapping.destinationDataFolderId} not found`);
     }
 
-    // Read schema from git first, fall back to DB
-    const sourceTableSpec = await this.readTableSpecOrNull(
-      workbookId,
-      sourceFolder.connectorAccountId,
-      sourceFolder.path,
-      tableSpecStore,
-    );
+    // Read each folder's stored table spec (the run's own store for a Live Export run)
+    const sourceTableSpec = await this.readTableSpecOrNull(workbookId, sourceFolder, tableSpecStore);
 
-    const destinationTableSpec = await this.readTableSpecOrNull(
-      workbookId,
-      destinationFolder.connectorAccountId,
-      destinationFolder.path,
-      tableSpecStore,
-    );
+    const destinationTableSpec = await this.readTableSpecOrNull(workbookId, destinationFolder, tableSpecStore);
     // Get the destination folder path for new files
     const destinationFolderPath = destinationFolder.path?.replace(/^\//, '') ?? '';
     const destinationFolderLocation: SyncDestinationFolderLocation = {
@@ -2049,12 +2036,7 @@ export class SyncService {
       });
       return;
     }
-    const referencedSchema = await this.readTableSpecOrNull(
-      workbookId,
-      folder.connectorAccountId,
-      folder.path,
-      storagePorts.tableSpecStore,
-    );
+    const referencedSchema = await this.readTableSpecOrNull(workbookId, folder, storagePorts.tableSpecStore);
     const idColumn = this.getIdColumnFromSchema(referencedSchema);
     for await (const referencedFilePage of storagePorts.recordSource.pageThroughSourceFolderRecordFiles(
       referencedFolderId,
@@ -2253,7 +2235,7 @@ export class SyncService {
       throw new NotFoundException(`Destination folder ${body.destFolderId} not found`);
     }
 
-    const sourceSchema = await this.readTableSpecOrNull(workbookId, sourceFolder.connectorAccountId, sourceFolder.path);
+    const sourceSchema = await this.readTableSpecOrNull(workbookId, sourceFolder);
     const sourceIdColumn = this.getIdColumnFromSchema(sourceSchema);
 
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(sourceFolder.connectorAccountId);

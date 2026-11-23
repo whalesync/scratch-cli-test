@@ -12,6 +12,7 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { DestinationMappingResolution, FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.types';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { SyncService, transformRecordAsync } from '../sync.service';
@@ -87,6 +88,7 @@ describe('SyncService', () => {
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let workbookRepoService: jest.Mocked<WorkbookRepoService>;
   let workbookService: jest.Mocked<WorkbookService>;
+  let dataFolderTableSpecStore: jest.Mocked<DataFolderTableSpecStoreService>;
 
   beforeEach(() => {
     dbService = {
@@ -134,6 +136,10 @@ describe('SyncService', () => {
       delete: jest.fn(),
     } as unknown as jest.Mocked<ScheduleService>;
 
+    dataFolderTableSpecStore = {
+      readTableSpec: jest.fn().mockResolvedValue(null),
+    } as unknown as jest.Mocked<DataFolderTableSpecStoreService>;
+
     service = new SyncService(
       dbService,
       dataFolderService,
@@ -142,6 +148,7 @@ describe('SyncService', () => {
       scratchGitService,
       workbookRepoService,
       workbookService,
+      dataFolderTableSpecStore,
     );
   });
 

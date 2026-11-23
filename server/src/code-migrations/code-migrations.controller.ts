@@ -43,11 +43,22 @@ import { SYSTEM_ACTOR } from 'src/users/types';
 import { assertUnreachable } from 'src/utils/asserts';
 import { EncryptedData } from 'src/utils/encryption';
 import { escapeLikeWildcards } from 'src/utils/prisma-like';
+import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { ConnectionDrainTimeoutError, ConnectionQuiesceService } from './connection-quiesce.service';
+import {
+  buildDataFolderTableSpecGitDivergenceSummaryRows,
+  buildDataFolderTableSpecGitImportSummaryRows,
+  DATA_FOLDER_TABLE_SPEC_GIT_DIVERGENCE_REPORT_MIGRATION_NAME,
+  DATA_FOLDER_TABLE_SPEC_GIT_IMPORT_MIGRATION_NAME,
+  type DataFolderWalkScope,
+  pickRandomDataFolderIdToStartWalkAfter,
+  runDataFolderTableSpecGitDivergenceReport,
+  runDataFolderTableSpecGitImport,
+} from './data-folder-table-spec-git-import';
 import { RunMigrationDto } from './dto/code-migrations.dto';
 import { resolveFolderPathsToConnectorAccountIds } from './fileindex-connector-account-backfill';
 import {
@@ -211,6 +222,33 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'unscoped rows.',
   },
   {
+    name: DATA_FOLDER_TABLE_SPEC_GIT_IMPORT_MIGRATION_NAME,
+    supportsDryRun: true,
+    description:
+      "DEV-12616: copies each connector-linked folder's table spec (.scratch/<folder>/schema.json, or the legacy " +
+      '<folder>/.schema.json) and default view (views/default.json) from git main into its DataFolderTableSpec ' +
+      'row in Postgres, for folders that have a remote table (tableId) and no row yet (a folder with no tableId can ' +
+      'never have a spec, so it is not a candidate). Insert-if-absent, so a pull, schema refresh, or publish ' +
+      'build that writes the folder meanwhile always wins. Never modifies git and needs no quiesce. A folder with ' +
+      'nothing in git, invalid content, no repo, or a failed git read gets no row and stays a candidate (counted ' +
+      'in remainingCount). `ids` are WORKBOOK ids (every candidate folder in them); `qty` imports up to that many ' +
+      'folders, walking candidates in id order from a random starting point (wrapping around) and examining at ' +
+      'most 10× qty. A dry-run reads git and writes nothing. Done when a run imports 0 and "candidates this run ' +
+      'did not reach" is 0: what remains then is folders that cannot be imported.',
+  },
+  {
+    name: DATA_FOLDER_TABLE_SPEC_GIT_DIVERGENCE_REPORT_MIGRATION_NAME,
+    supportsDryRun: false,
+    description:
+      "DEV-12616, READ-ONLY (writes nothing in Postgres or git): compares each connector-linked folder's " +
+      'DataFolderTableSpec row with its git copy, ignoring generatedAt, and lists the folders where they differ ' +
+      '(the migratedIds are the DIFFERING data folder ids). While the git mirror is on they should match; a ' +
+      'difference means a write landed in only one place (a pre-DEV-12616 revision wrote git only during a mixed ' +
+      'rollout or a code rollback, or a mirror write failed). Run it before turning on ' +
+      'TABLE_SPEC_POSTGRES_READS_ENABLED and after any code rollback, then Refresh Schema (or re-pull) each listed ' +
+      'folder. `ids` are WORKBOOK ids; `qty` compares that many folders from a random starting point.',
+  },
+  {
     name: 'webflow-folder-restructure-inverse',
     supportsDryRun: true,
     description:
@@ -247,6 +285,7 @@ export class CodeMigrationsController {
     private readonly scratchGitService: ScratchGitService,
     private readonly connectionQuiesceService: ConnectionQuiesceService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
+    private readonly dataFolderTableSpecStore: DataFolderTableSpecStoreService,
   ) {}
 
   @Get('available')
@@ -303,9 +342,68 @@ export class CodeMigrationsController {
         return this.runWebflowFolderRestructure(dto);
       case 'webflow-folder-restructure-inverse':
         return this.runWebflowFolderRestructureInverse(dto);
+      case DATA_FOLDER_TABLE_SPEC_GIT_IMPORT_MIGRATION_NAME:
+        return this.runDataFolderTableSpecGitImportMigration(dto);
+      case DATA_FOLDER_TABLE_SPEC_GIT_DIVERGENCE_REPORT_MIGRATION_NAME:
+        return this.runDataFolderTableSpecGitDivergenceReportMigration(dto);
       default:
         throw new BadRequestException(`Unknown migration: ${dto.migration}`);
     }
+  }
+
+  /** DEV-12616: copy folder table specs and default views from git into Postgres. See the migration's description. */
+  private async runDataFolderTableSpecGitImportMigration(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
+    const dryRun = dto.dryRun === true;
+    const { importedDataFolderIds, summary, remainingCandidateFolderCount } = await runDataFolderTableSpecGitImport(
+      { prisma: this.db.client, dataFolderTableSpecStore: this.dataFolderTableSpecStore },
+      { scope: await this.dataFolderTableSpecWalkScope(dto, DATA_FOLDER_TABLE_SPEC_GIT_IMPORT_MIGRATION_NAME), dryRun },
+    );
+    return {
+      migratedIds: importedDataFolderIds,
+      remainingCount: remainingCandidateFolderCount,
+      migrationName: DATA_FOLDER_TABLE_SPEC_GIT_IMPORT_MIGRATION_NAME,
+      dryRun,
+      summary: buildDataFolderTableSpecGitImportSummaryRows(summary, dryRun),
+    };
+  }
+
+  /** DEV-12616, read-only: list folders whose stored table spec differs from git. See the migration's description. */
+  private async runDataFolderTableSpecGitDivergenceReportMigration(
+    dto: ValidatedRunMigrationDto,
+  ): Promise<MigrationResult> {
+    const { divergentDataFolderIds, summary } = await runDataFolderTableSpecGitDivergenceReport(
+      { prisma: this.db.client, dataFolderTableSpecStore: this.dataFolderTableSpecStore },
+      {
+        scope: await this.dataFolderTableSpecWalkScope(
+          dto,
+          DATA_FOLDER_TABLE_SPEC_GIT_DIVERGENCE_REPORT_MIGRATION_NAME,
+        ),
+      },
+    );
+    return {
+      migratedIds: divergentDataFolderIds,
+      remainingCount: summary.unreachedCandidateFolderCount,
+      migrationName: DATA_FOLDER_TABLE_SPEC_GIT_DIVERGENCE_REPORT_MIGRATION_NAME,
+      dryRun: false,
+      summary: buildDataFolderTableSpecGitDivergenceSummaryRows(summary),
+    };
+  }
+
+  /** `ids` ⇒ every candidate in those workbooks; `qty` ⇒ a limited walk from a random starting folder. */
+  private async dataFolderTableSpecWalkScope(
+    dto: ValidatedRunMigrationDto,
+    migrationName: string,
+  ): Promise<DataFolderWalkScope> {
+    if (dto.ids && dto.ids.length > 0) return { kind: 'workbooks', workbookIds: dto.ids };
+    return {
+      kind: 'limited',
+      maximumFoldersToCount: dto.qty ?? 0,
+      startAfterDataFolderId: await pickRandomDataFolderIdToStartWalkAfter(
+        this.db.client,
+        migrationName,
+        Math.random(),
+      ),
+    };
   }
 
   /**

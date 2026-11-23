@@ -106,6 +106,7 @@ import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/sc
 import { EncryptionService } from 'src/utils/encryption';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { PullLinkedFolderFilesJobHandler } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
+import { createIntegrationTestDataFolderTableSpecStore } from './data-folder-table-spec-store-test-helper';
 import { createIntegrationTestDbService } from './integration-db-service';
 import {
   buildConnectorConnectionStringForLocalPostgresTestDatabase,
@@ -521,11 +522,17 @@ describe('Fetch → Edit → Publish Integration', () => {
 
     const credentialEncryptionService = new CredentialEncryptionService();
 
+    // Real Postgres-backed table spec store; reads and the mirror go through the mocked git service above.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({
+      prisma,
+      scratchGitService: mockScratchGitService,
+    });
+
     fileIndexService = new FileIndexService(dbService);
     const refCleanerService = new RefCleanerService();
     const schemaHelperService = new SchemaHelperService(
       dbService,
-      mockScratchGitService,
+      dataFolderTableSpecStore,
       realConnectorsService,
       credentialEncryptionService,
     );
@@ -576,6 +583,7 @@ describe('Fetch → Edit → Publish Integration', () => {
       mockAssetIndexService,
       mockPostHogService,
       mockExperimentsService,
+      dataFolderTableSpecStore,
     );
 
     publishPlanService = new PublishPlanBuildService(
@@ -612,6 +620,7 @@ describe('Fetch → Edit → Publish Integration', () => {
       } as unknown as RecreatedIdMapService,
       refCleanerService,
       new StubMetricsService(),
+      dataFolderTableSpecStore,
     );
   });
 

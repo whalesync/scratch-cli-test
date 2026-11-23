@@ -19,6 +19,7 @@ import { ScratchGitModule } from '../scratch-git/scratch-git.module';
 import { FilesPublicController } from './files-public.controller';
 import { FilesController } from './files.controller';
 import { FilesService } from './files.service';
+import { DataFolderTableSpecStoreModule } from './table-spec-store/data-folder-table-spec-store.module';
 import { WorkbookEventModule } from './workbook-event.module';
 import { WorkbookController } from './workbook.controller';
 import { WorkbookDataGateway } from './workbook.gateway';
@@ -45,6 +46,7 @@ import { WorkspacePermissionsService } from './workspace-permissions.service';
     WorkerEnqueuerModule,
     AuditLogModule,
     ScratchGitModule,
+    DataFolderTableSpecStoreModule,
     PublishPlanModule,
     WorkbookEventModule,
     EmailModule,

@@ -17,6 +17,7 @@ import { UserModule } from 'src/users/users.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { JobModule } from '../job/job.module';
 import { ScratchGitModule } from '../scratch-git/scratch-git.module';
+import { DataFolderTableSpecStoreModule } from '../workbook/table-spec-store/data-folder-table-spec-store.module';
 import { WorkerEnqueuerModule } from '../worker-enqueuer/worker-enqueuer.module';
 import { QueueService } from './bull-worker.service';
 import { JobHandlerService } from './job-handler.service';
@@ -36,6 +37,7 @@ import { WorkersController } from './test/workers.controller';
     ConnectorAccountModule,
     UserModule,
     ScratchGitModule,
+    DataFolderTableSpecStoreModule,
     SyncModule,
     SyncDraftModule,
     PublishPlanModule,

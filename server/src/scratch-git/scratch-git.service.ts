@@ -109,7 +109,11 @@ export function workingBranchForConnector(connectorAccountId: string | null | un
   return connectorAccountId ? DIRTY_BRANCH : MAIN_BRANCH;
 }
 
-function stripGeneratedAt(spec: Record<string, unknown>): Record<string, unknown> {
+/**
+ * A stored table spec without its volatile `generatedAt` timestamp, for "did the spec really change?"
+ * comparisons (shared by the git writer here and `DataFolderTableSpecStoreService`, DEV-12616).
+ */
+export function stripGeneratedAt(spec: Record<string, unknown>): Record<string, unknown> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { generatedAt, ...rest } = spec as Record<string, unknown> & { generatedAt?: unknown };
   // Round-trip through JSON to drop any `undefined`-valued keys. This matches what
@@ -580,6 +584,9 @@ export class ScratchGitService {
    * If a legacy `.schema.json` exists in the old location it is deleted in the same operation.
    * Commits to both main and dirty to keep them in sync without needing a rebase.
    * Non-throwing — failures are logged but do not block callers.
+   *
+   * DEV-12616: this is now the one-way git MIRROR of the Postgres copy (`DataFolderTableSpec`). Only
+   * `DataFolderTableSpecStoreService` calls it, after its database write.
    */
   async writeSchemaToGit(repoId: string, folderPath: string, schema: BaseJsonTableSpec): Promise<void> {
     try {
@@ -594,13 +601,11 @@ export class ScratchGitService {
       const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
       const newCompare = stripGeneratedAt(schema as Record<string, unknown>);
 
-      // TODO: Only write to MAIN_BRANCH, not DIRTY_BRANCH. Nothing reads schemas from dirty
-      // (readSchemaFromGit and the index route both read from main). Writing to dirty is unnecessary
-      // and was the original cause of a bug where "Changes to approve" showed with no actual file
-      // differences — the schema's generatedAt timestamp created a .scratch/ diff between merge_base
-      // and dirty. The has_dirty endpoint now filters dotfiles (has_visible_tree_changes in
-      // scratch-git-2/src/service/git/repo.rs) so this is no longer user-visible, but the extra
-      // writes are still wasted work.
+      // Both branches on purpose: server reads and the index route read `main`, but the web client's
+      // "Show hidden files" `.scratch` viewer (TreeNode.tsx / ScratchFileViewer.tsx) lists and reads
+      // `dirty`, and a rebase that isn't a fast path drops `.scratch` content that exists only on
+      // `dirty`. Writing dirty was once the cause of a phantom "Changes to approve" (the generatedAt
+      // diff); `has_visible_tree_changes` (scratch-git-2/src/service/git/repo.rs) now filters dotfiles.
       for (const branch of [MAIN_BRANCH, DIRTY_BRANCH]) {
         // Skip the commit if the current schema on this branch is identical to what we'd write,
         // ignoring the volatile `generatedAt` timestamp. Avoids no-op commits on every publish.
@@ -640,6 +645,9 @@ export class ScratchGitService {
   /**
    * Writes a TableView as `views/{viewName}.json` into `.scratch/{folderPath}/` on both branches.
    * Non-throwing — failures are logged but do not block callers.
+   *
+   * DEV-12616: the one-way git MIRROR of `DataFolderTableSpec.defaultViewContent`; only
+   * `DataFolderTableSpecStoreService` calls it.
    */
   async writeViewToGit(repoId: string, folderPath: string, viewName: string, view: TableView): Promise<void> {
     try {
@@ -666,31 +674,17 @@ export class ScratchGitService {
   /**
    * Reads `schema.json` from `.scratch/{folderPath}/` on the main branch.
    * Falls back to the legacy `.schema.json` location for repos that have not yet migrated.
-   * Returns the parsed BaseJsonTableSpec or null if missing/invalid.
+   * Returns the parsed BaseJsonTableSpec or null if missing/invalid. Non-throwing: any error is logged
+   * and reads as null.
+   *
+   * DEV-12616: Postgres (`DataFolderTableSpec`) is now the source of truth. Only
+   * `DataFolderTableSpecStoreService` calls this, as its git fallback.
    */
   async readSchemaFromGit(repoId: string, folderPath: string): Promise<BaseJsonTableSpec | null> {
     try {
-      const normalizedFolder = folderPath.replace(/^\//, '');
-      const newGitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
-      const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
-
-      const file =
-        (await this.getRepoFile(repoId, MAIN_BRANCH, newGitPath)) ??
-        (await this.getRepoFile(repoId, MAIN_BRANCH, legacyGitPath));
-      if (!file) return null;
-      const parsed = JSON.parse(file.content) as Record<string, unknown>;
-      const { legacyFieldsFound } = normalizeStoredSchemaPathFields(parsed);
-      if (legacyFieldsFound.length > 0) {
-        WSLogger.warn({
-          source: 'ScratchGitService.readSchemaFromGit',
-          message:
-            'Read a schema.json using legacy path-field names (DEV-10092); normalized to *Path. The stored schema will be rewritten on the next pull.',
-          repoId,
-          folderPath,
-          legacyFieldsFound,
-        });
-      }
-      return parsed as unknown as BaseJsonTableSpec;
+      const schemaFileContent = await this.readSchemaFileContentFromGitOrThrow(repoId, folderPath);
+      if (schemaFileContent === null) return null;
+      return this.parseSchemaFileContentFromGit(repoId, folderPath, schemaFileContent) as BaseJsonTableSpec;
     } catch (error) {
       WSLogger.error({
         source: 'ScratchGitService.readSchemaFromGit',
@@ -704,20 +698,56 @@ export class ScratchGitService {
   }
 
   /**
+   * The raw text of a folder's `schema.json` on `main` (or of the legacy in-folder `.schema.json`
+   * when the new location is absent). Null only when NEITHER file exists; any other scratch-git
+   * failure (outage, missing repo surfaced as a non-404) THROWS, so a caller can tell "nothing in git"
+   * from "git could not be read" — the DEV-12616 import must not treat a failed read as absence.
+   */
+  async readSchemaFileContentFromGitOrThrow(repoId: string, folderPath: string): Promise<string | null> {
+    const normalizedFolder = folderPath.replace(/^\//, '');
+    const newGitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
+    const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
+    const file =
+      (await this.getRepoFile(repoId, MAIN_BRANCH, newGitPath)) ??
+      (await this.getRepoFile(repoId, MAIN_BRANCH, legacyGitPath));
+    return file ? file.content : null;
+  }
+
+  /**
+   * Parses a `schema.json` read from git and applies the DEV-10092 legacy path-field shim (logging a
+   * warning when legacy names were found). Throws on invalid JSON. Returns whatever JSON the file held —
+   * callers that need a spec object validate the shape themselves.
+   */
+  parseSchemaFileContentFromGit(repoId: string, folderPath: string, schemaFileContent: string): unknown {
+    const parsed = JSON.parse(schemaFileContent) as Record<string, unknown>;
+    const { legacyFieldsFound } = normalizeStoredSchemaPathFields(parsed);
+    if (legacyFieldsFound.length > 0) {
+      WSLogger.warn({
+        source: 'ScratchGitService.readSchemaFromGit',
+        message:
+          'Read a schema.json using legacy path-field names (DEV-10092); normalized to *Path. The stored schema will be rewritten on the next pull.',
+        repoId,
+        folderPath,
+        legacyFieldsFound,
+      });
+    }
+    return parsed;
+  }
+
+  /**
    * Reads a TableView (`views/{viewName}.json`) from `.scratch/{folderPath}/` on
-   * the main branch — the read complement of `writeViewToGit`. The connector's
-   * curated default view is persisted separately from the schema (it is stripped
-   * out of `schema.json` by `writeSchemaToGit`), so this is the only way to read
-   * it back offline. Returns the parsed TableView or null if missing/invalid.
-   * Non-throwing — failures are logged but do not block callers.
+   * the main branch — the read complement of `writeViewToGit`. Returns the parsed
+   * TableView or null if missing/invalid. Non-throwing — failures are logged but
+   * do not block callers.
+   *
+   * DEV-12616: Postgres (`DataFolderTableSpec.defaultViewContent`) is now the source of truth for the
+   * default view. Only `DataFolderTableSpecStoreService` calls this, as its git fallback.
    */
   async readViewFromGit(repoId: string, folderPath: string, viewName: string): Promise<TableView | null> {
     try {
-      const normalizedFolder = folderPath.replace(/^\//, '');
-      const gitPath = `${SCRATCH_DIR}/${normalizedFolder}/views/${viewName}.json`;
-      const file = await this.getRepoFile(repoId, MAIN_BRANCH, gitPath);
-      if (!file) return null;
-      return JSON.parse(file.content) as TableView;
+      const viewFileContent = await this.readViewFileContentFromGitOrThrow(repoId, folderPath, viewName);
+      if (viewFileContent === null) return null;
+      return JSON.parse(viewFileContent) as TableView;
     } catch (error) {
       WSLogger.error({
         source: 'ScratchGitService.readViewFromGit',
@@ -729,6 +759,21 @@ export class ScratchGitService {
       });
       return null;
     }
+  }
+
+  /**
+   * The raw text of `.scratch/{folderPath}/views/{viewName}.json` on `main`. Null only when the file
+   * doesn't exist; any other scratch-git failure throws (see {@link readSchemaFileContentFromGitOrThrow}).
+   */
+  async readViewFileContentFromGitOrThrow(
+    repoId: string,
+    folderPath: string,
+    viewName: string,
+  ): Promise<string | null> {
+    const normalizedFolder = folderPath.replace(/^\//, '');
+    const gitPath = `${SCRATCH_DIR}/${normalizedFolder}/views/${viewName}.json`;
+    const file = await this.getRepoFile(repoId, MAIN_BRANCH, gitPath);
+    return file ? file.content : null;
   }
 
   async proxyToGitService(repoId: string, path: string, method: string, body?: Record<string, unknown>) {

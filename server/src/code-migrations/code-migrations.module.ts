@@ -9,6 +9,7 @@ import { OAuthModule } from '../oauth/oauth.module';
 import { PublishPlanModule } from '../publish-plan/publish-plan.module';
 import { ScheduleModule } from '../schedule/schedule.module';
 import { ScratchGitModule } from '../scratch-git/scratch-git.module';
+import { DataFolderTableSpecStoreModule } from '../workbook/table-spec-store/data-folder-table-spec-store.module';
 import { WorkbookEventModule } from '../workbook/workbook-event.module';
 import { WorkbookRepoService } from '../workbook/workbook-repo.service';
 import { CodeMigrationsController } from './code-migrations.controller';
@@ -18,6 +19,7 @@ import { ConnectionQuiesceService } from './connection-quiesce.service';
   imports: [
     DbModule,
     ScratchGitModule,
+    DataFolderTableSpecStoreModule,
     CredentialEncryptionModule,
     OAuthModule,
     AuditLogModule,

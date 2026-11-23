@@ -1,6 +1,7 @@
 import { DbService } from '../../db/db.service';
 import { BaseJsonTableSpec } from '../../remote-service/connectors/types';
-import { ScratchGitService } from '../../scratch-git/scratch-git.service';
+import { DataFolderTableSpecStoreService } from '../../workbook/table-spec-store/data-folder-table-spec-store.service';
+import type { TableSpecLocation } from '../../workbook/table-spec-store/table-spec-store';
 import { SchemaHelperService } from '../schema-helper.service';
 
 /**
@@ -37,27 +38,43 @@ describe('SchemaHelperService.getDataFolderInfo — folder-path collision across
     );
     const db = { client: { dataFolder: { findFirst } } } as unknown as DbService;
 
-    const contactsSpec = {
-      name: 'Contacts',
-      id: { wsId: 'contacts', remoteId: ['contacts'] },
-    } as unknown as BaseJsonTableSpec;
-    const scratchGitService = {
-      resolveConnectionRepoPath: jest.fn().mockResolvedValue('repo-id'),
-      readSchemaFromGit: jest.fn().mockResolvedValue(contactsSpec),
-    } as unknown as ScratchGitService;
+    // Each connection's /Contacts folder has its own stored spec, keyed by the folder id the store receives.
+    const tableSpecByDataFolderId = new Map<string, BaseJsonTableSpec>([
+      [
+        'dfd_ghl',
+        { name: 'Contacts', id: { wsId: 'contacts', remoteId: ['contacts'] } } as unknown as BaseJsonTableSpec,
+      ],
+      [
+        'dfd_generic',
+        {
+          name: 'Contacts',
+          id: { wsId: 'contacts', remoteId: ['GET', 'https://api.openphone.com/v1/contacts'] },
+        } as unknown as BaseJsonTableSpec,
+      ],
+    ]);
+    const readTableSpec = jest.fn((location: TableSpecLocation) =>
+      Promise.resolve(tableSpecByDataFolderId.get(location.dataFolderId) ?? null),
+    );
+    const dataFolderTableSpecStore = { readTableSpec } as unknown as DataFolderTableSpecStoreService;
 
-    const service = new SchemaHelperService(db, scratchGitService, {} as never, {} as never);
-    return { service, findFirst };
+    const service = new SchemaHelperService(db, dataFolderTableSpecStore, {} as never, {} as never);
+    return { service, findFirst, readTableSpec };
   }
 
   it('resolves the folder of the connection being published, not an arbitrary same-path folder', async () => {
-    const { service } = makeService();
+    const { service, readTableSpec } = makeService();
 
     // Without connection scoping this returns the generic-api folder (dfd_generic),
     // since both folders share the "/Contacts" path.
     const info = await service.getDataFolderInfo('wkb', 'Contacts', undefined, 'coa_ghl');
 
     expect(info?.id).toBe('dfd_ghl');
+    expect(info?.spec.id.remoteId).toEqual(['contacts']);
+    expect(readTableSpec).toHaveBeenCalledWith({
+      dataFolderId: 'dfd_ghl',
+      connectorAccountId: 'coa_ghl',
+      folderPath: '/Contacts',
+    });
   });
 
   it('caches per (connectorAccountId, path) so the two connections do not collide in one build', async () => {
@@ -69,5 +86,7 @@ describe('SchemaHelperService.getDataFolderInfo — folder-path collision across
 
     expect(ghl?.id).toBe('dfd_ghl');
     expect(generic?.id).toBe('dfd_generic');
+    expect(ghl?.spec.id.remoteId).toEqual(['contacts']);
+    expect(generic?.spec.id.remoteId).toEqual(['GET', 'https://api.openphone.com/v1/contacts']);
   });
 });

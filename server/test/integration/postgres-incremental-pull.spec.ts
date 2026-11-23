@@ -58,6 +58,7 @@ import {
   PullLinkedFolderFilesJobHandler,
   PullLinkedFolderFilesPublicProgress,
 } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
+import { createIntegrationTestDataFolderTableSpecStore } from './data-folder-table-spec-store-test-helper';
 import { createIntegrationTestDbService } from './integration-db-service';
 import {
   buildConnectorConnectionStringForLocalPostgresTestDatabase,
@@ -288,11 +289,16 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
     const dbService = makeDbService(prisma);
     const realConnectorsService = new ConnectorsService({} as any, {} as any, {} as any, {} as any);
     const credentialEncryptionService = new CredentialEncryptionService();
+    // Real Postgres-backed table spec store; reads and the mirror go through the mocked git service above.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({
+      prisma,
+      scratchGitService: mockScratchGitService,
+    });
     const fileIndexService = new FileIndexService(dbService);
     const refCleanerService = new RefCleanerService();
     const schemaHelperService = new SchemaHelperService(
       dbService,
-      mockScratchGitService,
+      dataFolderTableSpecStore,
       realConnectorsService,
       credentialEncryptionService,
     );
@@ -332,6 +338,7 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
       mockAssetIndexService,
       mockPostHogService,
       mockExperimentsService,
+      dataFolderTableSpecStore,
     );
   });
 

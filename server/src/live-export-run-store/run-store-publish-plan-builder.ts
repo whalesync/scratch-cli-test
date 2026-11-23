@@ -313,7 +313,11 @@ export class RunStorePublishPlanBuilder {
     const folders: DestinationFolderForPlanning[] = [];
     for (const dataFolder of dataFolders) {
       if ((dataFolder.options as DataFolderOptions | null)?.readOnly || !dataFolder.path) continue;
-      const tableSpec = await tableSpecStore.readTableSpec({ connectorAccountId, folderPath: dataFolder.path });
+      const tableSpec = await tableSpecStore.readTableSpec({
+        dataFolderId: dataFolder.id,
+        connectorAccountId,
+        folderPath: dataFolder.path,
+      });
       folders.push({
         id: dataFolder.id,
         folderPath: folderPathWithoutLeadingSlash(dataFolder.path),

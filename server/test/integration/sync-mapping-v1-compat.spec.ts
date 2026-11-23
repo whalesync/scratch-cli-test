@@ -37,6 +37,7 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { createIntegrationTestDataFolderTableSpecStore } from './data-folder-table-spec-store-test-helper';
 import { createIntegrationTestDbService } from './integration-db-service';
 import { createReadRepoFilesByFolderMock } from './sync-test-helpers';
 
@@ -134,6 +135,8 @@ describe('SyncService - v1 compatibility regression gate', () => {
     } as unknown as ScratchGitService;
 
     const scheduleService = { create: jest.fn(), update: jest.fn(), delete: jest.fn() } as unknown as ScheduleService;
+    // Real Postgres-backed table spec store; reads go through the mocked git service's readSchemaFromGit.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({ prisma, scratchGitService });
     syncService = new SyncService(
       dbService,
       dataFolderService,
@@ -142,6 +145,7 @@ describe('SyncService - v1 compatibility regression gate', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      dataFolderTableSpecStore,
     );
 
     const org = await prisma.organization.create({

@@ -6,38 +6,33 @@ import { Schema } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, dotPath } from '../remote-service/connectors/types';
-import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
-import { GitTableSpecStore } from '../workbook/table-spec-store/git-table-spec-store';
+import { DataFolderTableSpecStoreService } from '../workbook/table-spec-store/data-folder-table-spec-store.service';
 import { readTableSpecOrNullLoggingFailure, type TableSpecStore } from '../workbook/table-spec-store/table-spec-store';
 
 @Injectable()
 export class SchemaHelperService {
-  /** The default table spec store: the spec file in the connection's git repo. */
-  private readonly gitTableSpecStore: TableSpecStore;
-
   constructor(
     private readonly db: DbService,
-    private readonly scratchGitService: ScratchGitService,
+    /** The default table spec store: the folder's stored spec (DEV-12616), unless a caller supplies its own. */
+    private readonly dataFolderTableSpecStore: DataFolderTableSpecStoreService,
     private readonly connectorsService: ConnectorsService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
-  ) {
-    this.gitTableSpecStore = new GitTableSpecStore(scratchGitService);
-  }
+  ) {}
 
   /**
-   * Reads a folder's table spec from `tableSpecStore` (the git copy unless the caller supplies its own
+   * Reads a folder's table spec from `tableSpecStore` (the stored copy unless the caller supplies its own
    * store); null when there is none or it can't be read.
    */
   private readTableSpecOrNull(
     workbookId: string,
-    connectorAccountId: string | null,
-    folderPath: string | null,
+    dataFolder: { id: string; connectorAccountId: string | null; path: string | null } | null,
     tableSpecStore: TableSpecStore,
   ): Promise<BaseJsonTableSpec | null> {
+    if (!dataFolder) return Promise.resolve(null);
     return readTableSpecOrNullLoggingFailure(
       tableSpecStore,
-      { connectorAccountId, folderPath },
+      { dataFolderId: dataFolder.id, connectorAccountId: dataFolder.connectorAccountId, folderPath: dataFolder.path },
       { source: 'SchemaHelperService.readTableSpecOrNull', workbookId },
     );
   }
@@ -50,7 +45,7 @@ export class SchemaHelperService {
     workbookId: string,
     folderPath: string,
     cache?: Map<string, BaseJsonTableSpec | null>,
-    tableSpecStore: TableSpecStore = this.gitTableSpecStore,
+    tableSpecStore: TableSpecStore = this.dataFolderTableSpecStore,
   ): Promise<BaseJsonTableSpec | null> {
     if (cache && cache.has(folderPath)) {
       return cache.get(folderPath) ?? null;
@@ -62,15 +57,10 @@ export class SchemaHelperService {
           workbookId,
           path: { in: [folderPath, `/${folderPath}`] },
         },
-        select: { connectorAccountId: true, path: true },
+        select: { id: true, connectorAccountId: true, path: true },
       });
 
-      const spec = await this.readTableSpecOrNull(
-        workbookId,
-        dataFolder?.connectorAccountId ?? null,
-        dataFolder?.path ?? null,
-        tableSpecStore,
-      );
+      const spec = await this.readTableSpecOrNull(workbookId, dataFolder, tableSpecStore);
       if (cache) {
         cache.set(folderPath, spec);
       }
@@ -138,12 +128,7 @@ export class SchemaHelperService {
         return null;
       }
 
-      const spec = await this.readTableSpecOrNull(
-        workbookId,
-        dataFolder.connectorAccountId,
-        dataFolder.path,
-        this.gitTableSpecStore,
-      );
+      const spec = await this.readTableSpecOrNull(workbookId, dataFolder, this.dataFolderTableSpecStore);
       if (!spec) {
         if (cache) {
           cache.set(cacheKey, null);
@@ -173,7 +158,7 @@ export class SchemaHelperService {
   async getTableSpecById(
     dataFolderId: string,
     cache?: Map<string, BaseJsonTableSpec | null>,
-    tableSpecStore: TableSpecStore = this.gitTableSpecStore,
+    tableSpecStore: TableSpecStore = this.dataFolderTableSpecStore,
   ): Promise<BaseJsonTableSpec | null> {
     if (cache && cache.has(dataFolderId)) {
       return cache.get(dataFolderId) ?? null;
@@ -182,15 +167,10 @@ export class SchemaHelperService {
     try {
       const dataFolder = await this.db.client.dataFolder.findUnique({
         where: { id: dataFolderId },
-        select: { connectorAccountId: true, path: true, workbookId: true },
+        select: { id: true, connectorAccountId: true, path: true, workbookId: true },
       });
 
-      const spec = await this.readTableSpecOrNull(
-        dataFolder?.workbookId ?? '',
-        dataFolder?.connectorAccountId ?? null,
-        dataFolder?.path ?? null,
-        tableSpecStore,
-      );
+      const spec = await this.readTableSpecOrNull(dataFolder?.workbookId ?? '', dataFolder, tableSpecStore);
       if (cache) {
         cache.set(dataFolderId, spec);
       }
@@ -210,10 +190,10 @@ export class SchemaHelperService {
 
   /**
    * Refreshes schemas from the remote connector for all data folders belonging to a connection.
-   * Fetches fresh schema via the connector and writes to git.
+   * Fetches fresh schema via the connector and stores it (Postgres, mirrored to git — DEV-12616).
    * Follows the same pattern used in the pull job (pull-linked-folder-files.job.ts).
    */
-  async refreshSchemasForConnection(workbookId: string, connectorAccountId: string, repoId: string): Promise<void> {
+  async refreshSchemasForConnection(workbookId: string, connectorAccountId: string): Promise<void> {
     const dataFolders = await this.db.client.dataFolder.findMany({
       where: { workbookId, connectorAccountId },
       select: {
@@ -287,12 +267,13 @@ export class SchemaHelperService {
           delete tableSpec.idPathRequiresUserSelection;
         }
 
-        // Write refreshed schema and default view to git. The view is rebuilt from
+        // Store the refreshed schema and default view. The view is rebuilt from
         // the (override-adjusted) spec via the connector — a pure spec→view stage.
-        await this.scratchGitService.writeSchemaToGit(repoId, folder.path, tableSpec);
+        const tableSpecLocation = { dataFolderId: folder.id, connectorAccountId, folderPath: folder.path };
+        await this.dataFolderTableSpecStore.writeTableSpec(tableSpecLocation, tableSpec, 'publish-plan-build');
         const defaultView = connector.buildDefaultView(tableSpec);
         if (defaultView) {
-          await this.scratchGitService.writeViewToGit(repoId, folder.path, 'default', defaultView);
+          await this.dataFolderTableSpecStore.writeDefaultView(tableSpecLocation, defaultView, 'publish-plan-build');
         }
 
         WSLogger.info({

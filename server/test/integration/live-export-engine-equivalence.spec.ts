@@ -48,6 +48,7 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { PublishJobHandler } from 'src/worker/jobs/job-definitions/publish.job';
 import type { PullSinkFolder } from 'src/worker/jobs/job-definitions/pull-sink/pull-sink';
 import { SyncDataFoldersJobHandler } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
+import { createIntegrationTestDataFolderTableSpecStore } from './data-folder-table-spec-store-test-helper';
 import { createIntegrationTestDbService } from './integration-db-service';
 import { VirtualGitFs } from './virtual-git-fs';
 
@@ -491,9 +492,11 @@ describe('Live Export engines: classic vs run store produce the same publish', (
       decryptCredentials: jest.fn().mockResolvedValue({}),
     } as unknown as CredentialEncryptionService;
     const fileIndexService = new FileIndexService(dbService);
+    // The classic engine's table spec store: real Postgres, reading and mirroring through the mocked git service.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({ prisma, scratchGitService });
     const schemaHelperService = new SchemaHelperService(
       dbService,
-      scratchGitService,
+      dataFolderTableSpecStore,
       connectorsService,
       credentialEncryptionService,
     );
@@ -509,6 +512,7 @@ describe('Live Export engines: classic vs run store produce the same publish', (
       scratchGitService,
       {} as never,
       {} as WorkbookService,
+      dataFolderTableSpecStore,
     );
     const publishPlanBuildService = new PublishPlanBuildService(
       dbService,
@@ -534,10 +538,12 @@ describe('Live Export engines: classic vs run store produce the same publish', (
       new RecreatedIdMapService(dbService),
       refCleanerService,
       new StubMetricsService(),
+      dataFolderTableSpecStore,
     );
     const workbookEventService = { sendWorkbookEvent: jest.fn() } as unknown as WorkbookEventService;
     return {
       scratchGitService,
+      dataFolderTableSpecStore,
       syncService,
       fileIndexService,
       fileReferenceService,
@@ -657,6 +663,14 @@ describe('Live Export engines: classic vs run store produce the same publish', (
     const vfs = new VirtualGitFs();
     const connector = createRecordingDestinationConnector(callLog, options);
     const services = buildServices(vfs, connector);
+    // The run store engine keeps its specs in the run store; it must never reach the classic store (Postgres or
+    // its git mirror). Pass-through spies, so a stray call still behaves and the test can assert on it.
+    const dataFolderTableSpecStoreSpies = {
+      readTableSpec: jest.spyOn(services.dataFolderTableSpecStore, 'readTableSpec'),
+      readDefaultView: jest.spyOn(services.dataFolderTableSpecStore, 'readDefaultView'),
+      writeTableSpec: jest.spyOn(services.dataFolderTableSpecStore, 'writeTableSpec'),
+      writeDefaultView: jest.spyOn(services.dataFolderTableSpecStore, 'writeDefaultView'),
+    };
     const runStoreClient = new InMemoryRunStoreClient();
     const runStoreKey = runStoreKeyForRoutineRun(options.routineRunId ?? 'rrn_equivalence');
     await runStoreClient.createOrClearRunStore(runStoreKey);
@@ -667,7 +681,10 @@ describe('Live Export engines: classic vs run store produce the same publish', (
     const records = connectorRecordsByFolderPath(scenario);
     for (const [folderId, folderPath] of folderPathById) {
       const connectorAccountId = folderPath.startsWith('dest-') ? destinationConnectorAccountId : null;
-      await pullSink.storeFolderTableSpec({ connectorAccountId, folderPath: `/${folderPath}` }, specs[folderPath]);
+      await pullSink.storeFolderTableSpec(
+        { dataFolderId: folderId, connectorAccountId, folderPath: `/${folderPath}` },
+        specs[folderPath],
+      );
       const folder = {
         dataFolder: {
           id: folderId,
@@ -739,7 +756,7 @@ describe('Live Export engines: classic vs run store produce the same publish', (
       const [terminalCheckpoint] = publishCheckpointCalls[publishCheckpointCalls.length - 1];
       return terminalCheckpoint.publicProgress;
     };
-    return { callLog, services, runPublishStep };
+    return { callLog, services, dataFolderTableSpecStoreSpies, runPublishStep };
   }
 
   const SCENARIOS: Scenario[] = [
@@ -776,6 +793,9 @@ describe('Live Export engines: classic vs run store produce the same publish', (
         'writeSchemaToGit',
       ] as const) {
         expect(runStoreRun.services.scratchGitService[gitMethod]).not.toHaveBeenCalled();
+      }
+      for (const dataFolderTableSpecStoreSpy of Object.values(runStoreRun.dataFolderTableSpecStoreSpies)) {
+        expect(dataFolderTableSpecStoreSpy).not.toHaveBeenCalled();
       }
       expect(postgresRowCountsAfter).toEqual(postgresRowCountsBefore);
     },

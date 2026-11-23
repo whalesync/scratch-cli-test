@@ -36,8 +36,12 @@ The local CLI no longer pushes to `dirty`. The user's accepted-but-not-published
   scratch_pending_{hash}.json     # Records produced by a local sync that don't yet have a remote ID
 .scratch/
   {folder}/
-    schema.json                   # Table schema + FK annotations
+    schema.json                   # Table schema + FK annotations — a server-written mirror (see below)
+    views/
+      default.json                # The connector's default view — a server-written mirror
 ```
+
+Since DEV-12616 the source of truth for `schema.json` and `views/default.json` is Postgres (`DataFolderTableSpec`). The server writes them here (on `main` and `dirty`) after every database write, as a one-way mirror for the readers that still need files: the `scratchmd` CLI and Desktop (through their clone), the web client's "Show hidden files" viewer (on `dirty`), and the service's index build (on `main`, unless the server sends the specs in the request body). Never hand-edit them; the next write overwrites them.
 
 The `/upload-patch` → `publish-v2/plan-job` → `publish-v2/run-job` flow does not write phase files into the repo. The legacy `publish-from-git` job used to write `.scratch/{folder}/publish-plan-{ts}/` and `.scratch/.publish-plans/` directories inside the server-side bare repo; that job and its server-side endpoint + worker were removed in Phase 7.
 
@@ -192,10 +196,10 @@ This was a deliberate flip from the pre-F approach (manual `--git-dir`/`--work-t
 
 The path abstraction that unifies CLI and service is two parameters, exposed via `WorkspaceLayout` in `src/shared/layout.rs`:
 
-| Parameter  | CLI value            | Service value (currently unused)  |
-| ---------- | -------------------- | --------------------------------- |
-| `reposdir` | `.repos/`            | `.` (workbook dir)                |
-| `loculdir` | `.` (workspace root) | `.temp/`                          |
+| Parameter  | CLI value            | Service value (currently unused) |
+| ---------- | -------------------- | -------------------------------- |
+| `reposdir` | `.repos/`            | `.` (workbook dir)               |
+| `loculdir` | `.` (workspace root) | `.temp/`                         |
 
 Derived paths (same formula on both sides):
 

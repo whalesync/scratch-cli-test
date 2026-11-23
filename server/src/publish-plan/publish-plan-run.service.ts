@@ -14,6 +14,7 @@ import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { assertUnreachable } from 'src/utils/asserts';
 import { ParsedContent } from 'src/utils/objects';
+import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import type { TableSpecStore } from 'src/workbook/table-spec-store/table-spec-store';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
 import { DbService } from '../db/db.service';
@@ -146,6 +147,7 @@ export class PublishPlanRunService {
     private readonly recreatedIdMapService: RecreatedIdMapService,
     private readonly refCleanerService: RefCleanerService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
+    dataFolderTableSpecStore: DataFolderTableSpecStoreService,
   ) {
     this.classicPublishPlanRunStorage = new ClassicPublishPlanRunStorage(
       db,
@@ -153,6 +155,7 @@ export class PublishPlanRunService {
       fileIndexService,
       fileReferenceService,
       refResolverService,
+      dataFolderTableSpecStore,
     );
   }
 

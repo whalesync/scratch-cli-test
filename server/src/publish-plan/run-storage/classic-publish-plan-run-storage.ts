@@ -10,7 +10,6 @@
 import { formatRecordJson, type PublishOrigin } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { ParsedContent } from 'src/utils/objects';
-import { GitTableSpecStore } from 'src/workbook/table-spec-store/git-table-spec-store';
 import type { TableSpecStore } from 'src/workbook/table-spec-store/table-spec-store';
 import { DbService } from '../../db/db.service';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
@@ -36,9 +35,6 @@ import {
 } from './publish-plan-run-storage-ports';
 
 export class ClassicPublishPlanRunStorage implements PublishPlanRunStorage {
-  /** Table specs from the connection's git repo. */
-  readonly tableSpecStore: TableSpecStore;
-
   constructor(
     private readonly db: DbService,
     private readonly scratchGitService: ScratchGitService,
@@ -46,9 +42,9 @@ export class ClassicPublishPlanRunStorage implements PublishPlanRunStorage {
     private readonly fileReferenceService: FileReferenceService,
     /** `@/…` refs resolved through the Postgres FileIndex (and `@asset/…` through Asset). */
     readonly pseudoRefResolver: PublishPseudoRefResolver,
-  ) {
-    this.tableSpecStore = new GitTableSpecStore(scratchGitService);
-  }
+    /** Each folder's stored table spec (`DataFolderTableSpecStoreService`, DEV-12616). */
+    readonly tableSpecStore: TableSpecStore,
+  ) {}
 
   openPlanStore(planId: string): PlanStore {
     return new PostgresPublishPlanStore(this.db, planId);

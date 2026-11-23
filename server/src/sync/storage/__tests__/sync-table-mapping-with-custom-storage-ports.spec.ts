@@ -7,6 +7,7 @@ import { ScheduleService } from 'src/schedule/schedule.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import type { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { SyncService } from '../../sync.service';
@@ -229,6 +230,7 @@ function buildSyncServiceOverInMemoryStoragePorts(params: {
     {} as ScratchGitService,
     {} as WorkbookRepoService,
     {} as WorkbookService,
+    {} as DataFolderTableSpecStoreService,
   );
   return { syncService, storagePorts, matchIndex, outputSink };
 }

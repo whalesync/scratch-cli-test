@@ -19,6 +19,10 @@ import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.ser
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import {
+  createIntegrationTestDataFolderTableSpecStore,
+  createTableSpecStoreReadingMockedGitByFolderPath,
+} from './data-folder-table-spec-store-test-helper';
 import { createIntegrationTestDbService } from './integration-db-service';
 import { createReadRepoFilesByFolderMock } from './sync-test-helpers';
 
@@ -61,6 +65,8 @@ describe('SyncService - fillSyncCaches', () => {
 
     // Create SyncService instance (workbookService not needed for these tests)
     const scheduleService = { create: jest.fn(), update: jest.fn(), delete: jest.fn() } as unknown as ScheduleService;
+    // Real Postgres-backed table spec store; reads go through this block's mocked git service.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({ prisma, scratchGitService });
     syncService = new SyncService(
       dbService,
       dataFolderService,
@@ -69,6 +75,7 @@ describe('SyncService - fillSyncCaches', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      dataFolderTableSpecStore,
     );
 
     // Create test organization
@@ -480,6 +487,8 @@ describe('SyncService - syncTableMapping', () => {
     } as unknown as ScratchGitService;
 
     const scheduleService = { create: jest.fn(), update: jest.fn(), delete: jest.fn() } as unknown as ScheduleService;
+    // These fixture folders have no connection, so read each folder's spec from the mocked readSchemaFromGit by path.
+    const dataFolderTableSpecStore = createTableSpecStoreReadingMockedGitByFolderPath(scratchGitService);
     syncService = new SyncService(
       dbService,
       dataFolderService,
@@ -488,6 +497,7 @@ describe('SyncService - syncTableMapping', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      dataFolderTableSpecStore,
     );
 
     // Create test organization
@@ -2163,6 +2173,8 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
     } as unknown as ScratchGitService;
 
     const scheduleService = { create: jest.fn(), update: jest.fn(), delete: jest.fn() } as unknown as ScheduleService;
+    // Real Postgres-backed table spec store; reads go through this block's mocked git service.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({ prisma, scratchGitService });
     syncService = new SyncService(
       dbService,
       dataFolderService,
@@ -2171,6 +2183,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      dataFolderTableSpecStore,
     );
 
     // Create test organization
@@ -3043,6 +3056,8 @@ describe('SyncService - lookup_field transformer', () => {
     } as unknown as ScratchGitService;
 
     const scheduleService = { create: jest.fn(), update: jest.fn(), delete: jest.fn() } as unknown as ScheduleService;
+    // Real Postgres-backed table spec store; reads go through this block's mocked git service.
+    const dataFolderTableSpecStore = createIntegrationTestDataFolderTableSpecStore({ prisma, scratchGitService });
     syncService = new SyncService(
       dbService,
       dataFolderService,
@@ -3051,6 +3066,7 @@ describe('SyncService - lookup_field transformer', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      dataFolderTableSpecStore,
     );
 
     // Create test organization

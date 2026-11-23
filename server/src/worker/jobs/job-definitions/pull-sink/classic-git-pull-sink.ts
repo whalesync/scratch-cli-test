@@ -14,6 +14,7 @@ import {
 import { ScratchGitConflictError, ScratchGitNotFoundError } from '../../../../scratch-git/scratch-git.client';
 import { MAIN_BRANCH, type ScratchGitService } from '../../../../scratch-git/scratch-git.service';
 import type { JsonSafeObject } from '../../../../utils/objects';
+import type { DataFolderTableSpecStoreService } from '../../../../workbook/table-spec-store/data-folder-table-spec-store.service';
 import type { TableSpecLocation } from '../../../../workbook/table-spec-store/table-spec-store';
 import type { WorkbookEventService } from '../../../../workbook/workbook-event.service';
 import { JobCanceledError } from '../../../job-errors';
@@ -59,6 +60,8 @@ export class ClassicGitPullSink implements PullSink {
     private readonly services: {
       prisma: PrismaClient;
       scratchGitService: ScratchGitService;
+      /** Each folder's stored table spec and default view (DEV-12616: Postgres, mirrored to git). */
+      dataFolderTableSpecStore: DataFolderTableSpecStoreService;
       fileIndexService: FileIndexService;
       fileReferenceService: FileReferenceService;
       assetExtractorService: AssetExtractorService;
@@ -101,14 +104,25 @@ export class ClassicGitPullSink implements PullSink {
     this.connectionRepoIdIfPrepared = repoId;
   }
 
-  /** Writes the refreshed schema to git. */
+  /**
+   * Stores the refreshed schema (Postgres, then the awaited git mirror the CLI and the index build at the end of
+   * this pull read). A database error fails the folder: Postgres is the source of truth.
+   */
   async storeFolderTableSpec(location: TableSpecLocation, tableSpec: BaseJsonTableSpec): Promise<void> {
-    await this.services.scratchGitService.writeSchemaToGit(this.repoId, location.folderPath, tableSpec);
+    await this.services.dataFolderTableSpecStore.writeTableSpec(
+      { ...location, connectorAccountId: this.pullRunContext.connectorAccountId },
+      tableSpec,
+      'pull',
+    );
   }
 
-  /** Writes the default view to git. */
+  /** Stores the default view (Postgres, then the awaited git mirror). */
   async storeFolderDefaultView(location: TableSpecLocation, defaultView: TableView): Promise<void> {
-    await this.services.scratchGitService.writeViewToGit(this.repoId, location.folderPath, 'default', defaultView);
+    await this.services.dataFolderTableSpecStore.writeDefaultView(
+      { ...location, connectorAccountId: this.pullRunContext.connectorAccountId },
+      defaultView,
+      'pull',
+    );
   }
 
   async prepareFolderForIncomingRecordPages(folder: PullSinkFolder): Promise<void> {
