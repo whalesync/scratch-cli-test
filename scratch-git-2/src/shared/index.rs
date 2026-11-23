@@ -834,9 +834,109 @@ pub fn read_references(db_path: &Path) -> anyhow::Result<Vec<ReferenceRow>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{conn_scratch_dir, db_path, extract_id_path, scratch_dir};
+    use super::{conn_scratch_dir, db_path, extract_id_path, scratch_dir, SchemaMaps};
+    use crate::shared::json_path::DEFAULT_ID_PATH;
     use serde_json::json;
     use tempfile::TempDir;
+
+    /// `(field_path, target_table_id)` pairs recorded for a folder, sorted for stable asserts.
+    fn fk_field_paths_and_targets_for_folder(
+        schema_maps: &SchemaMaps,
+        folder: &str,
+    ) -> Option<Vec<(String, String)>> {
+        schema_maps.fk_map.get(folder).map(|fk_fields| {
+            let mut field_paths_and_targets: Vec<(String, String)> = fk_fields
+                .iter()
+                .map(|fk| (fk.field_path.clone(), fk.target_table_id.clone()))
+                .collect();
+            field_paths_and_targets.sort();
+            field_paths_and_targets
+        })
+    }
+
+    #[test]
+    fn record_schema_records_nested_fk_fields_and_id_path_from_schema_wrapper() {
+        let mut schema_maps = SchemaMaps::default();
+        schema_maps.record_schema(
+            "Webflow/Blog Posts".to_string(),
+            &json!({
+                "idPath": "id.record_id",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "author": { "x-scratch-foreign-key": { "linkedTableId": "people" } },
+                        "fields": {
+                            "type": "object",
+                            "properties": {
+                                "tags": { "x-scratch-foreign-key": { "linkedTableId": "tags" } },
+                                "title": { "type": "string" }
+                            }
+                        }
+                    }
+                }
+            }),
+        );
+        assert_eq!(schema_maps.id_path("Webflow/Blog Posts"), "id.record_id");
+        assert_eq!(
+            fk_field_paths_and_targets_for_folder(&schema_maps, "Webflow/Blog Posts"),
+            Some(vec![
+                ("author".to_string(), "people".to_string()),
+                ("fields.tags".to_string(), "tags".to_string()),
+            ])
+        );
+        // Nothing leaks to the parent folder.
+        assert_eq!(schema_maps.id_path("Webflow"), DEFAULT_ID_PATH);
+        assert!(!schema_maps.fk_map.contains_key("Webflow"));
+    }
+
+    #[test]
+    fn record_schema_reads_properties_directly_without_schema_wrapper() {
+        let mut schema_maps = SchemaMaps::default();
+        schema_maps.record_schema(
+            "contacts".to_string(),
+            &json!({
+                "properties": {
+                    "company": { "x-scratch-foreign-key": { "linkedTableId": "companies" } }
+                }
+            }),
+        );
+        assert_eq!(
+            fk_field_paths_and_targets_for_folder(&schema_maps, "contacts"),
+            Some(vec![("company".to_string(), "companies".to_string())])
+        );
+        // No idPath declared → nothing recorded, so the default applies.
+        assert!(!schema_maps.id_path_map.contains_key("contacts"));
+        assert_eq!(schema_maps.id_path("contacts"), DEFAULT_ID_PATH);
+    }
+
+    #[test]
+    fn record_schema_without_fk_fields_records_no_fk_entry() {
+        let mut schema_maps = SchemaMaps::default();
+        schema_maps.record_schema(
+            "contacts".to_string(),
+            &json!({
+                "idPath": "uuid",
+                "schema": { "properties": { "name": { "type": "string" } } }
+            }),
+        );
+        assert!(!schema_maps.fk_map.contains_key("contacts"));
+        assert_eq!(schema_maps.id_path("contacts"), "uuid");
+
+        // Non-object specs are tolerated and record nothing.
+        schema_maps.record_schema("nulls".to_string(), &json!(null));
+        schema_maps.record_schema("strings".to_string(), &json!("not an object"));
+        assert!(!schema_maps.fk_map.contains_key("nulls"));
+        assert!(!schema_maps.fk_map.contains_key("strings"));
+        assert_eq!(schema_maps.id_path("nulls"), DEFAULT_ID_PATH);
+        assert_eq!(schema_maps.id_path("strings"), DEFAULT_ID_PATH);
+    }
+
+    #[test]
+    fn record_schema_falls_back_to_legacy_id_column_remote_id() {
+        let mut schema_maps = SchemaMaps::default();
+        schema_maps.record_schema("".to_string(), &json!({ "idColumnRemoteId": "legacy_id" }));
+        assert_eq!(schema_maps.id_path(""), "legacy_id");
+    }
 
     #[test]
     fn extract_id_path_reads_new_id_path_field() {

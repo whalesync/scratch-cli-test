@@ -1,0 +1,44 @@
+{
+  "tableSpecsByRepoRelativeFolderKey": {
+    "contacts": {
+      "id": {
+        "wsId": "contacts",
+        "remoteId": ["contacts"]
+      },
+      "slug": "contacts",
+      "name": "Contacts",
+      "idPath": "id.record_id",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "object",
+            "properties": {
+              "record_id": { "type": "string" }
+            }
+          },
+          "company": {
+            "type": "string",
+            "x-scratch-foreign-key": { "linkedTableId": "companies" }
+          }
+        }
+      }
+    },
+    "Webflow/Blog Posts": {
+      "id": {
+        "wsId": "blog-posts",
+        "remoteId": ["blog-posts"]
+      },
+      "slug": "blog-posts",
+      "name": "Blog Posts",
+      "idPath": "_id",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "name": { "type": "string" }
+        }
+      }
+    }
+  }
+}
