@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { ScratchConfigService } from '../scratch-config.service';
 
 /**
@@ -67,5 +68,34 @@ describe('ScratchConfigService.getCorsAllowedOrigins', () => {
     const { error, allowed } = invokeOriginCallbackWith('https://dusky.whalesync.com');
     expect(error).toBeNull();
     expect(allowed).toBe(true);
+  });
+});
+
+describe('ScratchConfigService table spec flags (DEV-12616)', () => {
+  function createScratchConfigServiceWithEnvironment(
+    environmentVariables: Record<string, string>,
+  ): ScratchConfigService {
+    // CI has no APP_ENV or .env, so pin the statics the constructor reads.
+    jest.spyOn(ScratchConfigService, 'getScratchEnvironment').mockReturnValue('test');
+    jest.spyOn(ScratchConfigService, 'getServiceTypes').mockReturnValue([]);
+    const configServiceReadingOnlyTheseVariables = {
+      get: (name: string) => ({ DATABASE_URL: 'postgresql://localhost/test', ...environmentVariables })[name],
+    } as unknown as ConfigService;
+    return new ScratchConfigService(configServiceReadingOnlyTheseVariables);
+  }
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('reads table specs from Postgres by default, and rolls back to git when TABLE_SPEC_POSTGRES_READS_ENABLED=false', () => {
+    expect(createScratchConfigServiceWithEnvironment({}).isTableSpecPostgresReadsEnabled()).toBe(true);
+    expect(
+      createScratchConfigServiceWithEnvironment({
+        TABLE_SPEC_POSTGRES_READS_ENABLED: 'false',
+      }).isTableSpecPostgresReadsEnabled(),
+    ).toBe(false);
+  });
+
+  it('mirrors writes to git by default', () => {
+    expect(createScratchConfigServiceWithEnvironment({}).isTableSpecGitMirrorEnabled()).toBe(true);
   });
 });

@@ -8,7 +8,8 @@ import { createIntegrationTestDbService } from './integration-db-service';
 /**
  * A real `DataFolderTableSpecStoreService` (DEV-12616) for integration tests: real Postgres through the test's own
  * `PrismaClient`, the test's (usually mocked) `ScratchGitService` as the git fallback and mirror, and the two
- * rollout flags set explicitly. Defaults match production today: reads from git, writes mirrored to git.
+ * rollout flags set explicitly. Defaults match production: reads from Postgres (falling back to git for a folder
+ * with no row), writes mirrored to git.
  */
 export function createIntegrationTestDataFolderTableSpecStore(params: {
   prisma: PrismaClient;
@@ -16,7 +17,7 @@ export function createIntegrationTestDataFolderTableSpecStore(params: {
   postgresReadsEnabled?: boolean;
   gitMirrorEnabled?: boolean;
 }): DataFolderTableSpecStoreService {
-  const { prisma, scratchGitService, postgresReadsEnabled = false, gitMirrorEnabled = true } = params;
+  const { prisma, scratchGitService, postgresReadsEnabled = true, gitMirrorEnabled = true } = params;
   const scratchConfigServiceWithTableSpecFlags = {
     isTableSpecPostgresReadsEnabled: () => postgresReadsEnabled,
     isTableSpecGitMirrorEnabled: () => gitMirrorEnabled,

@@ -171,15 +171,15 @@ export class ScratchConfigService {
 
   /**
    * DEV-12616: whether table specs and default views are READ from Postgres (`DataFolderTableSpec`, falling
-   * back to git when a folder has no row). Defaults to false: writes go to both Postgres and git, reads stay on
-   * git until (1) every api/worker/cron revision dual-writes, (2) the `data-folder-table-spec-git-import` code
-   * migration has drained, and (3) the read-only `data-folder-table-spec-git-divergence-report` finds no folder
-   * whose row differs from git (Refresh Schema any it lists). Re-run the report after any code rollback past
-   * DEV-12616: specs pulled while rolled back land in git only. Rolling back reads is flipping this off; the git
-   * mirror keeps git current.
+   * back to git when a folder has no row). Defaults to true. It was switched on once (1) every api/worker/cron
+   * revision dual-wrote, (2) the `data-folder-table-spec-git-import` code migration had drained in production,
+   * and (3) the read-only `data-folder-table-spec-git-divergence-report` found no folder whose row differs from
+   * git. To roll reads back to git, set TABLE_SPEC_POSTGRES_READS_ENABLED=false: the git mirror keeps git current.
+   * After any code rollback past DEV-12616, re-run the divergence report before turning reads back on, because
+   * specs pulled while rolled back land in git only.
    */
   isTableSpecPostgresReadsEnabled(): boolean {
-    return this.getOptionalFlagVariable('TABLE_SPEC_POSTGRES_READS_ENABLED', false);
+    return this.getOptionalFlagVariable('TABLE_SPEC_POSTGRES_READS_ENABLED', true);
   }
 
   getRedisHost(): string {

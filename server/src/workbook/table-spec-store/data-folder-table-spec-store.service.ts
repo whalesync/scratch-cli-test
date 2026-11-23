@@ -88,11 +88,11 @@ const DEFAULT_VIEW_NAME = 'default';
  *   commit could race the pull's `git gc` (DEV-11266). The mirror always writes the STORED bytes, re-read just
  *   before writing, so concurrent writers and writes from revisions that predate this table converge on the
  *   database on the next write.
- * - **Reads** come from Postgres only when TABLE_SPEC_POSTGRES_READS_ENABLED is on; until then they read the git
- *   copy exactly as before, so a rollout with a mixed fleet (an old worker writing git only) can't serve a stale
- *   row. With Postgres reads on, a folder with no row (or a row with no view) falls back to the git copy,
- *   read-only, and counts {@link CustomMetric.DATA_FOLDER_TABLE_SPEC_READ_FELL_BACK_TO_GIT}. Only the
- *   `data-folder-table-spec-git-import` code migration inserts rows from git
+ * - **Reads** come from Postgres while TABLE_SPEC_POSTGRES_READS_ENABLED is on (the default); setting it to false
+ *   rolls reads back to the git copy, which the mirror keeps current. A folder with no row falls back to the git
+ *   copy, read-only, and counts {@link CustomMetric.DATA_FOLDER_TABLE_SPEC_READ_FELL_BACK_TO_GIT}; a row with no
+ *   default view also falls back to git for the view, without counting (connectors that build no view leave it
+ *   null). Only the `data-folder-table-spec-git-import` code migration inserts rows from git
  *   ({@link importTableSpecFromGitIfAbsent}).
  *
  * The Live Export run store has its own store (`RunStoreTableSpecStore`) and never reaches this one.
