@@ -42,6 +42,54 @@ export class ScratchGitConflictError extends Error {
   }
 }
 
+/** scratch-git answered HTTP 400: it rejected the request (for the index build, its body). */
+export class ScratchGitBadRequestError extends Error {
+  constructor(
+    public readonly endpoint: string,
+    public readonly responseBody: string,
+  ) {
+    super(`Received error code from scratch-git API: ${endpoint}: HTTP 400`);
+    this.name = 'ScratchGitBadRequestError';
+  }
+}
+
+/** scratch-git (or the nginx in front of it) answered HTTP 413: the request body was too large. */
+export class ScratchGitRequestEntityTooLargeError extends Error {
+  constructor(public readonly endpoint: string) {
+    super(`scratch-git 413: ${endpoint}`);
+    this.name = 'ScratchGitRequestEntityTooLargeError';
+  }
+}
+
+/**
+ * The largest index-build request body the client sends (DEV-12616). Stays under the 50 MB request limits of both
+ * scratch-git's nginx (`client_max_body_size 50m`, terraform/modules/scratch_git_gce/scripts/startup.sh) and its
+ * axum router (`DefaultBodyLimit`, scratch-git-2/src/service/mod.rs).
+ */
+export const MAXIMUM_SCRATCH_GIT_INDEX_BUILD_REQUEST_BODY_BYTES = 40 * 1024 * 1024;
+
+/** The index-build body would exceed {@link MAXIMUM_SCRATCH_GIT_INDEX_BUILD_REQUEST_BODY_BYTES}; nothing was sent. */
+export class ScratchGitIndexBuildRequestBodyTooLargeError extends Error {
+  constructor(public readonly requestBodyBytes: number) {
+    super(
+      `The index-build request body is ${requestBodyBytes} bytes, over the ${MAXIMUM_SCRATCH_GIT_INDEX_BUILD_REQUEST_BODY_BYTES}-byte limit`,
+    );
+    this.name = 'ScratchGitIndexBuildRequestBodyTooLargeError';
+  }
+}
+
+/**
+ * scratch-git's answer to POST /api/repo/index/{id}/build. The two table-spec counts come from services that accept
+ * a request body (DEV-12616 MR2a); an older service returns only `count`.
+ */
+export interface BuildRepoIndexResult {
+  count: number;
+  /** Folders whose table spec came from the request body. */
+  tableSpecFolderCountFromRequestBody?: number;
+  /** Folders whose table spec the service read from `.scratch/<folder>/schema.json` on `main` instead. */
+  tableSpecFolderCountReadFromGit?: number;
+}
+
 export interface RepoFileRef {
   name: string;
   path: string;
@@ -91,7 +139,12 @@ export class ScratchGitClient {
     return repoId.split('/').map(encodeURIComponent).join('%2F');
   }
 
-  private async callGitApi(endpoint: string, method: string, body?: Record<string, unknown>): Promise<unknown> {
+  /** `body` is JSON-serialized, or sent as-is when it is already a serialized string. */
+  private async callGitApi(
+    endpoint: string,
+    method: string,
+    body?: Record<string, unknown> | string,
+  ): Promise<unknown> {
     const url = `${this.gitApiUrl}${endpoint}`;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.authToken) {
@@ -103,7 +156,7 @@ export class ScratchGitClient {
     };
 
     if (body) {
-      options.body = JSON.stringify(body);
+      options.body = typeof body === 'string' ? body : JSON.stringify(body);
     }
 
     const startMs = Date.now();
@@ -140,7 +193,12 @@ export class ScratchGitClient {
         throw new ScratchGitConflictError(endpoint, responseBody);
       }
 
-      const error = new Error(`Received error code from scratch-git API: ${endpoint}: HTTP ${response.status}`);
+      const error =
+        response.status === 413
+          ? new ScratchGitRequestEntityTooLargeError(endpoint)
+          : response.status === 400
+            ? new ScratchGitBadRequestError(endpoint, responseBody)
+            : new Error(`Received error code from scratch-git API: ${endpoint}: HTTP ${response.status}`);
       WSLogger.error({
         source: 'ScratchGitClient.callGitApi',
         message: 'scratch-git returned error response',
@@ -581,8 +639,27 @@ export class ScratchGitClient {
     ) as Promise<StripPrefixResult>;
   }
 
-  async buildIndex(repoId: string): Promise<{ count: number }> {
-    return this.callGitApi(`/api/repo/index/${this.encodeRepoId(repoId)}/build`, 'POST') as Promise<{ count: number }>;
+  /**
+   * Rebuilds the repo's SQLite file index from `main`. With `tableSpecsByRepoRelativeFolderKey` (DEV-12616), those
+   * folders' table specs come from the body instead of `.scratch/<folder>/schema.json` in git; every other folder still
+   * reads git. Keys are `DataFolder.path` without its leading slash (`""` is the repo root). Throws
+   * {@link ScratchGitIndexBuildRequestBodyTooLargeError}, sending nothing, when the body would exceed
+   * {@link MAXIMUM_SCRATCH_GIT_INDEX_BUILD_REQUEST_BODY_BYTES}.
+   */
+  async buildIndex(
+    repoId: string,
+    tableSpecsByRepoRelativeFolderKey?: Readonly<Record<string, Record<string, unknown>>>,
+  ): Promise<BuildRepoIndexResult> {
+    const endpoint = `/api/repo/index/${this.encodeRepoId(repoId)}/build`;
+    if (tableSpecsByRepoRelativeFolderKey === undefined) {
+      return this.callGitApi(endpoint, 'POST') as Promise<BuildRepoIndexResult>;
+    }
+    const serializedRequestBody = JSON.stringify({ tableSpecsByRepoRelativeFolderKey });
+    const serializedRequestBodyBytes = Buffer.byteLength(serializedRequestBody, 'utf8');
+    if (serializedRequestBodyBytes > MAXIMUM_SCRATCH_GIT_INDEX_BUILD_REQUEST_BODY_BYTES) {
+      throw new ScratchGitIndexBuildRequestBodyTooLargeError(serializedRequestBodyBytes);
+    }
+    return this.callGitApi(endpoint, 'POST', serializedRequestBody) as Promise<BuildRepoIndexResult>;
   }
 
   async dumpIndex(repoId: string): Promise<GitIndexDump> {

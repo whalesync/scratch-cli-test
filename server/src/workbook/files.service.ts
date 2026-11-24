@@ -15,6 +15,7 @@ import { SchemaHelperService } from '../publish-plan/schema-helper.service';
 import {
   DIRTY_BRANCH,
   MAIN_BRANCH,
+  repoRelativeFolderKeyForFolderPath,
   ScratchGitService,
   workingBranchForConnector,
 } from '../scratch-git/scratch-git.service';
@@ -426,7 +427,7 @@ export class FilesService {
       }
 
       // Resolve via SQLite index in the Rust git service (no PostgreSQL FileIndex needed)
-      const targetFolderForIndex = targetFolder.path.replace(/^\//, '');
+      const targetFolderForIndex = repoRelativeFolderKeyForFolderPath(targetFolder.path);
       const targetRepoId = await this.scratchGitService.resolveRepoPathForFolder(
         targetFolder.connectorAccountId,
         workbookId,

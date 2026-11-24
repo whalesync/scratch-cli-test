@@ -2,9 +2,15 @@ import { Prisma } from '@prisma/client';
 import { formatRecordJson, type TableView } from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
+import { WSLogger } from 'src/logger';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { dotPath, type BaseJsonTableSpec } from 'src/remote-service/connectors/types';
+import {
+  ScratchGitBadRequestError,
+  ScratchGitIndexBuildRequestBodyTooLargeError,
+  ScratchGitRequestEntityTooLargeError,
+} from 'src/scratch-git/scratch-git.client';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { DataFolderTableSpecStoreService } from '../data-folder-table-spec-store.service';
 
@@ -52,7 +58,9 @@ describe('DataFolderTableSpecStoreService', () => {
     readSchemaFileContentFromGitOrThrow: jest.Mock;
     readViewFileContentFromGitOrThrow: jest.Mock;
     parseSchemaFileContentFromGit: jest.Mock;
+    buildIndex: jest.Mock;
   };
+  let dataFolderDelegate: { findMany: jest.Mock };
   let postgresReadsEnabled: boolean;
   let gitMirrorEnabled: boolean;
   let metricsService: { logValue: jest.Mock };
@@ -76,12 +84,16 @@ describe('DataFolderTableSpecStoreService', () => {
       parseSchemaFileContentFromGit: jest.fn((_repoId: string, _folderPath: string, content: string): unknown =>
         JSON.parse(content),
       ),
+      buildIndex: jest.fn().mockResolvedValue({ count: 0 }),
     };
+    dataFolderDelegate = { findMany: jest.fn().mockResolvedValue([]) };
     postgresReadsEnabled = false;
     gitMirrorEnabled = true;
     metricsService = { logValue: jest.fn() };
     store = new DataFolderTableSpecStoreService(
-      { client: { dataFolderTableSpec: dataFolderTableSpecDelegate } } as unknown as DbService,
+      {
+        client: { dataFolderTableSpec: dataFolderTableSpecDelegate, dataFolder: dataFolderDelegate },
+      } as unknown as DbService,
       scratchGitService as unknown as ScratchGitService,
       {
         isTableSpecPostgresReadsEnabled: () => postgresReadsEnabled,
@@ -462,6 +474,214 @@ describe('DataFolderTableSpecStoreService', () => {
       expect(dataFolderTableSpecDelegate.createMany).not.toHaveBeenCalled();
       expect(scratchGitService.writeSchemaToGit).not.toHaveBeenCalled();
       expect(scratchGitService.writeViewToGit).not.toHaveBeenCalled();
+    });
+  });
+  describe('rebuildConnectionRepoIndexWithStoredTableSpecs', () => {
+    const contactsTableSpec = buildTableSpec({ idPath: dotPath('id.record_id') });
+    const postsTableSpec = buildTableSpec({ name: 'Posts' });
+
+    function linkedFolder(
+      dataFolderId: string,
+      path: string,
+      storedTableSpec: BaseJsonTableSpec | string | null,
+      updatedAt = new Date('2026-11-20T00:00:00Z'),
+    ) {
+      return {
+        id: dataFolderId,
+        path,
+        storedTableSpecRow:
+          storedTableSpec === null
+            ? null
+            : {
+                tableSpecContent:
+                  typeof storedTableSpec === 'string' ? storedTableSpec : formatRecordJson(storedTableSpec),
+                updatedAt,
+              },
+      };
+    }
+
+    it('sends no table specs while Postgres reads are off, so scratch-git reads git as before', async () => {
+      await expect(
+        store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID),
+      ).resolves.toEqual({ count: 0 });
+      expect(scratchGitService.buildIndex).toHaveBeenCalledWith(REPO_ID);
+      expect(dataFolderDelegate.findMany).not.toHaveBeenCalled();
+      expect(metricsService.logValue).not.toHaveBeenCalled();
+    });
+
+    it('sends each stored spec keyed by the folder path without its leading slash, leaving out folders with no row', async () => {
+      postgresReadsEnabled = true;
+      dataFolderDelegate.findMany.mockResolvedValue([
+        linkedFolder('dfd_contacts', '/Attio/Contacts', contactsTableSpec),
+        linkedFolder('dfd_posts', '/Webflow/Blog Posts', postsTableSpec),
+        linkedFolder('dfd_never_pulled', '/Attio/Deals', null),
+      ]);
+      scratchGitService.buildIndex.mockResolvedValue({
+        count: 12,
+        tableSpecFolderCountFromRequestBody: 2,
+        tableSpecFolderCountReadFromGit: 0,
+      });
+
+      await expect(
+        store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID),
+      ).resolves.toEqual({ count: 12 });
+      expect(dataFolderDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { connectorAccountId: CONNECTOR_ACCOUNT_ID, path: { not: null } } }),
+      );
+      expect(scratchGitService.buildIndex).toHaveBeenCalledWith(REPO_ID, {
+        'Attio/Contacts': contactsTableSpec,
+        'Webflow/Blog Posts': postsTableSpec,
+      });
+      expect(metricsService.logValue).not.toHaveBeenCalled();
+    });
+
+    it('leaves out a row that is not a JSON object and a path that cannot be a key', async () => {
+      postgresReadsEnabled = true;
+      dataFolderDelegate.findMany.mockResolvedValue([
+        linkedFolder('dfd_broken', '/Base/Broken', '[1, 2]'),
+        linkedFolder('dfd_trailing_slash', '/Base/Trailing/', postsTableSpec),
+        linkedFolder('dfd_contacts', '/Base/Contacts', contactsTableSpec),
+      ]);
+
+      await store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID);
+
+      expect(scratchGitService.buildIndex).toHaveBeenCalledWith(REPO_ID, { 'Base/Contacts': contactsTableSpec });
+    });
+
+    it('leaves out a stored spec holding a lone UTF-16 surrogate, which scratch-git cannot parse', async () => {
+      postgresReadsEnabled = true;
+      // As stored by formatRecordJson: the lone high surrogate is written as the ASCII escape \\ud83d.
+      const specWithLoneSurrogate = formatRecordJson(buildTableSpec({ name: 'Broken \ud83d emoji' }));
+      const validEmojiPairTableSpec = buildTableSpec({ name: 'Fine \ud83d\ude00 emoji' });
+      expect(specWithLoneSurrogate).toContain('\\ud83d');
+      dataFolderDelegate.findMany.mockResolvedValue([
+        linkedFolder('dfd_broken', '/Base/Broken', specWithLoneSurrogate),
+        linkedFolder('dfd_emoji_ok', '/Base/Emoji', validEmojiPairTableSpec),
+        linkedFolder('dfd_contacts', '/Base/Contacts', contactsTableSpec),
+      ]);
+
+      await store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID);
+
+      // Exactly these two keys: the folder holding the lone surrogate is left out; a valid emoji pair is kept.
+      expect(scratchGitService.buildIndex).toHaveBeenCalledWith(REPO_ID, {
+        'Base/Contacts': contactsTableSpec,
+        'Base/Emoji': validEmojiPairTableSpec,
+      });
+    });
+
+    it('uses the most recently updated row when two folders share a path', async () => {
+      postgresReadsEnabled = true;
+      dataFolderDelegate.findMany.mockResolvedValue([
+        linkedFolder('dfd_newer', '/Base/Contacts', contactsTableSpec, new Date('2026-11-22T00:00:00Z')),
+        linkedFolder('dfd_older', '/Base/Contacts', postsTableSpec, new Date('2026-11-01T00:00:00Z')),
+      ]);
+
+      await store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID);
+
+      expect(scratchGitService.buildIndex).toHaveBeenCalledWith(REPO_ID, { 'Base/Contacts': contactsTableSpec });
+    });
+
+    it.each([
+      ['the body is over the client limit', new ScratchGitIndexBuildRequestBodyTooLargeError(50_000_000)],
+      ['scratch-git answers 413', new ScratchGitRequestEntityTooLargeError('/api/repo/index/x/build')],
+    ])('retries without table specs and counts it when %s', async (_description, tooLargeError) => {
+      postgresReadsEnabled = true;
+      dataFolderDelegate.findMany.mockResolvedValue([
+        linkedFolder('dfd_contacts', '/Base/Contacts', contactsTableSpec),
+      ]);
+      scratchGitService.buildIndex.mockRejectedValueOnce(tooLargeError).mockResolvedValueOnce({ count: 4 });
+
+      await expect(
+        store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID),
+      ).resolves.toEqual({ count: 4 });
+      expect(scratchGitService.buildIndex).toHaveBeenLastCalledWith(REPO_ID);
+      expect(metricsService.logValue).toHaveBeenCalledWith(
+        CustomMetric.SCRATCH_GIT_INDEX_BUILD_TABLE_SPECS_NOT_SENT,
+        1,
+      );
+    });
+
+    it('retries without table specs, counts it, and logs an error when scratch-git rejects the body (400)', async () => {
+      postgresReadsEnabled = true;
+      dataFolderDelegate.findMany.mockResolvedValue([
+        linkedFolder('dfd_contacts', '/Base/Contacts', contactsTableSpec),
+      ]);
+      scratchGitService.buildIndex
+        .mockRejectedValueOnce(new ScratchGitBadRequestError('/api/repo/index/x/build', 'invalid table spec'))
+        .mockResolvedValueOnce({ count: 5 });
+      const errorLogSpy = jest.spyOn(WSLogger, 'error').mockImplementation(() => undefined);
+
+      await expect(
+        store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID),
+      ).resolves.toEqual({ count: 5 });
+      expect(scratchGitService.buildIndex).toHaveBeenLastCalledWith(REPO_ID);
+      expect(metricsService.logValue).toHaveBeenCalledWith(
+        CustomMetric.SCRATCH_GIT_INDEX_BUILD_TABLE_SPECS_NOT_SENT,
+        1,
+      );
+      expect(errorLogSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('builds without table specs and counts it when the stored specs cannot be read', async () => {
+      postgresReadsEnabled = true;
+      dataFolderDelegate.findMany.mockRejectedValue(new Error('connection lost'));
+
+      await store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID);
+
+      expect(scratchGitService.buildIndex).toHaveBeenCalledWith(REPO_ID);
+      expect(metricsService.logValue).toHaveBeenCalledWith(
+        CustomMetric.SCRATCH_GIT_INDEX_BUILD_TABLE_SPECS_NOT_SENT,
+        1,
+      );
+    });
+
+    it('propagates any other scratch-git failure without retrying', async () => {
+      postgresReadsEnabled = true;
+      dataFolderDelegate.findMany.mockResolvedValue([
+        linkedFolder('dfd_contacts', '/Base/Contacts', contactsTableSpec),
+      ]);
+      scratchGitService.buildIndex.mockRejectedValue(new Error('HTTP 500'));
+
+      await expect(store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID)).rejects.toThrow(
+        'HTTP 500',
+      );
+      expect(scratchGitService.buildIndex).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts the folders scratch-git still read from git, and logs a count mismatch as contract drift', async () => {
+      postgresReadsEnabled = true;
+      dataFolderDelegate.findMany.mockResolvedValue([
+        linkedFolder('dfd_contacts', '/Base/Contacts', contactsTableSpec),
+      ]);
+      scratchGitService.buildIndex.mockResolvedValue({
+        count: 9,
+        tableSpecFolderCountFromRequestBody: 0,
+        tableSpecFolderCountReadFromGit: 3,
+      });
+      const errorLogSpy = jest.spyOn(WSLogger, 'error').mockImplementation(() => undefined);
+
+      await store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID);
+
+      expect(metricsService.logValue).toHaveBeenCalledWith(
+        CustomMetric.SCRATCH_GIT_INDEX_BUILD_READ_TABLE_SPEC_FROM_GIT,
+        3,
+      );
+      expect(errorLogSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ sentTableSpecFolderCount: 1, tableSpecFolderCountFromRequestBody: 0 }),
+      );
+    });
+
+    it('counts nothing when an older scratch-git ignores the body (no table-spec counts in its answer)', async () => {
+      postgresReadsEnabled = true;
+      dataFolderDelegate.findMany.mockResolvedValue([
+        linkedFolder('dfd_contacts', '/Base/Contacts', contactsTableSpec),
+      ]);
+      scratchGitService.buildIndex.mockResolvedValue({ count: 9 });
+
+      await expect(
+        store.rebuildConnectionRepoIndexWithStoredTableSpecs(CONNECTOR_ACCOUNT_ID, REPO_ID),
+      ).resolves.toEqual({ count: 9 });
+      expect(metricsService.logValue).not.toHaveBeenCalled();
     });
   });
 });

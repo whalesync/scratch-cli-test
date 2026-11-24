@@ -201,6 +201,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       readDefaultView: jest.fn().mockResolvedValue(null),
       writeTableSpec: jest.fn().mockResolvedValue('created'),
       writeDefaultView: jest.fn().mockResolvedValue('updated'),
+      rebuildConnectionRepoIndexWithStoredTableSpecs: jest.fn().mockResolvedValue({ count: 0 }),
     } as unknown as jest.Mocked<DataFolderTableSpecStoreService>;
 
     handler = new PullLinkedFolderFilesJobHandler(
@@ -765,7 +766,13 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         // rebaseDirty and runGitGc should be called exactly once, not per folder
         expect(mockScratchGitService.rebaseDirty).toHaveBeenCalledTimes(1);
         expect(mockScratchGitService.runGitGc).toHaveBeenCalledTimes(1);
-        expect(mockScratchGitService.buildIndex).toHaveBeenCalledTimes(1);
+        // The index is rebuilt once, through the store, which sends the connection's stored table specs (DEV-12616)
+        expect(mockDataFolderTableSpecStore.rebuildConnectionRepoIndexWithStoredTableSpecs).toHaveBeenCalledTimes(1);
+        expect(mockDataFolderTableSpecStore.rebuildConnectionRepoIndexWithStoredTableSpecs).toHaveBeenCalledWith(
+          'coa_123',
+          expect.any(String),
+        );
+        expect(mockScratchGitService.buildIndex).not.toHaveBeenCalled();
       });
     });
 

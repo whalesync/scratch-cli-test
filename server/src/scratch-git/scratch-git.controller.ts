@@ -205,17 +205,8 @@ export class ScratchGitController {
     return this.scratchGitService.rebaseDirty(repoId);
   }
 
-  @Post(':id/index/build')
-  async buildIndex(
-    @Param('id') workbookId: WorkbookId,
-    @Query('connectorAccountId') connectorAccountId: string | undefined,
-    @Req() req: RequestWithUser,
-  ): Promise<{ count: number }> {
-    const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
-    const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
-    return this.scratchGitService.buildIndex(repoId);
-  }
+  // POST :id/index/build lives in ConnectionRepoIndexController (workbook/table-spec-store): it sends the folders'
+  // stored table specs, which this module can't reach without a module cycle (DEV-12616).
 
   @Get(':id/index/dump')
   async dumpIndex(

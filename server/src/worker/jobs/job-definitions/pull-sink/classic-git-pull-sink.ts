@@ -419,9 +419,13 @@ export class ClassicGitPullSink implements PullSink {
       }
     }
 
-    // Rebuild the index once after all folders are done
+    // Rebuild the index once after all folders are done, with the folders' stored table specs (DEV-12616) so its
+    // record ids and foreign keys don't depend on the git copies of the specs
     try {
-      await this.services.scratchGitService.buildIndex(repoId);
+      await this.services.dataFolderTableSpecStore.rebuildConnectionRepoIndexWithStoredTableSpecs(
+        this.pullRunContext.connectorAccountId,
+        repoId,
+      );
     } catch (err) {
       WSLogger.warn({
         source: LOG_SOURCE,

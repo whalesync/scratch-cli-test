@@ -13,7 +13,7 @@ import { isEqual } from 'lodash';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
-import { GitIndexDump, RepoFileRef, ScratchGitClient } from './scratch-git.client';
+import { BuildRepoIndexResult, GitIndexDump, RepoFileRef, ScratchGitClient } from './scratch-git.client';
 
 export type { RepoFileRef };
 
@@ -107,6 +107,15 @@ export function getScratchRepoPath(orgId: string, workbookId: WorkbookId): RepoI
  */
 export function workingBranchForConnector(connectorAccountId: string | null | undefined): string {
   return connectorAccountId ? DIRTY_BRANCH : MAIN_BRANCH;
+}
+
+/**
+ * A folder's path inside its connection repo: `DataFolder.path` without its single leading slash (`/` → `""`, the repo
+ * root). The git spec/view writers, the index-build body keys, and the index lookups all use this, so they can't drift
+ * apart. scratch-git derives the same key from `.scratch/<key>/schema.json`.
+ */
+export function repoRelativeFolderKeyForFolderPath(folderPath: string): string {
+  return folderPath.replace(/^\//, '');
 }
 
 /**
@@ -271,8 +280,16 @@ export class ScratchGitService {
     return this.scratchGitClient.getBranchHead(repoId, branch);
   }
 
-  async buildIndex(repoId: string): Promise<{ count: number }> {
-    return this.scratchGitClient.buildIndex(repoId);
+  /**
+   * Rebuilds the repo's file index. Pass the folders' stored table specs (keyed by
+   * {@link repoRelativeFolderKeyForFolderPath}) so the index doesn't depend on the git copies; folders left out are
+   * read from git. Callers go through `DataFolderTableSpecStoreService.rebuildConnectionRepoIndexWithStoredTableSpecs`.
+   */
+  async buildIndex(
+    repoId: string,
+    tableSpecsByRepoRelativeFolderKey?: Readonly<Record<string, Record<string, unknown>>>,
+  ): Promise<BuildRepoIndexResult> {
+    return this.scratchGitClient.buildIndex(repoId, tableSpecsByRepoRelativeFolderKey);
   }
 
   async dumpIndex(repoId: string): Promise<GitIndexDump> {
@@ -590,7 +607,7 @@ export class ScratchGitService {
    */
   async writeSchemaToGit(repoId: string, folderPath: string, schema: BaseJsonTableSpec): Promise<void> {
     try {
-      const normalizedFolder = folderPath.replace(/^\//, '');
+      const normalizedFolder = repoRelativeFolderKeyForFolderPath(folderPath);
       const newGitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
       // The default view is written separately (views/default.json) by the caller via
       // `connector.buildDefaultView(spec)`; it is never part of the spec, so schema.json
@@ -651,7 +668,7 @@ export class ScratchGitService {
    */
   async writeViewToGit(repoId: string, folderPath: string, viewName: string, view: TableView): Promise<void> {
     try {
-      const normalizedFolder = folderPath.replace(/^\//, '');
+      const normalizedFolder = repoRelativeFolderKeyForFolderPath(folderPath);
       const gitPath = `${SCRATCH_DIR}/${normalizedFolder}/views/${viewName}.json`;
       const file = { path: gitPath, content: formatRecordJson(view as unknown as Record<string, unknown>) };
       const message = `Update ${viewName} view for ${folderPath}`;
@@ -704,7 +721,7 @@ export class ScratchGitService {
    * from "git could not be read" — the DEV-12616 import must not treat a failed read as absence.
    */
   async readSchemaFileContentFromGitOrThrow(repoId: string, folderPath: string): Promise<string | null> {
-    const normalizedFolder = folderPath.replace(/^\//, '');
+    const normalizedFolder = repoRelativeFolderKeyForFolderPath(folderPath);
     const newGitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
     const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
     const file =
@@ -770,7 +787,7 @@ export class ScratchGitService {
     folderPath: string,
     viewName: string,
   ): Promise<string | null> {
-    const normalizedFolder = folderPath.replace(/^\//, '');
+    const normalizedFolder = repoRelativeFolderKeyForFolderPath(folderPath);
     const gitPath = `${SCRATCH_DIR}/${normalizedFolder}/views/${viewName}.json`;
     const file = await this.getRepoFile(repoId, MAIN_BRANCH, gitPath);
     return file ? file.content : null;

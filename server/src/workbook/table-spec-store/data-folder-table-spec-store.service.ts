@@ -8,7 +8,17 @@ import { WSLogger } from 'src/logger';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import type { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
-import { ScratchGitService, stripGeneratedAt } from 'src/scratch-git/scratch-git.service';
+import {
+  ScratchGitBadRequestError,
+  ScratchGitIndexBuildRequestBodyTooLargeError,
+  ScratchGitRequestEntityTooLargeError,
+  type BuildRepoIndexResult,
+} from 'src/scratch-git/scratch-git.client';
+import {
+  repoRelativeFolderKeyForFolderPath,
+  ScratchGitService,
+  stripGeneratedAt,
+} from 'src/scratch-git/scratch-git.service';
 import type { TableSpecLocation, TableSpecStore } from './table-spec-store';
 
 /** Who wrote a folder's row last. Stored in `DataFolderTableSpec.source`. */
@@ -72,6 +82,14 @@ type TableSpecAndDefaultViewReadFromGit =
   | { kind: 'invalid-table-spec-in-git'; reason: string }
   | { kind: 'connection-has-no-repo'; error: unknown }
   | { kind: 'git-read-failed'; error: unknown };
+
+/** A connection's stored table specs, keyed the way scratch-git's index build expects them. */
+export interface StoredTableSpecsForConnectionRepoIndexBuild {
+  /** `repoRelativeFolderKeyForFolderPath(DataFolder.path)` → that folder's stored table spec. */
+  tableSpecsByRepoRelativeFolderKey: Record<string, Record<string, unknown>>;
+  /** Linked folders with a path but no stored row: scratch-git reads these folders' specs from git. */
+  linkedFolderWithoutStoredRowCount: number;
+}
 
 /** The default view's file name under `.scratch/{folder}/views/`. Only the default view is ever stored. */
 const DEFAULT_VIEW_NAME = 'default';
@@ -394,6 +412,206 @@ export class DataFolderTableSpecStoreService implements TableSpecStore {
     return { kind: 'found', tableSpecFromGit: tableSpecFromGit as Record<string, unknown>, defaultViewFromGit };
   }
 
+  /**
+   * Every stored table spec for the connection's folders, keyed by repo-relative folder key, for scratch-git's index
+   * build (DEV-12616). Null while TABLE_SPEC_POSTGRES_READS_ENABLED is off: git is then the read path, so the index
+   * keeps reading specs from git too. A row that isn't a JSON object, or a folder path that can't be a key
+   * (scratch-git rejects a key starting or ending with `/`), is left out and logged, so scratch-git reads that folder
+   * from git. When two folders share a path, the most recently updated row wins (git, too, holds one spec per path).
+   */
+  async readStoredTableSpecsForConnectionRepoIndexBuild(
+    connectorAccountId: string,
+  ): Promise<StoredTableSpecsForConnectionRepoIndexBuild | null> {
+    if (!this.scratchConfigService.isTableSpecPostgresReadsEnabled()) return null;
+
+    const linkedFoldersWithStoredRows = await this.db.client.dataFolder.findMany({
+      where: { connectorAccountId, path: { not: null } },
+      select: {
+        id: true,
+        path: true,
+        storedTableSpecRow: { select: { tableSpecContent: true, updatedAt: true } },
+      },
+    });
+
+    const tableSpecsByRepoRelativeFolderKey: Record<string, Record<string, unknown>> = {};
+    const storedRowUpdatedAtByRepoRelativeFolderKey = new Map<string, { dataFolderId: string; updatedAt: Date }>();
+    let linkedFolderWithoutStoredRowCount = 0;
+
+    for (const { id: dataFolderId, path: folderPath, storedTableSpecRow } of linkedFoldersWithStoredRows) {
+      if (!folderPath) continue; // excluded by the where clause; narrows the type
+      if (!storedTableSpecRow) {
+        linkedFolderWithoutStoredRowCount++;
+        continue;
+      }
+      const repoRelativeFolderKey = repoRelativeFolderKeyForFolderPath(folderPath);
+      if (repoRelativeFolderKey.startsWith('/') || repoRelativeFolderKey.endsWith('/')) {
+        WSLogger.warn({
+          source: 'DataFolderTableSpecStoreService.readStoredTableSpecsForConnectionRepoIndexBuild',
+          message: 'The folder path cannot be an index-build key; scratch-git reads this folder from git',
+          dataFolderId,
+          folderPath,
+        });
+        continue;
+      }
+
+      let storedTableSpec: unknown;
+      try {
+        storedTableSpec = JSON.parse(storedTableSpecRow.tableSpecContent);
+      } catch {
+        storedTableSpec = undefined;
+      }
+      if (!isPlainObject(storedTableSpec)) {
+        WSLogger.error({
+          source: 'DataFolderTableSpecStoreService.readStoredTableSpecsForConnectionRepoIndexBuild',
+          message: 'The stored table spec is not a JSON object; scratch-git reads this folder from git',
+          dataFolderId,
+          folderPath,
+        });
+        continue;
+      }
+      // JavaScript keeps a lone UTF-16 surrogate (half an emoji pair cut by an external API) and re-serializes it as a
+      // `\ud83d` escape, but scratch-git's JSON parser rejects it, and would fail the whole build with a 400. Leave the
+      // folder out instead: scratch-git's git read skips such a spec, so the folder keeps today's behavior.
+      if (containsLoneUtf16Surrogate(storedTableSpec)) {
+        WSLogger.warn({
+          source: 'DataFolderTableSpecStoreService.readStoredTableSpecsForConnectionRepoIndexBuild',
+          message:
+            'The stored table spec holds a lone UTF-16 surrogate scratch-git cannot parse; it reads this folder from git',
+          dataFolderId,
+          folderPath,
+        });
+        continue;
+      }
+
+      const rowAlreadyChosenForThisKey = storedRowUpdatedAtByRepoRelativeFolderKey.get(repoRelativeFolderKey);
+      if (rowAlreadyChosenForThisKey) {
+        WSLogger.warn({
+          source: 'DataFolderTableSpecStoreService.readStoredTableSpecsForConnectionRepoIndexBuild',
+          message: 'Two folders in the connection share a path; indexing with the most recently updated table spec',
+          folderPath,
+          dataFolderIds: [rowAlreadyChosenForThisKey.dataFolderId, dataFolderId],
+        });
+        if (rowAlreadyChosenForThisKey.updatedAt >= storedTableSpecRow.updatedAt) continue;
+      }
+      tableSpecsByRepoRelativeFolderKey[repoRelativeFolderKey] = storedTableSpec as Record<string, unknown>;
+      storedRowUpdatedAtByRepoRelativeFolderKey.set(repoRelativeFolderKey, {
+        dataFolderId,
+        updatedAt: storedTableSpecRow.updatedAt,
+      });
+    }
+
+    return { tableSpecsByRepoRelativeFolderKey, linkedFolderWithoutStoredRowCount };
+  }
+
+  /**
+   * Rebuilds the connection repo's scratch-git file index with the stored table specs in the request (DEV-12616),
+   * so the index's record ids and foreign keys no longer depend on the `.scratch/<folder>/schema.json` git copies.
+   * Falls back to a build with no specs, where scratch-git reads every folder from git (correct while the git mirror
+   * is on), when the stored specs can't be read or the body is too large; both count
+   * {@link CustomMetric.SCRATCH_GIT_INDEX_BUILD_TABLE_SPECS_NOT_SENT}. Other scratch-git errors propagate.
+   */
+  async rebuildConnectionRepoIndexWithStoredTableSpecs(
+    connectorAccountId: string,
+    repoId: string,
+  ): Promise<{ count: number }> {
+    const logContext = {
+      source: 'DataFolderTableSpecStoreService.rebuildConnectionRepoIndexWithStoredTableSpecs',
+      connectorAccountId,
+      repoId,
+    };
+
+    let storedTableSpecs: StoredTableSpecsForConnectionRepoIndexBuild | null = null;
+    try {
+      storedTableSpecs = await this.readStoredTableSpecsForConnectionRepoIndexBuild(connectorAccountId);
+    } catch (error) {
+      this.recordIndexBuildTableSpecsNotSent(logContext, 'the stored table specs could not be read', error);
+    }
+
+    if (storedTableSpecs) {
+      const sentTableSpecFolderCount = Object.keys(storedTableSpecs.tableSpecsByRepoRelativeFolderKey).length;
+      try {
+        const indexBuildResult = await this.scratchGitService.buildIndex(
+          repoId,
+          storedTableSpecs.tableSpecsByRepoRelativeFolderKey,
+        );
+        this.checkIndexBuildUsedTheSentTableSpecs(
+          indexBuildResult,
+          sentTableSpecFolderCount,
+          storedTableSpecs,
+          logContext,
+        );
+        return { count: indexBuildResult.count };
+      } catch (error) {
+        if (
+          error instanceof ScratchGitIndexBuildRequestBodyTooLargeError ||
+          error instanceof ScratchGitRequestEntityTooLargeError
+        ) {
+          this.recordIndexBuildTableSpecsNotSent(logContext, 'the request body was too large', error);
+        } else if (error instanceof ScratchGitBadRequestError) {
+          // scratch-git rejected the body (its build parses the body before touching the repo, so a 400 is about the
+          // body). Rebuilding without it keeps the index current; the error log and counter surface the drift.
+          this.recordIndexBuildTableSpecsNotSent(logContext, 'scratch-git rejected the request body', error, 'error');
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    const indexBuildResult = await this.scratchGitService.buildIndex(repoId);
+    return { count: indexBuildResult.count };
+  }
+
+  private checkIndexBuildUsedTheSentTableSpecs(
+    indexBuildResult: BuildRepoIndexResult,
+    sentTableSpecFolderCount: number,
+    storedTableSpecs: StoredTableSpecsForConnectionRepoIndexBuild,
+    logContext: { source: string; connectorAccountId: string; repoId: string },
+  ): void {
+    const { tableSpecFolderCountFromRequestBody, tableSpecFolderCountReadFromGit } = indexBuildResult;
+    if (tableSpecFolderCountFromRequestBody === undefined) {
+      // A scratch-git that predates the request body ignored it and read every folder from git (correct while the
+      // git mirror is on). Only happens while the two deploys overlap.
+      WSLogger.debug({ ...logContext, message: 'scratch-git ignored the index-build table specs (older service)' });
+      return;
+    }
+    if (tableSpecFolderCountFromRequestBody !== sentTableSpecFolderCount) {
+      WSLogger.error({
+        ...logContext,
+        message: 'scratch-git used a different number of table specs than were sent; the index-build contract drifted',
+        sentTableSpecFolderCount,
+        tableSpecFolderCountFromRequestBody,
+      });
+    }
+    if (tableSpecFolderCountReadFromGit !== undefined && tableSpecFolderCountReadFromGit > 0) {
+      WSLogger.info({
+        ...logContext,
+        message: "scratch-git read some folders' table specs from git because the request had none for them",
+        tableSpecFolderCountReadFromGit,
+        linkedFolderWithoutStoredRowCount: storedTableSpecs.linkedFolderWithoutStoredRowCount,
+      });
+      this.metricsService.logValue(
+        CustomMetric.SCRATCH_GIT_INDEX_BUILD_READ_TABLE_SPEC_FROM_GIT,
+        tableSpecFolderCountReadFromGit,
+      );
+    }
+  }
+
+  private recordIndexBuildTableSpecsNotSent(
+    logContext: { source: string; connectorAccountId: string; repoId: string },
+    reason: string,
+    error: unknown,
+    logLevel: 'warn' | 'error' = 'warn',
+  ): void {
+    const logEntry = {
+      ...logContext,
+      message: `Building the index without stored table specs because ${reason}; scratch-git reads them from git`,
+      error,
+    };
+    if (logLevel === 'error') WSLogger.error(logEntry);
+    else WSLogger.warn(logEntry);
+    this.metricsService.logValue(CustomMetric.SCRATCH_GIT_INDEX_BUILD_TABLE_SPECS_NOT_SENT, 1);
+  }
+
   private async readTableSpecFromGit(location: ConnectedTableSpecLocation): Promise<BaseJsonTableSpec | null> {
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(location.connectorAccountId);
     return this.scratchGitService.readSchemaFromGit(repoId, location.folderPath);
@@ -509,6 +727,22 @@ function parseStoredDefaultViewContent(defaultViewContent: string, dataFolderId:
     throw new Error(`The stored default view for data folder ${dataFolderId} is not a JSON object`);
   }
   return parsed as TableView;
+}
+
+/** A UTF-16 surrogate half with no partner: legal in a JavaScript string, rejected by scratch-git's JSON parser. */
+const LONE_UTF16_SURROGATE_PATTERN = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/** True when any string in the parsed JSON value (object keys included) holds a lone UTF-16 surrogate. */
+function containsLoneUtf16Surrogate(jsonValue: unknown): boolean {
+  if (typeof jsonValue === 'string') return LONE_UTF16_SURROGATE_PATTERN.test(jsonValue);
+  if (Array.isArray(jsonValue)) return jsonValue.some(containsLoneUtf16Surrogate);
+  if (jsonValue !== null && typeof jsonValue === 'object') {
+    return Object.entries(jsonValue).some(
+      ([propertyName, propertyValue]) =>
+        LONE_UTF16_SURROGATE_PATTERN.test(propertyName) || containsLoneUtf16Surrogate(propertyValue),
+    );
+  }
+  return false;
 }
 
 /**

@@ -162,6 +162,14 @@ export enum CustomMetric {
   // come from Postgres (TABLE_SPEC_POSTGRES_READS_ENABLED). Holding at 0 is the signal that every folder has
   // been imported and the git fallback can be removed.
   DATA_FOLDER_TABLE_SPEC_READ_FELL_BACK_TO_GIT = 'data_folder_table_spec_read_fell_back_to_git',
+
+  // scratch-git index build with stored table specs (DEV-12616). `NOT_SENT` counts index builds that fell back to
+  // sending no specs (the body was too large, or the stored specs couldn't be read), so scratch-git read every
+  // folder's spec from git. `READ_FROM_GIT` adds, per build, the folders scratch-git still read from git because the
+  // body had no spec for them (a linked folder with no stored row, or a `.scratch` dir left behind by a deleted
+  // folder). Both must stay near 0 before the git mirror can be turned off.
+  SCRATCH_GIT_INDEX_BUILD_TABLE_SPECS_NOT_SENT = 'scratch_git_index_build_table_specs_not_sent',
+  SCRATCH_GIT_INDEX_BUILD_READ_TABLE_SPEC_FROM_GIT = 'scratch_git_index_build_read_table_spec_from_git',
 }
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
@@ -242,6 +250,8 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.WHALESYNC_RUN_NOTIFY_GAVE_UP:
     case CustomMetric.WHALESYNC_RUN_NOTIFY_BACKFILLED:
     case CustomMetric.DATA_FOLDER_TABLE_SPEC_READ_FELL_BACK_TO_GIT:
+    case CustomMetric.SCRATCH_GIT_INDEX_BUILD_TABLE_SPECS_NOT_SENT:
+    case CustomMetric.SCRATCH_GIT_INDEX_BUILD_READ_TABLE_SPEC_FROM_GIT:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -326,6 +336,8 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.WHALESYNC_RUN_NOTIFY_GAVE_UP:
     case CustomMetric.WHALESYNC_RUN_NOTIFY_BACKFILLED:
     case CustomMetric.DATA_FOLDER_TABLE_SPEC_READ_FELL_BACK_TO_GIT:
+    case CustomMetric.SCRATCH_GIT_INDEX_BUILD_TABLE_SPECS_NOT_SENT:
+    case CustomMetric.SCRATCH_GIT_INDEX_BUILD_READ_TABLE_SPEC_FROM_GIT:
       return CustomMetricUnit.EVENT_COUNT;
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
       // A gauge: how many syncs remain on the frozen v1 column right now, not a

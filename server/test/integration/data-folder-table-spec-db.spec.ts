@@ -169,4 +169,52 @@ describe('DataFolderTableSpecStoreService (real DB)', () => {
     await prisma.workbook.delete({ where: { id: workbookId } });
     await expect(prisma.dataFolderTableSpec.count({ where: { dataFolderId } })).resolves.toBe(0);
   });
+
+  it("reads one connection's stored specs for the index build, keyed without the leading slash", async () => {
+    const createConnectorAccount = async (displayName: string): Promise<string> => {
+      const connectorAccountId = `coa_${displayName}_${Date.now()}`;
+      await prisma.connectorAccount.create({
+        data: { id: connectorAccountId, workbookId, service: 'AIRTABLE', displayName },
+      });
+      return connectorAccountId;
+    };
+    const createLinkedFolder = async (connectorAccountId: string, path: string): Promise<string> => {
+      const linkedDataFolderId = createDataFolderId();
+      await prisma.dataFolder.create({
+        data: { id: linkedDataFolderId, name: path, workbookId, connectorAccountId, path },
+      });
+      return linkedDataFolderId;
+    };
+
+    const indexedConnectorAccountId = await createConnectorAccount('indexed');
+    const otherConnectorAccountId = await createConnectorAccount('other');
+    const contactsDataFolderId = await createLinkedFolder(indexedConnectorAccountId, '/Base/Contacts');
+    await createLinkedFolder(indexedConnectorAccountId, '/Base/Never Pulled');
+    const otherConnectionDataFolderId = await createLinkedFolder(otherConnectorAccountId, '/Base/Contacts');
+
+    const contactsTableSpec = buildTableSpec({ name: 'Contacts' });
+    await store.writeTableSpec(
+      {
+        dataFolderId: contactsDataFolderId,
+        connectorAccountId: indexedConnectorAccountId,
+        folderPath: '/Base/Contacts',
+      },
+      contactsTableSpec,
+      'pull',
+    );
+    await store.writeTableSpec(
+      {
+        dataFolderId: otherConnectionDataFolderId,
+        connectorAccountId: otherConnectorAccountId,
+        folderPath: '/Base/Contacts',
+      },
+      buildTableSpec({ name: 'Another connection' }),
+      'pull',
+    );
+
+    await expect(store.readStoredTableSpecsForConnectionRepoIndexBuild(indexedConnectorAccountId)).resolves.toEqual({
+      tableSpecsByRepoRelativeFolderKey: { 'Base/Contacts': JSON.parse(JSON.stringify(contactsTableSpec)) },
+      linkedFolderWithoutStoredRowCount: 1,
+    });
+  });
 });
