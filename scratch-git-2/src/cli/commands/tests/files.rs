@@ -151,6 +151,8 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
     assert!(map.contains_key(".scratch/posts/schema.json"));
     assert!(map.contains_key(".scratch/posts/publish-plan-1/create/rec2.json"));
 
+    // The git target carries a different `.scratch/` schema and drops the
+    // cache's publish-plan file: neither reaches the cache (DEV-13025).
     let replacement = HashMap::from([
         ("posts/next.json".to_string(), b"{\"id\":\"next\"}".to_vec()),
         (
@@ -162,7 +164,69 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
 
     assert!(ctx.worktree_dir.join("posts/next.json").exists());
     assert!(!ctx.worktree_dir.join("posts/rec1.json").exists());
-    assert!(ctx.scratch_dir.join("posts/schema.json").exists());
+    assert_eq!(
+        std::fs::read(ctx.scratch_dir.join("posts/schema.json")).unwrap(),
+        b"{}",
+        "git must never write the table-spec cache"
+    );
+    assert!(ctx
+        .scratch_dir
+        .join("posts/publish-plan-1/create/rec2.json")
+        .exists());
+}
+
+/// DEV-13025 (formerly the `validation.json` bug): a full-tree materialize —
+/// every first materialization, `files publish`, and `reconcile-after-publish`
+/// — used to delete every cache file git doesn't track, which included
+/// Desktop's custom validators, and to overwrite specs with git's copy.
+#[test]
+fn full_tree_materialize_leaves_validation_json_schema_and_default_view_alone() {
+    let tmp = TempDir::new().unwrap();
+    let ctx = ConnectionContext {
+        connection_id: "conn_test".to_string(),
+        conn_dir_name: "Conn".to_string(),
+        worktree_dir: tmp.path().join("Conn"),
+        scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
+        workspace_dir: tmp.path().to_path_buf(),
+        bare_repo: tmp.path().join(".repos/conn.git"),
+        db_path: tmp.path().join(".repos/conn.db"),
+    };
+    std::fs::create_dir_all(ctx.worktree_dir.join("posts")).unwrap();
+    std::fs::create_dir_all(ctx.scratch_dir.join("posts/views")).unwrap();
+    std::fs::write(ctx.worktree_dir.join("posts/rec1.json"), "{}").unwrap();
+    let cache_files = [
+        (
+            "posts/validation.json",
+            b"{\"rules\":[\"custom\"]}".as_slice(),
+        ),
+        ("posts/schema.json", b"{\"fromServer\":true}\n".as_slice()),
+        (
+            "posts/views/default.json",
+            b"{\"fromServer\":true}\n".as_slice(),
+        ),
+    ];
+    for (relative_path, bytes) in cache_files {
+        std::fs::write(ctx.scratch_dir.join(relative_path), bytes).unwrap();
+    }
+
+    let current = read_worktree_files_and_scratch_state(&ctx).unwrap();
+    // The git target has the record, git's stale schema, and no view or validator.
+    let target = HashMap::from([
+        ("posts/rec1.json".to_string(), b"{}".to_vec()),
+        (
+            ".scratch/posts/schema.json".to_string(),
+            b"{\"fromGit\":true}".to_vec(),
+        ),
+    ]);
+    materialize_local_repo(&ctx, &target, &current).unwrap();
+
+    for (relative_path, bytes) in cache_files {
+        assert_eq!(
+            std::fs::read(ctx.scratch_dir.join(relative_path)).unwrap(),
+            bytes,
+            "{relative_path} must survive a full-tree materialize"
+        );
+    }
 }
 
 #[test]
@@ -231,34 +295,66 @@ fn materialize_local_repo_preserves_mtime_when_content_unchanged() {
     );
 }
 
+/// DEV-13025: `files revert-plan` reads a folder's `idPath` from the table-spec
+/// cache, so a connector whose id root isn't `id` still gets its recreate
+/// sentinel in the right field once git holds no spec.
 #[test]
-fn sync_schema_files_from_worktree_restores_missing_schema() {
+fn revert_plan_id_path_comes_from_the_cache_then_git_then_the_default() {
     let tmp = TempDir::new().unwrap();
-    let ctx = ConnectionContext {
-        connection_id: "conn_test".to_string(),
-        conn_dir_name: "Conn".to_string(),
-        worktree_dir: tmp.path().join("Conn"),
-        scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
-        workspace_dir: tmp.path().to_path_buf(),
-        bare_repo: tmp.path().join(".repos/conn.git"),
-        db_path: tmp.path().join(".repos/conn.db"),
-    };
-
-    // Post-slice-F source: the worktree's tracked .scratch/, not the
-    // deleted master worktree.
-    std::fs::create_dir_all(ctx.worktree_dir.join(".scratch/posts")).unwrap();
+    let scratch_dir = tmp.path().join(".scratch/connections/scratch/Conn");
+    std::fs::create_dir_all(scratch_dir.join("contacts")).unwrap();
     std::fs::write(
-        ctx.worktree_dir.join(".scratch/posts/schema.json"),
-        "{\"schema\":{\"fields\":[]}}",
+        scratch_dir.join("contacts/schema.json"),
+        r#"{"idPath":"id.record_id","schema":{}}"#,
     )
     .unwrap();
+    std::fs::write(
+        scratch_dir.join("schema.json"),
+        r#"{"idPath":"key","schema":{}}"#,
+    )
+    .unwrap();
+    let main_branch_tree_map = HashMap::from([
+        (
+            ".scratch/contacts/schema.json".to_string(),
+            br#"{"idPath":"fromGit","schema":{}}"#.to_vec(),
+        ),
+        (
+            ".scratch/deals/schema.json".to_string(),
+            br#"{"idPath":"deal_id","schema":{}}"#.to_vec(),
+        ),
+    ]);
+    let mut warned_folders = HashSet::new();
 
-    sync_schema_files_from_worktree(&ctx).unwrap();
-
-    assert_eq!(
-        std::fs::read_to_string(ctx.scratch_dir.join("posts/schema.json")).unwrap(),
-        "{\"schema\":{\"fields\":[]}}"
+    let cache_id_path = load_id_column_remote_id_for_folder(
+        &scratch_dir,
+        &main_branch_tree_map,
+        "contacts/rec1.json",
+        &mut warned_folders,
     );
+    let root_id_path = load_id_column_remote_id_for_folder(
+        &scratch_dir,
+        &main_branch_tree_map,
+        "rec1.json",
+        &mut warned_folders,
+    );
+    let git_fallback_id_path = load_id_column_remote_id_for_folder(
+        &scratch_dir,
+        &main_branch_tree_map,
+        "deals/rec1.json",
+        &mut warned_folders,
+    );
+    let default_id_path = load_id_column_remote_id_for_folder(
+        &scratch_dir,
+        &main_branch_tree_map,
+        "missing/rec1.json",
+        &mut warned_folders,
+    );
+
+    assert_eq!(cache_id_path, "id.record_id");
+    assert_eq!(root_id_path, "key");
+    assert_eq!(git_fallback_id_path, "deal_id");
+    assert_eq!(default_id_path, crate::shared::json_path::DEFAULT_ID_PATH);
+    assert_eq!(warned_folders, HashSet::from(["missing".to_string()]));
 }
 
 // Slice F.5 removed `commit_file_map_to_dirty_ref` + `force_push_origin_dirty`

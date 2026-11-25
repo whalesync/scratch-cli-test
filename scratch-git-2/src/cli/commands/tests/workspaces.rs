@@ -70,50 +70,34 @@ fn derive_workbook_org_id_prefers_workbook_field_then_repo_path_prefix() {
     assert_eq!(derive_workbook_org_id(&derived), "org999");
 }
 
+/// DEV-13025: repairing a connection rebuilds its cache, but Desktop's
+/// `validation.json` files exist nowhere else, so they survive it.
 #[test]
-fn sync_schema_files_from_worktree_copies_schema_and_view_into_cache() {
-    // Post-slice-F: the user-facing worktree is non-sparse on `main`, so
-    // schemas + views live natively at `<worktree>/.scratch/<folder>/`.
-    // `sync_schema_files_from_worktree_paths` copies them into the per-
-    // connection cache `<workspace>/.scratch/connections/scratch/<conn>/`
-    // for the broader codebase's readers (validators, index).
+fn removing_a_connection_cache_keeps_its_validation_configs() {
     let tmp = TempDir::new().unwrap();
-    let worktree_dir = tmp.path().join("HubSpot");
-    let scratch_dir = tmp.path().join("scratch");
-    write_file(
-        &worktree_dir.join(".scratch/Posts/schema.json"),
-        r#"{"type":"object","properties":{"title":{"type":"string"}}}"#,
-    );
-    write_file(
-        &worktree_dir.join(".scratch/Posts/views/default.json"),
-        r#"{"name":"Default","cols":[]}"#,
-    );
-    write_file(&worktree_dir.join("Posts/rec1.json"), r#"{"id":"rec1"}"#);
+    let cache_dir = tmp.path().join("cache");
+    write_file(&cache_dir.join("Posts/schema.json"), "{}");
+    write_file(&cache_dir.join("Posts/views/default.json"), "{}");
+    write_file(&cache_dir.join("Posts/validation.json"), r#"{"rules":[1]}"#);
+    write_file(&cache_dir.join("Deals/schema.json"), "{}");
 
-    crate::shared::review_ops::sync_schema_files_from_worktree_paths(&worktree_dir, &scratch_dir)
-        .unwrap();
+    remove_connection_cache_keeping_validation_configs(&cache_dir);
 
-    let schema_path = scratch_dir.join("Posts/schema.json");
-    assert!(
-        schema_path.exists(),
-        "schema.json should exist at {}",
-        schema_path.display()
-    );
     assert_eq!(
-        std::fs::read_to_string(&schema_path).unwrap(),
-        r#"{"type":"object","properties":{"title":{"type":"string"}}}"#
+        std::fs::read_to_string(cache_dir.join("Posts/validation.json")).unwrap(),
+        r#"{"rules":[1]}"#
     );
+    assert!(!cache_dir.join("Posts/schema.json").exists());
+    assert!(!cache_dir.join("Posts/views").exists());
+    assert!(!cache_dir.join("Deals").exists());
 
-    let view_path = scratch_dir.join("Posts/views/default.json");
-    assert!(
-        view_path.exists(),
-        "views/default.json should exist at {}",
-        view_path.display()
+    let cache_without_validation_configs = tmp.path().join("empty-cache");
+    write_file(
+        &cache_without_validation_configs.join("Posts/schema.json"),
+        "{}",
     );
-    assert_eq!(
-        std::fs::read_to_string(&view_path).unwrap(),
-        r#"{"name":"Default","cols":[]}"#
-    );
+    remove_connection_cache_keeping_validation_configs(&cache_without_validation_configs);
+    assert!(!cache_without_validation_configs.exists());
 }
 
 /// Full integration test for `init_v2`: creates a fake remote git repo with data files and
@@ -225,20 +209,21 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
         ".git/info/sparse-checkout should NOT exist on a non-sparse worktree",
     );
 
-    // ── Assert: schema lands in connections/scratch/ (cache read by desktop app) ──
-    let schema_path = workspace_dir
+    // ── Assert: the table-spec cache exists but git didn't fill it (DEV-13025) ──
+    // `init` fills it from the server after `init_v2`, which makes no HTTP calls.
+    let connection_cache_dir = workspace_dir
         .join(".scratch/connections/scratch")
-        .join(conn_dir_name)
-        .join("Posts/schema.json");
+        .join(conn_dir_name);
     assert!(
-        schema_path.exists(),
-        "schema.json should exist in cache at {}",
-        schema_path.display()
+        connection_cache_dir.is_dir(),
+        "the table-spec cache dir should exist at {}",
+        connection_cache_dir.display()
     );
-    assert_eq!(
-        std::fs::read_to_string(&schema_path).unwrap(),
-        schema_content,
+    assert!(
+        !connection_cache_dir.join("Posts/schema.json").exists(),
+        "init_v2 must not copy git's schema.json into the cache",
     );
+    let _ = schema_content;
 
     // ── Post-slice-F: NO master worktree at .scratch/connections/master/ ──
     let master_dir = workspace_dir
@@ -249,17 +234,13 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
         "master worktree should NOT be created post-slice-F",
     );
 
-    // ── Assert: view file lands in connections/scratch/ alongside schema ──
-    let view_path = workspace_dir
-        .join(".scratch/connections/scratch")
-        .join(conn_dir_name)
-        .join("Posts/views/default.json");
     assert!(
-        view_path.exists(),
-        "views/default.json should exist in cache at {}",
-        view_path.display()
+        !connection_cache_dir
+            .join("Posts/views/default.json")
+            .exists(),
+        "init_v2 must not copy git's views/default.json into the cache",
     );
-    assert_eq!(std::fs::read_to_string(&view_path).unwrap(), view_content,);
+    let _ = view_content;
 
     // ── Assert: reviewed-dirty worktree is NOT created (removed in Phase 3 of DEV-10144) ──
     let reviewed_worktree_dir = workspace_dir
@@ -289,9 +270,15 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
         worktree_dir.join("Posts/hello-world.json").exists(),
         "re-init should preserve worktree data files",
     );
+    // A cache file the refresh wrote, standing in for a refreshed spec.
+    let refreshed_schema_path = connection_cache_dir.join("Posts/schema.json");
+    std::fs::create_dir_all(refreshed_schema_path.parent().unwrap()).unwrap();
+    std::fs::write(&refreshed_schema_path, "{}\n").unwrap();
+    init_v2(&wb, &workspace_dir, "http://localhost:3010", "fake-token")
+        .expect("re-init on existing workspace should be a no-op");
     assert!(
-        schema_path.exists(),
-        "re-init should preserve cached schema",
+        refreshed_schema_path.exists(),
+        "re-init should preserve the table-spec cache",
     );
 }
 

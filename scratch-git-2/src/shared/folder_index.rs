@@ -429,7 +429,7 @@ fn load_folder_schema(workspace: &Path, folder: &str) -> Option<serde_json::Valu
 /// SHA-256 (lowercase hex) of the folder's synced `schema.json` bytes, or `None` if the file is
 /// absent or unreadable. Hashes the exact file `enforce_schema` loads (`resolve_folder_schema_path`)
 /// so the hash reflects what validation saw. Raw bytes, no canonicalization —
-/// `sync_schema_files_from_worktree` copies the server's schema verbatim, so identical server
+/// the table-spec refresh (DEV-13025) writes the server's stored bytes verbatim, so identical server
 /// content yields an identical hash (the reason DEV-10518 hashes content rather than trusting mtime,
 /// which the per-download rewrite always bumps).
 fn compute_schema_hash(workspace: &Path, folder: &str) -> Option<String> {

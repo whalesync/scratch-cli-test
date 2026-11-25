@@ -8,5 +8,6 @@ pub mod read_records;
 pub mod record_tree;
 pub mod shopify_verbatim_migration;
 pub mod syncs;
+pub mod table_spec_cache_refresh;
 pub mod validation;
 pub mod workspaces;

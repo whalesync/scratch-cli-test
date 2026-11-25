@@ -7,6 +7,12 @@ use crate::api::{ApiClient, ConnectorAccount, Workbook, WorkbookListResponse};
 use crate::config::markers;
 use crate::shared::layout::WorkspaceLayout;
 
+use super::table_spec_cache_refresh::{
+    refresh_table_spec_caches_and_reconcile_enforce_schema_results,
+    table_spec_cache_targets_for_workspace, TableSpecCacheRefreshReport,
+    TABLE_SPEC_CACHE_REFRESH_TIMEOUT_DURING_INIT,
+};
+
 const MAIN_BRANCH: &str = "main";
 
 /// Extra sparse-checkout patterns for the workbook config checkout (`.scratch/workspace/`).
@@ -385,6 +391,16 @@ async fn init(
     let started = std::time::Instant::now();
     let total_files = init_v2(&wb, &target_dir, server_url, &token)?;
     crate::config::workspaces::upsert(&wb.id, &target_dir)?;
+    // DEV-13025: fill the table-spec cache from the server, after the workspace
+    // is registered. A failure doesn't fail init: the workspace exists and works,
+    // and the next `files download` (Desktop runs one hourly) refreshes the specs.
+    // Exiting non-zero here would leave Desktop showing "Download failed" for a
+    // workspace whose retry then finds it already initialized.
+    let table_spec_cache_refresh_report =
+        refresh_table_specs_of_new_workspace(&client, &target_dir, &wb.id).await;
+    super::table_spec_cache_refresh::print_table_spec_cache_refresh_problems(
+        &table_spec_cache_refresh_report,
+    );
     let elapsed_ms = started.elapsed().as_millis();
     let elapsed = if elapsed_ms < 1000 {
         format!("{}ms", elapsed_ms)
@@ -404,6 +420,8 @@ async fn init(
                 // Where the previous workspace's un-uploaded edits were preserved
                 // before this re-clone, if any (DEV-9698 non-destructive salvage).
                 "salvagedTo": salvaged_to.as_ref().map(|p| p.display().to_string()),
+                // DEV-13025: what the table-spec refresh did.
+                "tableSpecCacheRefresh": table_spec_cache_refresh_report,
             }))?
         );
     } else {
@@ -431,6 +449,49 @@ async fn init(
         println!();
     }
     Ok(())
+}
+
+/// The table-spec refresh for a workspace `init` just created, bounded by
+/// [`TABLE_SPEC_CACHE_REFRESH_TIMEOUT_DURING_INIT`]. Never fails: a problem is a
+/// `failed` report. `init_v2` stays HTTP-free, so its tests need no server.
+async fn refresh_table_specs_of_new_workspace(
+    client: &ApiClient,
+    workspace_dir: &Path,
+    workbook_id: &str,
+) -> TableSpecCacheRefreshReport {
+    let workspace_marker = match markers::read(&markers::marker_path(workspace_dir)) {
+        Ok(markers::Marker::Workspace(workspace_marker)) => workspace_marker,
+        _ => {
+            return TableSpecCacheRefreshReport::failed(format!(
+                "couldn't read the workspace marker in {}",
+                workspace_dir.display()
+            ))
+        }
+    };
+    let _lock = match crate::config::workspace_lock::acquire(workspace_dir) {
+        Ok(lock) => lock,
+        Err(error) => return TableSpecCacheRefreshReport::failed(format!("{error:#}")),
+    };
+    let targets = table_spec_cache_targets_for_workspace(workspace_dir, &workspace_marker);
+    match tokio::time::timeout(
+        TABLE_SPEC_CACHE_REFRESH_TIMEOUT_DURING_INIT,
+        // No DEV-10518 reconcile: a new workspace has no validation results yet.
+        refresh_table_spec_caches_and_reconcile_enforce_schema_results(
+            client,
+            workspace_dir,
+            workbook_id,
+            &targets,
+            false,
+        ),
+    )
+    .await
+    {
+        Ok(report) => report,
+        Err(_) => TableSpecCacheRefreshReport::failed(format!(
+            "timed out after {}s",
+            TABLE_SPEC_CACHE_REFRESH_TIMEOUT_DURING_INIT.as_secs()
+        )),
+    }
 }
 
 fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> anyhow::Result<i64> {
@@ -602,9 +663,9 @@ fn git_checkout_branch_from_bare(
 /// resolves), this is a no-op. Broken worktree dirs fail loudly so the user
 /// can `workspaces unsync` to clear them rather than silently nuking state.
 ///
-/// The companion per-connection scratch cache directory
-/// (`<workspace>/.scratch/connections/scratch/<conn>/`) is created so the
-/// subsequent `sync_schema_files_from_worktree_paths` write can succeed.
+/// The companion per-connection table-spec cache directory
+/// (`<workspace>/.scratch/connections/scratch/<conn>/`) is created empty; the
+/// table-spec refresh fills it from the server (DEV-13025).
 fn materialize_main_worktree(
     bare_repo: &Path,
     worktree_dir: &Path,
@@ -793,8 +854,10 @@ fn repo_path_prefix(repo_path: &str) -> Option<&str> {
 // ── Connection lifecycle helpers ───────────────────────────────────────────
 
 /// Set up a single connection's local git infrastructure: one bare repo + one
-/// non-sparse worktree on `main` + the per-connection schema cache. Returns
-/// the number of files in the worktree.
+/// non-sparse worktree on `main` + the (empty) per-connection table-spec cache
+/// directory. Returns the number of files in the worktree. The cache is filled
+/// from the server by the caller's table-spec refresh (DEV-13025), never from
+/// the worktree's git `.scratch/` copy.
 ///
 /// Idempotent: re-running on a workspace where the bare repo or worktree
 /// already exists succeeds without duplicate work. Broken state (e.g. a
@@ -851,16 +914,6 @@ pub fn setup_connection(
         let _t = PhaseTimer::new(format!("    [{}] reconcile_data_folder_dirs", dir_name));
         super::files::reconcile_data_folder_dirs(&worktree_dir, &ca.data_folders)?;
     }
-    {
-        let _t = PhaseTimer::new(format!(
-            "    [{}] sync_schema_files_from_worktree",
-            dir_name
-        ));
-        crate::shared::review_ops::sync_schema_files_from_worktree_paths(
-            &worktree_dir,
-            &scratch_dir,
-        )?;
-    }
 
     let _t = PhaseTimer::new(format!("    [{}] count_files (worktree)", dir_name));
     Ok(count_files(&worktree_dir))
@@ -900,7 +953,9 @@ pub fn bare_repo_is_initialized(bare_repo: &Path) -> bool {
 /// (init's clone failed before any worktree materialized) hits exactly that path:
 /// no worktree, clean re-clone. The remaining removed paths hold no un-uploaded
 /// user data — the bare repo is broken/missing (nothing committed to lose) and
-/// the index db + schema cache are regenerable. Accepted-but-unpublished edits
+/// the index db + table-spec cache are regenerable. The cache's `validation.json`
+/// files are the exception — Desktop's (and the user's) validator settings, which
+/// no server holds — so they're kept (DEV-13025). Accepted-but-unpublished edits
 /// live in `accepted-patches.json` under the connection root (untouched here),
 /// so they also survive.
 ///
@@ -923,7 +978,7 @@ pub fn repair_connection_local_repo(
     prune_worktrees(&bare_repo);
     remove_path(&bare_repo);
     remove_path(&layout.index_db_path(&ca.repo_path));
-    remove_path(&layout.connection_scratch_path(dir_name));
+    remove_connection_cache_keeping_validation_configs(&layout.connection_scratch_path(dir_name));
 
     setup_connection(ca, dir_name, layout, token)?;
     Ok(salvaged_worktree_to)
@@ -1050,6 +1105,40 @@ fn prune_worktrees(bare_repo: &Path) {
         let _ = crate::shared::git_exec::git_command()
             .args(["-C", &bare_repo.to_string_lossy(), "worktree", "prune"])
             .output();
+    }
+}
+
+/// The file name of a folder's validator settings in the connection cache.
+const VALIDATION_CONFIG_FILE_NAME: &str = "validation.json";
+
+/// Removes everything in a connection's cache except its `validation.json`
+/// files, then the directories left empty. The table specs come back on the
+/// next table-spec refresh; validator settings exist nowhere else.
+fn remove_connection_cache_keeping_validation_configs(cache_dir: &Path) {
+    /// True when something under `directory` was kept, so it can't be removed.
+    fn remove_all_but_validation_configs(directory: &Path) -> bool {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return false;
+        };
+        let mut kept_something = false;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                kept_something = true;
+                continue;
+            };
+            let kept_this_entry = if file_type.is_dir() {
+                remove_all_but_validation_configs(&path) || std::fs::remove_dir(&path).is_err()
+            } else {
+                entry.file_name() == VALIDATION_CONFIG_FILE_NAME
+                    || std::fs::remove_file(&path).is_err()
+            };
+            kept_something |= kept_this_entry;
+        }
+        kept_something
+    }
+    if !remove_all_but_validation_configs(cache_dir) {
+        let _ = std::fs::remove_dir(cache_dir);
     }
 }
 

@@ -13,6 +13,7 @@ import {
   setupProductsTable,
   teardownProductsTable,
 } from "../src/postgres";
+import { scratchApiGet } from "../src/scratch-api";
 
 const cli = new ScratchCli();
 const postgresUrl = process.env.DATABASE_URL;
@@ -387,6 +388,84 @@ describeIfPostgres("Workspace sync on download", () => {
         connections: Array<{ id: string }>;
       };
       expect(marker.connections.some((c) => c.id === connectionId3)).toBe(true);
+    });
+
+    // DEV-13025: a download run from inside one connection's directory only
+    // downloads that connection's records, but it must still fill the table-spec
+    // cache of a connection it set up in the same run. Before DEV-13025 that
+    // cache was copied from the new worktree's git `.scratch/`.
+    it("should fill a new connection's table specs when downloading from inside another connection", async () => {
+      await setupTestTable();
+      const conn4 = cli.json<{ id: string }>([
+        "connections",
+        "--workspace",
+        workspaceId,
+        "add",
+        "--service",
+        TEST_CONNECTOR_SERVICE,
+        "--param",
+        `connectionString=${postgresUrl}`,
+        "--name",
+        "AnotherBlogDB",
+      ]);
+      const tables = cli.json<Array<{ id: string; displayName: string }>>([
+        "linked",
+        "--workspace",
+        workspaceId,
+        "available",
+        conn4.id,
+      ]);
+      const blogTable = tables.find(
+        (t) => t.displayName === "integration_blog_posts",
+      )!;
+      // Linked from outside the workspace, so the linked refresh doesn't set the
+      // connection up first; the download below has to.
+      const linked = cli.json<{ id: string }>([
+        "linked",
+        "--workspace",
+        workspaceId,
+        "add",
+        "--connection-id",
+        conn4.id,
+        ...blogTable.id.split(",").flatMap((p: string) => ["--table-id", p]),
+        "--name",
+        blogTable.displayName,
+      ]);
+      cli.run(["linked", "--workspace", workspaceId, "pull", linked.id]);
+
+      const result = cli.json<{
+        connectionsAdded?: string[];
+        tableSpecCacheRefresh: { status: string };
+      }>(["files", "download", "--on-delete", "remove"], {
+        cwd: path.join(workspaceDir, connDirName3),
+      });
+
+      expect(result.connectionsAdded).toHaveLength(1);
+      expect(result.tableSpecCacheRefresh.status).toBe("refreshed");
+      const listing = await scratchApiGet<{
+        connectorAccounts: Array<{
+          dataFolders: Array<{
+            path: string;
+            tableSpec: { status: string; content?: string };
+          }>;
+        }>;
+      }>(
+        `/cli/v1/workbooks/${workspaceId}/table-specs?connectorAccountId=${conn4.id}`,
+      );
+      const [folder] = listing.connectorAccounts[0].dataFolders;
+      expect(folder.tableSpec.status).toBe("present");
+      const schemaPath = path.join(
+        workspaceDir,
+        ".scratch",
+        "connections",
+        "scratch",
+        result.connectionsAdded![0],
+        ...folder.path.split("/").filter(Boolean),
+        "schema.json",
+      );
+      expect(fs.readFileSync(schemaPath, "utf-8")).toBe(
+        folder.tableSpec.content,
+      );
     });
   });
 });

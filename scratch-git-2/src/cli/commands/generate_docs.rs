@@ -297,14 +297,9 @@ connection folders.
     {SERVICE - Connection}/
       {Base}/
         {Table}/
-          schema.json         <- field definitions and publish-plan files
-  master/
-    {SERVICE - Connection}/
-      {Base}/
-        {Table}/
-          recAbc.json         <- published (main branch) snapshot
-        .scratch/
-          schema.json
+          schema.json         <- field definitions (from the server; don't edit)
+          views/default.json  <- the connector's default view (from the server)
+          validation.json     <- your validation rules
 
 .repos/
   {connectorId}.git           <- bare connector repo
@@ -317,9 +312,9 @@ connection folders.
 | Location | Branch | Purpose |
 |----------|--------|---------|
 | `{SERVICE - Connection}/` | main | Your working copy — edit these record files |
-| `{SERVICE - Connection}/.scratch/` | main | Tracked schemas + view definitions |
+| `{SERVICE - Connection}/.scratch/` | main | Legacy git copy of the schemas; nothing reads it, and it goes away |
 | `.scratch/connections/{SERVICE - Connection}/accepted-patches.json` | (not a branch) | Per-field edits you've accepted but haven't published yet (RFC 7396 merge patches) |
-| `.scratch/connections/scratch/{SERVICE - Connection}/` | (local cache) | Schema cache populated from the worktree's `.scratch/` |
+| `.scratch/connections/scratch/{SERVICE - Connection}/` | (local cache) | Each table's `schema.json` and `views/default.json`, kept in step with the server, plus your `validation.json` rules and named views |
 
 The published state lives as git blobs in `.repos/{connectorId}.git/` on
 `refs/heads/main`. Use `scratchmd files unreviewed` or the desktop app to see
@@ -335,8 +330,10 @@ and `.scratch/connections/dirty/` were retired in DEV-10144 slice F.
 const SCHEMA_DOC: &str = r#"# Schema Files
 
 Each table has a `schema.json` file that describes its fields.
-These files are **read-only** — they are generated from the CMS field definitions
-and will be overwritten on the next pull.
+These files are **read-only**. The server generates them from the CMS field definitions, and
+`scratchmd` keeps the local copies in step with it: `files download`, `workspaces init`, the
+`linked` commands, and publish all refresh them, and so does `files refresh-table-specs` on its
+own. A local edit is overwritten on the next refresh.
 
 The schema is written using JSON Schema notation, with some important extensions:
 - x-scratch-readonly: indicates the field's data MUST NOT be modified.
@@ -370,7 +367,13 @@ set; those fields are derived from the one field that is writable.
 
 ```
 .scratch/connections/scratch/{SERVICE - Connection}/[{Base}/]{Table}/schema.json
+.scratch/connections/scratch/{SERVICE - Connection}/[{Base}/]{Table}/views/default.json
 ```
+
+`views/default.json` is the connector's default view, and the refresh owns it too. Put a named
+view next to it (`views/<name>.json`): the refresh never touches other files in `views/`. The
+`.scratch/` folder inside the connection's working copy is a legacy git copy; don't read or
+edit it.
 
 ## What a schema looks like
 
@@ -432,6 +435,7 @@ Run `scratchmd <command> --help` for full flag details.
 | Command | Description |
 |---|---|
 | `files download` | Pull remote changes and three-way merge with local edits |
+| `files refresh-table-specs [--connection <id\|dir>]` | Refresh each table's `schema.json` and `views/default.json` from the server (repairs a deleted or edited cache) |
 | `files get-review-stats` | Per-folder counts of unreviewed and approved-but-unpublished records across every connection in the workspace |
 
 ## connections
@@ -712,7 +716,8 @@ the editable working copy:
 ```
 
 The working copy folders (e.g. `WEBFLOW - My Site/Blog Posts/*.json`) are not
-affected — only the config and schema live in `.scratch/`.
+affected — only the config and schema live in `.scratch/`. Refreshing the table
+specs never touches `validation.json`.
 
 ## `validation.json` format
 

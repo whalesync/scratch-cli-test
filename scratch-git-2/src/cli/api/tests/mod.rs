@@ -383,3 +383,221 @@ fn backoff_table_covers_every_retry_the_attempt_budget_allows() {
         MAX_REQUEST_ATTEMPTS - 1
     );
 }
+
+// ── DEV-13025: versioned User-Agent ─────────────────────────────────────────
+
+#[test]
+fn user_agent_keeps_the_prefix_the_server_checks_and_is_never_the_legacy_constant() {
+    let user_agent = super::scratchmd_user_agent_for_desktop_app_version(None);
+    assert!(user_agent.to_lowercase().starts_with("scratch-cli/"));
+    assert_ne!(user_agent, "Scratch-cli/1.0");
+    assert_eq!(
+        user_agent,
+        format!("Scratch-cli/1.0 scratchmd/{}", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn user_agent_names_the_desktop_version_when_desktop_runs_the_binary() {
+    assert_eq!(
+        super::scratchmd_user_agent_for_desktop_app_version(Some("1.0.150")),
+        format!(
+            "Scratch-cli/1.0 scratchmd/{} scratch-desktop/1.0.150",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+}
+
+#[test]
+fn user_agent_leaves_out_a_malformed_desktop_version() {
+    let without_desktop = super::scratchmd_user_agent_for_desktop_app_version(None);
+    for malformed_version in ["", " 1.0", "1.0 evil", "-1.0", &"9".repeat(65)] {
+        assert_eq!(
+            super::scratchmd_user_agent_for_desktop_app_version(Some(malformed_version)),
+            without_desktop,
+            "{malformed_version:?} must not reach the User-Agent"
+        );
+    }
+}
+
+#[test]
+fn build_request_sends_the_versioned_user_agent() {
+    let client = ApiClient::new("http://localhost:3010", "token");
+    let request = client
+        .build_request::<()>(Method::GET, "workbooks", None)
+        .build()
+        .unwrap();
+    let user_agent = request.headers()["User-Agent"].to_str().unwrap();
+    assert!(user_agent.starts_with("Scratch-cli/1.0 scratchmd/"));
+}
+
+// ── DEV-13025: table-specs listing ──────────────────────────────────────────
+
+/// The server pins its wire output to this same file (`cli-workbook-table-specs-contract.spec.ts`).
+const CLI_WORKBOOK_TABLE_SPECS_RESPONSE_FIXTURE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/cli-workbook-table-specs-response.json"
+));
+
+fn parsed_fixture_data_folders() -> Vec<super::WorkbookTableSpecsDataFolder> {
+    let response: super::WorkbookTableSpecsResponse =
+        serde_json::from_str(CLI_WORKBOOK_TABLE_SPECS_RESPONSE_FIXTURE).unwrap();
+    response
+        .connector_accounts
+        .iter()
+        .flat_map(|connection| connection.parse_data_folders())
+        .map(|entry| match entry {
+            super::WorkbookTableSpecsDataFolderEntry::Parsed(data_folder) => data_folder,
+            super::WorkbookTableSpecsDataFolderEntry::Malformed { reason, .. } => {
+                panic!("fixture folder failed to parse: {reason}")
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn table_specs_fixture_parses_every_status_and_empty_connection() {
+    let response: super::WorkbookTableSpecsResponse =
+        serde_json::from_str(CLI_WORKBOOK_TABLE_SPECS_RESPONSE_FIXTURE).unwrap();
+    assert_eq!(response.format_version, 1);
+    assert_eq!(response.connector_accounts.len(), 2);
+    assert!(response.connector_accounts[1].data_folders.is_empty());
+
+    let data_folders = parsed_fixture_data_folders();
+    let statuses: Vec<(&str, &super::TableSpecArtifact)> = data_folders
+        .iter()
+        .map(|folder| (folder.path.as_str(), &folder.table_spec))
+        .collect();
+    assert!(matches!(
+        statuses[0],
+        ("/", super::TableSpecArtifact::Present { .. })
+    ));
+    assert!(matches!(
+        statuses[1],
+        ("/Broken", super::TableSpecArtifact::Unreadable { .. })
+    ));
+    assert!(matches!(
+        statuses[2],
+        ("/Never Pulled", super::TableSpecArtifact::Absent)
+    ));
+    assert_eq!(data_folders[2].stored_row_updated_at, None);
+}
+
+/// The cross-language hash contract: the SHA-256 of each `content`'s UTF-8 bytes (the bytes written
+/// to disk, and what DEV-10518 hashes) equals the server's `sha256`, through multibyte text, a
+/// lone-surrogate escape, and the trailing newline.
+#[test]
+fn table_specs_fixture_content_round_trips_byte_exact_and_matches_its_sha256() {
+    use sha2::{Digest, Sha256};
+    let mut present_file_count = 0;
+    for data_folder in parsed_fixture_data_folders() {
+        for artifact in [&data_folder.table_spec, &data_folder.default_view] {
+            if let super::TableSpecArtifact::Present { sha256, content } = artifact {
+                let content = content.as_deref().expect("fixture content is present");
+                assert_eq!(&format!("{:x}", Sha256::digest(content.as_bytes())), sha256);
+                present_file_count += 1;
+            }
+        }
+    }
+    assert_eq!(present_file_count, 3);
+
+    let posts = parsed_fixture_data_folders()
+        .into_iter()
+        .find(|folder| folder.path == "/Posts")
+        .unwrap();
+    let super::TableSpecArtifact::Present {
+        content: Some(content),
+        ..
+    } = posts.table_spec
+    else {
+        panic!("/Posts must be present with content");
+    };
+    assert!(content.contains("Café 🎉 Posts"));
+    assert!(
+        content.contains(r"\ud83d"),
+        "the lone-surrogate escape stays escape text"
+    );
+    assert!(content.ends_with("}\n"));
+}
+
+#[test]
+fn table_specs_metadata_only_folder_has_no_content() {
+    let connection: super::WorkbookTableSpecsConnection =
+        serde_json::from_value(serde_json::json!({
+            "connectorAccountId": "coa_1",
+            "dataFolders": [{
+                "dataFolderId": "dfd_1",
+                "path": "/Posts",
+                "storedRowUpdatedAt": "2026-11-23T18:02:11.123Z",
+                "tableSpec": { "status": "present", "sha256": "aa" },
+                "defaultView": { "status": "absent" }
+            }]
+        }))
+        .unwrap();
+    let parsed_entries = connection.parse_data_folders();
+    let [super::WorkbookTableSpecsDataFolderEntry::Parsed(data_folder)] = parsed_entries.as_slice()
+    else {
+        panic!("expected one parsed folder");
+    };
+    assert_eq!(
+        data_folder.table_spec,
+        super::TableSpecArtifact::Present {
+            sha256: "aa".to_string(),
+            content: None
+        }
+    );
+}
+
+#[test]
+fn table_specs_unknown_status_maps_to_unknown_and_a_malformed_folder_spares_its_siblings() {
+    let connection: super::WorkbookTableSpecsConnection =
+        serde_json::from_value(serde_json::json!({
+            "connectorAccountId": "coa_1",
+            "dataFolders": [
+                {
+                    "dataFolderId": "dfd_new_status",
+                    "path": "/A",
+                    "storedRowUpdatedAt": null,
+                    "tableSpec": { "status": "quarantined", "note": "a future status" },
+                    "defaultView": { "status": "absent" }
+                },
+                {
+                    "dataFolderId": "dfd_missing_sha",
+                    "path": "/B",
+                    "storedRowUpdatedAt": null,
+                    "tableSpec": { "status": "present", "content": "{}\n" },
+                    "defaultView": { "status": "absent" }
+                },
+                { "dataFolderId": "dfd_no_path" }
+            ]
+        }))
+        .unwrap();
+    let entries = connection.parse_data_folders();
+    assert!(matches!(
+        &entries[0],
+        super::WorkbookTableSpecsDataFolderEntry::Parsed(super::WorkbookTableSpecsDataFolder {
+            table_spec: super::TableSpecArtifact::Unknown,
+            ..
+        })
+    ));
+    assert!(matches!(
+        &entries[1],
+        super::WorkbookTableSpecsDataFolderEntry::Malformed { path: Some(path), .. } if path == "/B"
+    ));
+    assert!(matches!(
+        &entries[2],
+        super::WorkbookTableSpecsDataFolderEntry::Malformed { path: None, .. }
+    ));
+}
+
+#[test]
+fn table_specs_query_scopes_and_encodes_the_connection() {
+    assert_eq!(
+        super::workbook_table_specs_query(None, true),
+        "metadataOnly=true"
+    );
+    assert_eq!(
+        super::workbook_table_specs_query(Some("coa_1 x"), false),
+        "metadataOnly=false&connectorAccountId=coa_1%20x"
+    );
+}

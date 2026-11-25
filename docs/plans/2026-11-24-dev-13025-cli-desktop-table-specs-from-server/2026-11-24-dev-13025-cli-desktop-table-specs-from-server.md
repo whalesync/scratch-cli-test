@@ -2,7 +2,7 @@
 
 > **Un-cancelled 2026-11-25.** On 2026-11-24 this design was cancelled because the CLI and Desktop were going to be sunset. On 2026-11-25 the sunset was put on hold, and this design is being built so the table specs can be removed from git completely (DEV-13027, then DEV-13028). Step 0 is decided (build it). MR 0 is folded into MR 2. A review of the CLI and Desktop wiring on 2026-11-25 found one gap and several risks; the fixes are in [Wiring review fixes](#wiring-review-fixes-2026-11-25).
 
-**Status:** In Progress. MR 1 (server) is on branch `dev-13025-cli-and-desktop-get-table-specs-and-default-views`; MR 2 (CLI and Desktop) follows once MR 1 is in prod. **Created:** 2026-11-24. **Author:** Chris Hoefgen (with Claude). **Linear:** [DEV-13025](https://linear.app/whalesync/issue/DEV-13025) (parent DEV-12616; unblocks DEV-13027 and DEV-13028).
+**Status:** In Progress. MR 1 (server) merged 2026-11-25 as [!3497](https://gitlab.com/whalesync/spinner/-/merge_requests/3497) (`0b324eb01`); the prod divergence report matched all 2,007 folders and the import dry run would import 0. MR 2 (CLI and Desktop) is on branch `dev-13025-cli-desktop-table-specs-from-server` (see [MR 2 implementation notes](#mr-2-implementation-notes)). **Created:** 2026-11-24. **Author:** Chris Hoefgen (with Claude). **Linear:** [DEV-13025](https://linear.app/whalesync/issue/DEV-13025) (parent DEV-12616; unblocks DEV-13027 and DEV-13028).
 
 All references are to `7c8ad12be`. The code facts below come from reading the code. Prod sizes and traffic come from read-only DB queries, load balancer logs, and PostHog. Nothing was reproduced locally.
 
@@ -337,6 +337,19 @@ A review of the CLI and Desktop wiring against `7c8ad12be` found these. The wiri
    - `linked add` on a connection that isn't in the local marker gets no specs until a full `files download` (`download_workbook` doesn't run `sync_workspace_structure`). Records are skipped the same way today. The `linked add` test uses a connection that is already set up locally.
    - `--skip-folder-index` refreshes the spec bytes but leaves stale `enforce_schema` results until the next pull without the flag, because the DEV-10518 loop stays inside that gate (`files.rs:1010`). Nothing in the repo uses the flag.
    - `shared/index.rs:122-129` (`load_schema_maps`) reads the worktree `.scratch`, but its only caller, `build()`, has no callers. DEV-13028 removes it.
+
+### MR 2 implementation notes
+
+Where MR 2 differs from, or adds to, the design above:
+
+- **Module:** `scratch-git-2/src/cli/commands/table_spec_cache_refresh.rs`. Claiming (`claim_cache_files_for_connection`) and planning (`plan_table_spec_cache_changes`) are separate pure steps; the I/O layer hashes the bytes the filesystem returns for each claimed path, so on macOS and Windows a case-only folder rename reads the existing file instead of rewriting it every refresh. Pruning keeps an owned file that differs from a claimed path only in case.
+- **Duplicate paths** are resolved case-insensitively but not NFC-normalized: the crate has no Unicode-normalization dependency, and prod has no duplicate paths.
+- **`files download`** refreshes every connection in the marker, including one whose record download failed, because specs don't depend on it.
+- **`workspaces init`** exits 0 when the refresh fails (fix 4); the warning names `scratchmd files refresh-table-specs`.
+- **`files publish`** refreshes the connections that published and reports problems on stderr only; its `--json` output is unchanged.
+- **`files revert-plan`** warns only when no spec is readable anywhere (cache or git), once per folder.
+- **Telemetry fields** are flat (`presentFileCount`, `absentFileCount`, `unreadableFileCount`) instead of `statusCounts`, so HogQL can filter on them; the DEV-13027 gate is `unreadableFileCount = 0`.
+- **Verified mirror-off:** the full `scratch-cli-tests` suite and the new `table-specs` suite were run locally against a server with `TABLE_SPEC_GIT_MIRROR_ENABLED=false`.
 
 ### Desktop (`scratch-desktop`)
 

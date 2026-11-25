@@ -41,7 +41,7 @@ The local CLI no longer pushes to `dirty`. The user's accepted-but-not-published
       default.json                # The connector's default view — a server-written mirror
 ```
 
-Since DEV-12616 the source of truth for `schema.json` and `views/default.json` is Postgres (`DataFolderTableSpec`). The server writes them here (on `main` and `dirty`) after every database write, as a one-way mirror for the readers that still need files: the `scratchmd` CLI and Desktop (through their clone), and the web client's "Show hidden files" viewer (on `dirty`). The service's index build no longer needs them: the server sends each folder's stored spec in the `POST /api/repo/index/{id}/build` body, and the service reads `.scratch/<folder>/schema.json` from `main` only for a folder the body leaves out (a folder with no stored row, or when the server falls back to sending none). Never hand-edit them; the next write overwrites them.
+Since DEV-12616 the source of truth for `schema.json` and `views/default.json` is Postgres (`DataFolderTableSpec`). The server writes them here (on `main` and `dirty`) after every database write, as a one-way mirror for the readers that still need files: `scratchmd` binaries older than DEV-13025 and the Desktop versions that bundle them (through their clone), and the web client's "Show hidden files" viewer (on `dirty`). Since DEV-13025, `scratchmd` ignores these copies: it fetches the specs from `GET /cli/v1/workbooks/:id/table-specs` instead (see the cache below), which is what lets DEV-13027 turn the mirror off. The service's index build no longer needs them: the server sends each folder's stored spec in the `POST /api/repo/index/{id}/build` body, and the service reads `.scratch/<folder>/schema.json` from `main` only for a folder the body leaves out (a folder with no stored row, or when the server falls back to sending none). Never hand-edit them; the next write overwrites them.
 
 The `/upload-patch` → `publish-v2/plan-job` → `publish-v2/run-job` flow does not write phase files into the repo. The legacy `publish-from-git` job used to write `.scratch/{folder}/publish-plan-{ts}/` and `.scratch/.publish-plans/` directories inside the server-side bare repo; that job and its server-side endpoint + worker were removed in Phase 7.
 
@@ -82,7 +82,11 @@ transformers/
       {CONNECTOR-NAME}/
         accepted-patches.json          # User's approved-but-not-published edits — see REVIEW_MODEL.md
       scratch/
-        {CONNECTOR-NAME}/              # Per-connection schema files + validator config (cache)
+        {CONNECTOR-NAME}/              # Per-connection table-spec cache + validator config (see below)
+          {folder}/
+            schema.json                # From the server (DEV-13025); never from git
+            views/default.json         # From the server; other views/*.json are local
+            validation.json            # Local validator config; no server or git copy
     workspace/                         # Materialization of workbook config repo (`routines/` left out)
       syncs/*.json
       transformers/*.rhai
@@ -94,10 +98,10 @@ transformers/
     {workbookId}.git                   # Workbook config repo
   {CONNECTOR-NAME}/                    # Real git worktree of refs/heads/main (the user's editing area)
     .git                               # Gitlink file → ../.repos/{connectorAccountId}.git/worktrees/{name}
-    .scratch/                          # Schemas + views, carried natively by the main tree
+    .scratch/                          # Legacy git copy of the schemas + views; nothing reads it (DEV-13025)
       {folder}/
         schema.json
-        view.json
+        views/default.json
     {folder}/
       *.json                           # Record files
 ```
@@ -106,7 +110,7 @@ Key properties:
 
 - **One non-sparse `git worktree add` per connection on `refs/heads/main`** (slice F.2.b). The `.git` gitlink file is the only git artifact in the user's editing area; the bare repo + objects live at `.repos/{connectorAccountId}.git/`.
 - **`accepted-patches.json` is the authoritative "approved-but-not-yet-published" store** — see [REVIEW_MODEL.md](REVIEW_MODEL.md). The CLI no longer maintains a local `refs/heads/dirty` branch; `setup_connection` prunes that ref post-clone (slice F.5).
-- **`.scratch/connections/scratch/{CONNECTOR-NAME}/` is a cache.** Schemas + views live in the worktree's `.scratch/` tree natively; the cache directory exists because some readers (`shared/validators`, `shared/index`, `cli/commands/validation`) still resolve schemas from there rather than from the worktree.
+- **`.scratch/connections/scratch/{CONNECTOR-NAME}/` is the table-spec cache, filled from the server (DEV-13025).** Every reader of a folder's spec or default view resolves it there: the validators, the folder index, `record-tree`, `syncs validate-local`, `files revert-plan`, and Desktop. `cli/commands/table_spec_cache_refresh.rs` is its only writer. It owns exactly `schema.json` and `views/default.json`, writes the server's stored bytes verbatim and atomically, deletes the ones the server no longer has, and never touches `validation.json` or named views. `files download`, `workspaces init`, the `linked` commands, `files publish`, `files reconcile-after-publish`, and `files refresh-table-specs` all run it. Git never writes the cache: `materialize_local_repo` ignores `.scratch/` keys.
 - **`.repos/` is flat per workbook** — the composite `repoPath` (`{orgId}/{workbookId}/{connectorAccountId}`) remains the logical repo ID, but local bare repos and DBs use only the final basename inside the workbook root.
 - **The CLI has no routine support** (DEV-12661). The server stores routine definitions in Postgres. The config checkout leaves `routines/` out, so the server's transitional git mirror of it never lands on disk.
 

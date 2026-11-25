@@ -17,6 +17,7 @@ Black-box integration tests for the `scratchmd` Rust CLI binary (`scratch-git-2/
 | **Workspace Sync** | Detect added/removed connections on download, test `--on-delete=remove` and `keep` modes |
 | **Empty Folders**  | A sync from a never-populated (0-row) source folder completes instead of 404-ing — regression cover for the scratch-git `files-paginated` empty-folder fix (DEV-10496) |
 | **Record Tree**    | `record-tree` derives a folder's parent/child forest from schema-declared `recordTree` paths — node kinds/urls, embedded sibling folders, and the no-declaration error (local-only; synthetic workspace fixture, no server round-trip) |
+| **Table Specs**    | DEV-13025: the table-spec cache (`schema.json`, `views/default.json`) matches `GET /cli/v1/workbooks/:id/table-specs` byte for byte after init, download (including up to date and `--skip-folder-index`), `linked add`/`remove`, `reconcile-after-publish`, and `files refresh-table-specs`; `validation.json` and named views survive. Run it against a server with `TABLE_SPEC_GIT_MIRROR_ENABLED=false` to prove nothing reads the git copies |
 
 Each suite tests the full CLI stack: argument parsing, flag handling, credential loading, `--json` serialization, and exit codes.
 

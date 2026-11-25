@@ -203,11 +203,14 @@ const scratchDesktop = {
   // is the run-job's `failedOperations` array serialized to a JSON string. `pipelineId`
   // (DEV-10756) makes the CLI fetch the COMPLETE failure set so failures beyond the
   // server-side display cap aren't stranded; `failedOpsJson` is the fallback.
+  // `options.skipTableSpecRefresh` (DEV-13025): only when a pull follows, which
+  // refreshes every connection's table specs anyway.
   reconcileAfterPublish: (
     workspacePath: string,
     connectionId: string,
     failedOpsJson: string,
     pipelineId?: string,
+    options?: { skipTableSpecRefresh?: boolean },
   ): Promise<{
     status: string;
     connection: string;
@@ -215,7 +218,7 @@ const scratchDesktop = {
     filesUpdated: number;
     filesDeleted: number;
     failedCount: number;
-  }> => invoke('scratch:reconcile-after-publish', workspacePath, connectionId, failedOpsJson, pipelineId),
+  }> => invoke('scratch:reconcile-after-publish', workspacePath, connectionId, failedOpsJson, pipelineId, options),
   pullWorkspaceChanges: (
     workspacePath: string,
     opts?: { onDelete?: string; filePath?: string; connectionId?: string },

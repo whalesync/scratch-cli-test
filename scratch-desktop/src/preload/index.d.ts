@@ -218,12 +218,16 @@ interface ScratchDesktopAPI {
    * connector-rejected records into `failed-patches.json` (re-surfacing them as
    * needs-approval), drops publish-no-op survivors, preserves unreviewed edits.
    * `failedOpsJson` is the run-job's `failedOperations` array as a JSON string.
+   * `options.skipTableSpecRefresh` (DEV-13025) skips refreshing the connection's
+   * table specs; pass it only when a `pullWorkspaceChanges` follows, which
+   * refreshes every connection anyway.
    */
   reconcileAfterPublish: (
     workspacePath: string,
     connectionId: string,
     failedOpsJson: string,
     pipelineId?: string,
+    options?: { skipTableSpecRefresh?: boolean },
   ) => Promise<{
     status: string;
     connection: string;

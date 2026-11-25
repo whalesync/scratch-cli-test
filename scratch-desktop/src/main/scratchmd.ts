@@ -360,8 +360,14 @@ export function getScratchmdBinaryPath(): string {
 // the wrapper's bundled-tree derivation wins over stale parent-shell values.
 // See setup-git-env.ts for the per-platform Resources/git layout written by
 // scripts/afterPack.cjs.
-function scratchmdEnv(): NodeJS.ProcessEnv {
+export function scratchmdEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
+
+  // DEV-13025: the bundled scratchmd reports its crate version (always the
+  // build default), so name the app version for its User-Agent. That is the
+  // only way the server can tell Desktop versions apart in CLI traffic. Set
+  // before the dev-build early return so dev runs identify themselves too.
+  env.SCRATCH_DESKTOP_APP_VERSION = app.getVersion();
 
   // SCRATCH_URL is set on process.env at startup and on login (see index.ts),
   // so the spawned CLI inherits it here and targets the same Scratch server the
@@ -1115,6 +1121,16 @@ export interface ReconcileAfterPublishResult {
   failedCount: number;
 }
 
+/** Options for {@link reconcileAfterPublish}. */
+export interface ReconcileAfterPublishOptions {
+  /**
+   * DEV-13025: skip refreshing this connection's table specs. Pass it only when a
+   * `files download` runs right after (it refreshes every connection), so a
+   * whole-workspace publish doesn't spend rate-limited calls twice.
+   */
+  skipTableSpecRefresh?: boolean;
+}
+
 /**
  * Post-publish reconcile for one connection (publish redesign, DEV-10048). Run
  * after a connection's run-job: re-anchors `accepted-patches.json` against the
@@ -1136,6 +1152,7 @@ export async function reconcileAfterPublish(
   connectionId: string,
   failedOpsJson: string,
   pipelineId?: string,
+  options: ReconcileAfterPublishOptions = {},
 ): Promise<ReconcileAfterPublishResult> {
   return runScratchmdJson<ReconcileAfterPublishResult>(
     [
@@ -1147,6 +1164,7 @@ export async function reconcileAfterPublish(
       '--failed-ops-json',
       failedOpsJson,
       ...(pipelineId ? ['--pipeline-id', pipelineId] : []),
+      ...(options.skipTableSpecRefresh ? ['--skip-table-spec-refresh'] : []),
     ],
     workspacePath,
   );

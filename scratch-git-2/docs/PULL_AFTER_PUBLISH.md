@@ -81,12 +81,21 @@ reapply_unreviewed_edits_after_pull(approved_old, approved_new, worktree)
 materialize_local_repo(final_worktree_map, local_map)   # approved_new + re-applied edits
 save accepted-patches.json atomically
 git update-ref refs/heads/main refs/remotes/origin/main
+# DEV-13025 — after every connection's download (even up to date), one table-spec
+# refresh for every connection in the workspace:
+refresh_table_spec_caches_from_server()
+  └─ GET /cli/v1/workbooks/{id}/table-specs?metadataOnly=true
+  └─ only if a file must be written: the same call with content
+  └─ write/delete .scratch/connections/scratch/<conn>/<folder>/{schema.json,views/default.json}
+  └─ clear DEV-10518 enforce_schema results of folders whose schema.json changed
 # run_download aggregates hard conflicts → exit non-zero blocked_conflict
 #   (single-record --file-path: only if the TARGET hard-conflicts; else exit 0
 #    downloaded_with_stashed_conflicts)
 ```
 
 The atomic save happens **before** the ref bump so that a crash between the two leaves a consistent state on next run (the patches reflect the new head; the next pull will see `up-to-date`). The hard-conflict stash is written **before** `materialize_local_repo` for the same reason — a crash mid-materialize can't drop the user's content.
+
+The publish-plan build can rewrite a folder's table spec, so `files reconcile-after-publish` and `files publish` also refresh the table specs of the connections they reconcile. The desktop's whole-workspace publish passes `--skip-table-spec-refresh` to each per-connection reconcile, because the `files download` it runs right after refreshes every connection in one call. A failed refresh is a stderr warning and `tableSpecCacheRefresh.status: "failed"` in the `--json` output, never a failed pull; nothing is deleted after a failed call, and the next refresh retries.
 
 ## Refuse vs. stash (history)
 

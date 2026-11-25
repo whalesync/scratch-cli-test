@@ -52,6 +52,57 @@ const SERVER_SIDE_REQUEST_CEILING: Duration = Duration::from_secs(300);
 const RESPONSE_SILENCE_TIMEOUT: Duration =
     Duration::from_secs(SERVER_SIDE_REQUEST_CEILING.as_secs() + 30);
 
+/// The User-Agent every binary before DEV-13025 sent, and the prefix the server's `CliStrategy` checks
+/// (case-insensitive `scratch-cli/`). Kept as the first token so login and every `/cli/v1` route keep
+/// accepting this client.
+const LEGACY_SCRATCHMD_USER_AGENT_PREFIX: &str = "Scratch-cli/1.0";
+
+/// Set by Scratch Desktop when it runs its bundled `scratchmd` (DEV-13025), so the server can tell
+/// Desktop versions apart: the bundled binary's own crate version is always the build default.
+const SCRATCH_DESKTOP_APP_VERSION_ENV_VAR: &str = "SCRATCH_DESKTOP_APP_VERSION";
+
+/// The User-Agent for every request: `Scratch-cli/1.0 scratchmd/<crate version>`, plus
+/// ` scratch-desktop/<app version>` when Desktop set [`SCRATCH_DESKTOP_APP_VERSION_ENV_VAR`].
+///
+/// DEV-13025: before this, every binary sent exactly `Scratch-cli/1.0`, so the server couldn't tell a
+/// binary that still copies table specs from git from one that fetches them over REST. This value can
+/// never equal that legacy constant, which is how the server counts old binaries before the git copies
+/// are turned off.
+pub fn scratchmd_user_agent() -> String {
+    scratchmd_user_agent_for_desktop_app_version(
+        std::env::var(SCRATCH_DESKTOP_APP_VERSION_ENV_VAR)
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn scratchmd_user_agent_for_desktop_app_version(desktop_app_version: Option<&str>) -> String {
+    let mut user_agent = format!(
+        "{LEGACY_SCRATCHMD_USER_AGENT_PREFIX} scratchmd/{}",
+        env!("CARGO_PKG_VERSION")
+    );
+    if let Some(desktop_app_version) =
+        desktop_app_version.filter(|version| is_well_formed_user_agent_version(version))
+    {
+        user_agent.push_str(&format!(" scratch-desktop/{desktop_app_version}"));
+    }
+    user_agent
+}
+
+/// A version token the server's classifier accepts: starts alphanumeric, then up to 63 of
+/// `[0-9A-Za-z.+_-]`. Anything else (spaces, a hostile value) is left out of the User-Agent.
+fn is_well_formed_user_agent_version(version: &str) -> bool {
+    let mut characters = version.chars();
+    let Some(first_character) = characters.next() else {
+        return false;
+    };
+    version.len() <= 64
+        && first_character.is_ascii_alphanumeric()
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '+' | '_' | '-')
+        })
+}
+
 /// Total attempts allowed for one request (the first attempt plus its retries).
 const MAX_REQUEST_ATTEMPTS: usize = 3;
 
@@ -200,7 +251,7 @@ impl ApiClient {
             .client
             .request(method, &url)
             .header("Authorization", format!("API-Token {}", self.token))
-            .header("User-Agent", "Scratch-cli/1.0");
+            .header("User-Agent", scratchmd_user_agent());
 
         if let Some(b) = body {
             req = req.json(b);
@@ -310,7 +361,7 @@ impl ApiClient {
     ) -> reqwest::RequestBuilder {
         let mut req = client
             .request(method, url)
-            .header("User-Agent", "Scratch-cli/1.0");
+            .header("User-Agent", scratchmd_user_agent());
 
         if let Some(b) = body {
             req = req.json(b);
@@ -429,6 +480,137 @@ pub struct Workbook {
 #[derive(Debug, serde::Deserialize)]
 pub struct WorkbookListResponse {
     pub workbooks: Vec<Workbook>,
+}
+
+// ── Table specs (DEV-13025) ─────────────────────────────────────────────────
+
+/// The newest `formatVersion` of `GET workbooks/{id}/table-specs` this build understands. A newer
+/// version is a breaking change: the refresh leaves the cache alone and reports `unsupported-format`.
+pub const SUPPORTED_WORKBOOK_TABLE_SPECS_FORMAT_VERSION: u32 = 1;
+
+/// `GET workbooks/{id}/table-specs`: every linked folder's stored table spec (`schema.json`) and
+/// default view (`views/default.json`), grouped by connection, read from Postgres. A complete listing
+/// for its scope. Mirrors `CliWorkbookTableSpecsResponse` in `@spinner/shared-types`.
+#[derive(Debug, serde::Deserialize)]
+pub struct WorkbookTableSpecsResponse {
+    #[serde(rename = "formatVersion")]
+    pub format_version: u32,
+    #[serde(rename = "connectorAccounts", default)]
+    pub connector_accounts: Vec<WorkbookTableSpecsConnection>,
+}
+
+/// One connection and its linked folders. Folders stay raw JSON here and are parsed one at a time
+/// ([`WorkbookTableSpecsConnection::parse_data_folders`]), so one malformed entry can't fail the whole
+/// listing.
+#[derive(Debug, serde::Deserialize)]
+pub struct WorkbookTableSpecsConnection {
+    #[serde(rename = "connectorAccountId")]
+    pub connector_account_id: String,
+    #[serde(rename = "dataFolders", default)]
+    pub data_folders: Vec<serde_json::Value>,
+}
+
+/// One linked folder's two stored files.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct WorkbookTableSpecsDataFolder {
+    #[serde(rename = "dataFolderId")]
+    pub data_folder_id: String,
+    /// `DataFolder.path`: starts with `/`; `/` is the connection's root folder.
+    pub path: String,
+    /// When the folder's stored row last changed; null when it has none. Only for breaking ties
+    /// between folders that map to the same local directory.
+    #[serde(rename = "storedRowUpdatedAt", default)]
+    pub stored_row_updated_at: Option<String>,
+    #[serde(rename = "tableSpec")]
+    pub table_spec: TableSpecArtifact,
+    #[serde(rename = "defaultView")]
+    pub default_view: TableSpecArtifact,
+}
+
+/// How the local copy of one stored file should be treated.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+pub enum TableSpecArtifact {
+    /// Postgres holds this file. `sha256` is the lowercase hex SHA-256 of `content`'s UTF-8 bytes;
+    /// `content` is absent in metadata-only mode.
+    Present {
+        sha256: String,
+        #[serde(default)]
+        content: Option<String>,
+    },
+    /// Nothing is stored: the local copy is deleted.
+    Absent,
+    /// The stored content can't be served: the local copy is kept.
+    Unreadable {
+        #[serde(default)]
+        reason: String,
+    },
+    /// A status this build doesn't know (a newer server). Treated like `Unreadable`.
+    #[serde(other)]
+    Unknown,
+}
+
+/// One entry of a connection's `dataFolders`, parsed on its own.
+#[derive(Debug, Clone)]
+pub enum WorkbookTableSpecsDataFolderEntry {
+    Parsed(WorkbookTableSpecsDataFolder),
+    /// The entry didn't match the expected shape. `path` is set when it could still be read, so the
+    /// folder's local files can be kept rather than treated as unclaimed.
+    Malformed {
+        path: Option<String>,
+        reason: String,
+    },
+}
+
+impl WorkbookTableSpecsConnection {
+    pub fn parse_data_folders(&self) -> Vec<WorkbookTableSpecsDataFolderEntry> {
+        self.data_folders
+            .iter()
+            .map(|raw_data_folder| {
+                match serde_json::from_value::<WorkbookTableSpecsDataFolder>(
+                    raw_data_folder.clone(),
+                ) {
+                    Ok(data_folder) => WorkbookTableSpecsDataFolderEntry::Parsed(data_folder),
+                    Err(error) => WorkbookTableSpecsDataFolderEntry::Malformed {
+                        path: raw_data_folder
+                            .get("path")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                        reason: error.to_string(),
+                    },
+                }
+            })
+            .collect()
+    }
+}
+
+impl ApiClient {
+    /// `GET workbooks/{workbook_id}/table-specs`, scoped to one connection when `connector_account_id`
+    /// is set (a 404 when that connection isn't in the workbook). `metadata_only` leaves out every
+    /// file's `content` and keeps its `sha256`. Retried like every GET.
+    pub async fn list_workbook_table_specs(
+        &self,
+        workbook_id: &str,
+        connector_account_id: Option<&str>,
+        metadata_only: bool,
+    ) -> ApiResult<WorkbookTableSpecsResponse> {
+        self.get_query(
+            &format!("workbooks/{}/table-specs", urlencoding::encode(workbook_id)),
+            &workbook_table_specs_query(connector_account_id, metadata_only),
+        )
+        .await
+    }
+}
+
+fn workbook_table_specs_query(connector_account_id: Option<&str>, metadata_only: bool) -> String {
+    let mut query_parameters = vec![format!("metadataOnly={metadata_only}")];
+    if let Some(connector_account_id) = connector_account_id {
+        query_parameters.push(format!(
+            "connectorAccountId={}",
+            urlencoding::encode(connector_account_id)
+        ));
+    }
+    query_parameters.join("&")
 }
 
 #[cfg(test)]

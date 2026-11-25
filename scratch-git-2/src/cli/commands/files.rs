@@ -16,6 +16,13 @@ use crate::shared::review_ops::{
 };
 use crate::shared::validators;
 
+use super::table_spec_cache_refresh::{
+    print_table_spec_cache_refresh_problems,
+    refresh_table_spec_caches_and_reconcile_enforce_schema_results,
+    table_spec_cache_targets_for_workspace, TableSpecCacheRefreshReport,
+    TableSpecCacheRefreshStatus, TableSpecCacheTarget,
+};
+
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum OnDeleteAction {
     /// Interactively ask per removed connection
@@ -322,6 +329,29 @@ pub enum FilesCommands {
         /// if absent or if the fetch fails.
         #[arg(long = "pipeline-id")]
         pipeline_id: Option<String>,
+        /// Skip refreshing this connection's table specs (DEV-13025). For a
+        /// caller that runs `files download` right after, which refreshes every
+        /// connection anyway, so it doesn't spend rate-limited calls twice.
+        #[arg(long = "skip-table-spec-refresh")]
+        skip_table_spec_refresh: bool,
+    },
+
+    /// Refresh the local table specs and default views from the server.
+    ///
+    /// Writes each linked folder's `schema.json` and `views/default.json` into
+    /// `.scratch/connections/scratch/<connection>/<folder>/`, exactly as the
+    /// server stores them, deletes the ones the server no longer has, and
+    /// clears the schema validation results of folders whose table spec
+    /// changed. `files download`, `workspaces init`, the `linked` commands,
+    /// and publish already do this; run it on its own to repair a cache that
+    /// was deleted or edited by hand. Never touches `validation.json` or named
+    /// views (DEV-13025).
+    #[command(name = "refresh-table-specs")]
+    RefreshTableSpecs {
+        /// Refresh only this connection: a connector-account id or a
+        /// connection dir name. Without it, every connection is refreshed.
+        #[arg(long = "connection")]
+        connection: Option<String>,
     },
 
     /// One-time ops migration (DEV-10637): rewrite an already-pulled Shopify
@@ -428,10 +458,6 @@ fn apply_changed_working_files(
         next_file_path_to_contents_map_in_worktree,
         repo_folder,
     )
-}
-
-fn sync_schema_files_from_worktree(ctx: &ConnectionContext) -> anyhow::Result<()> {
-    review_ops::sync_schema_files_from_worktree(&ctx.to_paths())
 }
 
 fn accept_field_in_folder(
@@ -762,6 +788,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             connection,
             failed_ops_json,
             pipeline_id,
+            skip_table_spec_refresh,
         } => {
             run_reconcile_after_publish(
                 &cwd,
@@ -769,9 +796,13 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
                 &connection,
                 failed_ops_json.as_deref(),
                 pipeline_id.as_deref(),
+                skip_table_spec_refresh,
                 json,
             )
             .await
+        }
+        FilesCommands::RefreshTableSpecs { connection } => {
+            run_refresh_table_specs(&cwd, server_url, connection.as_deref(), json).await
         }
         FilesCommands::MigrateShopifyVerbatim {
             apply,
@@ -787,6 +818,78 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             json,
         ),
     }
+}
+
+/// The connection's table-spec cache, as a refresh target (DEV-13025).
+fn table_spec_cache_target_for_context(ctx: &ConnectionContext) -> TableSpecCacheTarget {
+    TableSpecCacheTarget {
+        connection_id: ctx.connection_id.clone(),
+        conn_dir_name: ctx.conn_dir_name.clone(),
+        cache_dir: ctx.scratch_dir.clone(),
+    }
+}
+
+/// `files refresh-table-specs` (DEV-13025): the table-spec refresh on its own,
+/// for every connection in the workspace or the one `--connection` names. Exits
+/// non-zero when the refresh fails, because repairing the cache is all it does.
+async fn run_refresh_table_specs(
+    cwd: &Path,
+    server_url: &str,
+    connection: Option<&str>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let (workspace_marker, workspace_dir, _cwd_filtered_contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url, json)?;
+    let token = get_token(&workspace_server_url)?;
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
+    let mut targets = table_spec_cache_targets_for_workspace(&workspace_dir, &workspace_marker);
+    if let Some(connection) = connection {
+        targets.retain(|target| {
+            target.connection_id == connection || target.conn_dir_name == connection
+        });
+        if targets.is_empty() {
+            anyhow::bail!(
+                "No connection matching '{connection}' in this workspace (expected a connector-account id or connection dir name)."
+            );
+        }
+    }
+
+    let report = refresh_table_spec_caches_and_reconcile_enforce_schema_results(
+        &crate::api::ApiClient::new(workspace_server_url.as_str(), token.as_str()),
+        &workspace_dir,
+        &workspace_marker.workbook.id,
+        &targets,
+        true,
+    )
+    .await;
+    print_table_spec_cache_refresh_problems(&report);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "tableSpecCacheRefresh": report }))?
+        );
+    } else if report.status == TableSpecCacheRefreshStatus::Refreshed {
+        let files_changed =
+            report.schema_files_written + report.default_view_files_written + report.files_deleted;
+        if files_changed == 0 {
+            println!("Table specs are up to date.");
+        } else {
+            println!(
+                "Refreshed table specs: {} schema file(s) and {} default view(s) written, {} file(s) deleted.",
+                report.schema_files_written, report.default_view_files_written, report.files_deleted
+            );
+        }
+    }
+
+    if !report.succeeded() {
+        anyhow::bail!(
+            "Couldn't refresh the table specs: {}",
+            report.error.as_deref().unwrap_or("unknown error")
+        );
+    }
+    Ok(())
 }
 
 fn get_token(server_url: &str) -> anyhow::Result<String> {
@@ -997,6 +1100,26 @@ async fn run_download(
         }
     }
 
+    // DEV-13025: bring every connection's table specs in step with the server.
+    // Every connection in the marker, not just the cwd-filtered `contexts`: a
+    // connection `sync_workspace_structure` just added or repaired has an empty
+    // cache otherwise. It runs whatever the record downloads did (specs are
+    // server-owned and independent of them), on `up_to_date` pulls too (with the
+    // git mirror off, a spec change makes no commit), and outside the
+    // `--skip-folder-index` gate. It comes before the reindex below, which reads
+    // the specs for numeric columns. The DEV-10518 reconcile it runs for changed
+    // folders stays inside that gate, like the loop further down.
+    let table_spec_cache_refresh_report =
+        refresh_table_spec_caches_and_reconcile_enforce_schema_results(
+            &crate::api::ApiClient::new(workspace_server_url.as_str(), token.as_str()),
+            &workspace_dir,
+            &workspace_marker.workbook.id,
+            &table_spec_cache_targets_for_workspace(&workspace_dir, &workspace_marker),
+            !skip_folder_index,
+        )
+        .await;
+    print_table_spec_cache_refresh_problems(&table_spec_cache_refresh_report);
+
     let wb_name = if workspace_marker.workbook.name.is_empty() {
         workspace_marker.workbook.id.as_str()
     } else {
@@ -1011,15 +1134,12 @@ async fn run_download(
         reindex_folder_index_for_changes(&workspace_dir, &all_changed_workspace_paths)?;
 
         // DEV-10518: a server schema change leaves the cached `enforce_schema` results for that
-        // folder stale. For each connection that actually pulled new server state, refresh the
-        // synced schema.json from the (now freshly-checked-out) worktree, then reconcile its
-        // folders' schema hashes — clearing stale `enforce_schema` results when the schema changed.
-        //
-        // This is gated on the per-connection download status, NOT `master_update.moved`: that flag
-        // is always false here because `download_single_repo` advances `refs/heads/main` to
-        // origin/main before `update_main_worktree_after_pull` recomputes it. `results` is aligned
-        // with `contexts` (one push per iteration above). Best-effort — a failure here must never
-        // fail an otherwise-successful download.
+        // folder stale. The table-spec refresh above already reconciled the folders whose
+        // schema.json it rewrote; this pass reconciles every folder of each downloaded connection,
+        // which also records the baseline hash of folders seen for the first time (a no-op for
+        // folders already reconciled). `results` is aligned with `contexts` (one push per
+        // iteration above). Best-effort — a failure here must never fail an otherwise-successful
+        // download.
         for (ctx, download_result) in contexts.iter().zip(results.iter()) {
             // DEV-10641: a connection whose download failed (placeholder result)
             // changed nothing on disk — there is no schema to reconcile.
@@ -1032,11 +1152,6 @@ async fn run_download(
                 .unwrap_or(&[]);
             if folders.is_empty() {
                 continue;
-            }
-            // Only a connection that pulled new server state can have a changed schema; refresh its
-            // synced schema files first (the worktree `.scratch` was just reset to new main).
-            if download_result.status == "downloaded" {
-                let _ = sync_schema_files_from_worktree(ctx);
             }
             let folder_keys: Vec<String> = folders
                 .iter()
@@ -1132,7 +1247,13 @@ async fn run_download(
         }
     }
 
-    print_download_result(&sync_result, &result, started.elapsed().as_millis(), json)
+    print_download_result(
+        &sync_result,
+        &result,
+        &table_spec_cache_refresh_report,
+        started.elapsed().as_millis(),
+        json,
+    )
 }
 
 /// What part of the workspace a `files download` should scope its hard-conflict
@@ -2029,6 +2150,25 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
         );
     }
 
+    // DEV-13025: the publish-plan build can rewrite a folder's table spec, so
+    // refresh the specs of every connection that published, in one call.
+    let published_connection_table_spec_cache_targets: Vec<TableSpecCacheTarget> = contexts
+        .iter()
+        .zip(&outcomes)
+        .filter(|(_, outcome)| !matches!(outcome, PublishConnectionOutcome::Failed { .. }))
+        .map(|(ctx, _)| table_spec_cache_target_for_context(ctx))
+        .collect();
+    let table_spec_cache_refresh_report =
+        refresh_table_spec_caches_and_reconcile_enforce_schema_results(
+            &client,
+            &workspace_dir,
+            workbook_id,
+            &published_connection_table_spec_cache_targets,
+            true,
+        )
+        .await;
+    print_table_spec_cache_refresh_problems(&table_spec_cache_refresh_report);
+
     let elapsed_ms = started.elapsed().as_millis();
     print_publish_results(&outcomes, elapsed_ms, json)?;
 
@@ -2382,6 +2522,9 @@ async fn run_revert_plan(
     let mut reverted_paths: Vec<String> = Vec::new();
     let mut affected_folders: HashSet<String> = HashSet::new();
 
+    // Folders already warned about for a missing table spec, so a large revert
+    // warns once per folder rather than once per record.
+    let mut folders_warned_about_missing_id_path: HashSet<String> = HashSet::new();
     for file_path in &affected {
         let rel_path = file_path.trim_start_matches('/').to_string();
         let abs_path = ctx.worktree_dir.join(&rel_path);
@@ -2423,7 +2566,12 @@ async fn run_revert_plan(
                 let parsed = serde_json::from_slice::<JsonValue>(raw).with_context(|| {
                     format!("parsing pre-publish blob at {rel_path} for revert-delete recreate sentinel")
                 })?;
-                let id_path = load_id_column_remote_id_for_folder(&main_map, &rel_path);
+                let id_path = load_id_column_remote_id_for_folder(
+                    &ctx.scratch_dir,
+                    &main_map,
+                    &rel_path,
+                    &mut folders_warned_about_missing_id_path,
+                );
                 let with_sentinel = replace_pk_with_recreate_sentinel(&parsed, &id_path);
                 let object = with_sentinel.as_object().cloned().ok_or_else(|| {
                     anyhow::anyhow!(
@@ -3080,7 +3228,6 @@ fn run_accept(
             read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
                 requested_rel_paths_set.contains(p)
             })?;
-        sync_schema_files_from_worktree(ctx)?;
         let file_path_to_contents_map_in_worktree =
             read_worktree_files_for_record_paths(&ctx.worktree_dir, &requested_rel_paths)?;
 
@@ -3448,7 +3595,6 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
-    sync_schema_files_from_worktree(&ctx)?;
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     // Folder-scoped: ls-tree still enumerates the whole main tree because
     // cat-file --batch needs the OIDs (there's no path → OID primitive that
@@ -3550,7 +3696,6 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
-    sync_schema_files_from_worktree(&ctx)?;
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     // Folder-scoped main + worktree reads; see run_accept_field for why
     // ls-tree still enumerates the whole tree (cat-file needs OIDs) while
@@ -3651,7 +3796,6 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
-    sync_schema_files_from_worktree(&ctx)?;
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     // Folder-scoped main + worktree reads; see run_accept_field for why
     // ls-tree still enumerates the whole tree (cat-file needs OIDs) while
@@ -4083,16 +4227,41 @@ pub async fn download_workbook(
             .into_iter()
             .filter(|d| downloaded_connection_ids.contains(d.connection_id.as_str()))
             .collect();
-    if !structure_drift.is_empty() {
+    let record_refresh_result = if structure_drift.is_empty() {
+        refresh_workbook_for_contexts(&workspace_dir, &contexts, &server_state, token)
+    } else {
         eprintln!(
             "Warning: skipping local refresh — the folder structure for {} connection(s) changed on the server. Re-clone the workspace (`scratchmd workspaces init {} --force`) to continue.",
             structure_drift.len(),
             workbook_id
         );
-        return Ok(());
-    }
+        Ok(())
+    };
 
-    refresh_workbook_for_contexts(&workspace_dir, &contexts, &server_state, token)
+    // DEV-13025: refresh the table specs whatever happened to the records above
+    // (unreviewed edits, a structure change, or a failed connection download all
+    // stop the record refresh, but specs are server-owned and independent of
+    // them). This is how a folder `linked add` just created gets its spec.
+    // Output goes to stderr only: the linked command's JSON result owns stdout.
+    let server_url_for_table_specs = if workspace_marker.workbook.server_url.is_empty() {
+        base_url.trim_end_matches('/').trim_end_matches("/cli/v1")
+    } else {
+        workspace_marker.workbook.server_url.as_str()
+    };
+    let table_spec_cache_refresh_report = {
+        let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+        refresh_table_spec_caches_and_reconcile_enforce_schema_results(
+            &crate::api::ApiClient::new(server_url_for_table_specs, token),
+            &workspace_dir,
+            &workspace_marker.workbook.id,
+            &table_spec_cache_targets_for_workspace(&workspace_dir, &workspace_marker),
+            true,
+        )
+        .await
+    };
+    print_table_spec_cache_refresh_problems(&table_spec_cache_refresh_report);
+
+    record_refresh_result
 }
 
 /// Inner refresh loop for the programmatic post-server-mutation path. Holds
@@ -4152,9 +4321,9 @@ fn refresh_workbook_for_contexts(
             .map(|s| s.data_folders.as_slice())
             .unwrap_or(&[]);
         download_single_repo(ctx, workspace_dir, token, folders, None)?;
-        if update_main_worktree_after_pull(ctx, token).is_ok() {
-            let _ = sync_schema_files_from_worktree(ctx);
-        }
+        // Best-effort, as in `files download`: it resets the gix index to the new main (so
+        // unreviewed-edit detection stays right). The table specs are refreshed by the caller.
+        let _ = update_main_worktree_after_pull(ctx, token);
     }
     Ok(())
 }
@@ -5483,28 +5652,53 @@ fn print_blocked_dirty_result(
     Ok(())
 }
 
-/// Resolve the connector's `idPath` (dot path into a record file)
-/// for the folder that owns `rel_path`. Reads `.scratch/<folder>/schema.json`
-/// from the given on-disk tree map. Returns [`json_path::DEFAULT_ID_PATH`]
-/// when the schema is missing or doesn't declare an id column — same fallback
-/// as the index builder.
-fn load_id_column_remote_id_for_folder(tree_map: &FileMap, rel_path: &str) -> String {
+/// Resolve the connector's `idPath` (dot path into a record file) for the
+/// folder that owns `rel_path`, from the folder's `schema.json`.
+///
+/// DEV-13025: reads the connection's table-spec cache (`scratch_dir`) first,
+/// because that is what the server keeps current. It falls back to the git
+/// copy on `main` (`.scratch/<folder>/schema.json` in `main_branch_tree_map`)
+/// while the server still mirrors specs to git; DEV-13028 removes that fallback.
+///
+/// Returns [`json_path::DEFAULT_ID_PATH`] when the schema doesn't declare an id
+/// column (the index builder's fallback), or when neither copy is readable. The
+/// last case warns on stderr, once per folder: a connector whose id root isn't
+/// `id` would otherwise get a recreate sentinel in the wrong field.
+fn load_id_column_remote_id_for_folder(
+    scratch_dir: &Path,
+    main_branch_tree_map: &FileMap,
+    rel_path: &str,
+    folders_warned_about_missing_id_path: &mut HashSet<String>,
+) -> String {
     let folder = std::path::Path::new(rel_path)
         .parent()
         .and_then(|p| p.to_str())
         .unwrap_or("");
-    let schema_rel_path = if folder.is_empty() {
-        ".scratch/schema.json".to_string()
+    let schema_cache_relative_path = if folder.is_empty() {
+        "schema.json".to_string()
     } else {
-        format!(".scratch/{}/schema.json", folder)
+        format!("{folder}/schema.json")
     };
-    let Some(schema_bytes) = tree_map.get(schema_rel_path.as_str()) else {
+    let parse_table_spec =
+        |schema_bytes: &[u8]| serde_json::from_slice::<JsonValue>(schema_bytes).ok();
+    let table_spec_from_cache = std::fs::read(scratch_dir.join(&schema_cache_relative_path))
+        .ok()
+        .and_then(|schema_bytes| parse_table_spec(&schema_bytes));
+    let table_spec = table_spec_from_cache.or_else(|| {
+        main_branch_tree_map
+            .get(format!(".scratch/{schema_cache_relative_path}").as_str())
+            .and_then(|schema_bytes| parse_table_spec(schema_bytes))
+    });
+    let Some(table_spec) = table_spec else {
+        if folders_warned_about_missing_id_path.insert(folder.to_string()) {
+            eprintln!(
+                "Warning: no table spec for folder {folder:?}; assuming its records' id is at `{}`. Run `scratchmd files refresh-table-specs` and retry if that's wrong.",
+                crate::shared::json_path::DEFAULT_ID_PATH
+            );
+        }
         return crate::shared::json_path::DEFAULT_ID_PATH.to_string();
     };
-    let Ok(schema_value) = serde_json::from_slice::<JsonValue>(schema_bytes) else {
-        return crate::shared::json_path::DEFAULT_ID_PATH.to_string();
-    };
-    crate::shared::index::extract_id_path(&schema_value)
+    crate::shared::index::extract_id_path(&table_spec)
         .unwrap_or_else(|| crate::shared::json_path::DEFAULT_ID_PATH.to_string())
 }
 
@@ -6570,6 +6764,7 @@ async fn run_reconcile_after_publish(
     connection: &str,
     failed_ops_json: Option<&str>,
     pipeline_id: Option<&str>,
+    skip_table_spec_refresh: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
@@ -6607,7 +6802,7 @@ async fn run_reconcile_after_publish(
     let succeeded_paths =
         resolve_succeeded_paths(&client, workspace_marker.workbook.id.as_str(), pipeline_id).await;
 
-    let result = download_single_repo(
+    let record_reconcile_result = download_single_repo(
         ctx,
         &workspace_dir,
         &token,
@@ -6616,7 +6811,25 @@ async fn run_reconcile_after_publish(
             failed_ops: &failed_ops,
             succeeded_paths: &succeeded_paths,
         }),
-    )?;
+    );
+
+    // DEV-13025: the publish-plan build can rewrite a folder's table spec, so
+    // refresh this connection's specs, whatever the record reconcile did. It runs
+    // before the reindex below, which reads the specs for numeric columns.
+    let table_spec_cache_refresh_report = if skip_table_spec_refresh {
+        TableSpecCacheRefreshReport::skipped()
+    } else {
+        refresh_table_spec_caches_and_reconcile_enforce_schema_results(
+            &client,
+            &workspace_dir,
+            &workspace_marker.workbook.id,
+            &[table_spec_cache_target_for_context(ctx)],
+            true,
+        )
+        .await
+    };
+    print_table_spec_cache_refresh_problems(&table_spec_cache_refresh_report);
+    let result = record_reconcile_result?;
 
     // Reindex changed records (paths come back connection-relative) so the grid
     // reflects the post-publish + failed-patches state.
@@ -6637,6 +6850,7 @@ async fn run_reconcile_after_publish(
             "filesUpdated": result.files_updated,
             "filesDeleted": result.files_deleted,
             "failedCount": failed_ops.len(),
+            "tableSpecCacheRefresh": table_spec_cache_refresh_report,
         });
         println!("{}", serde_json::to_string(&payload)?);
     } else {
@@ -6774,12 +6988,6 @@ fn download_one_connection_for_pull(
     // bubble up because the dirty-side download already succeeded. Fall
     // back to "no master change" on error.
     let master_update = update_main_worktree_after_pull(ctx, token).unwrap_or_default();
-    if master_update.moved {
-        // Schema files on master may have moved alongside data files;
-        // resync them into ctx.scratch_dir. Gated on `moved` so unchanged
-        // connections pay zero cost.
-        let _ = sync_schema_files_from_worktree(ctx);
-    }
     // Merge the master-side path diff into the download result so the
     // single `changed_paths` field downstream covers any tree the
     // folder_index needs to recompute its bits against.
@@ -7762,7 +7970,6 @@ fn discard_all_unreviewed_changes_in_connection_repo(
     repo_folder: Option<&str>,
 ) -> anyhow::Result<DiscardAllResult> {
     let _ = workspace_dir; // retained for caller-site parity with accept_all/reject_all.
-    sync_schema_files_from_worktree(ctx)?;
     if git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?.is_none() {
         return Ok(DiscardAllResult {
             skipped_missing_main: true,
@@ -7875,7 +8082,6 @@ fn discard_record_paths_in_connection_repo(
             requested_rel_paths_set.contains(p)
         })?;
 
-    sync_schema_files_from_worktree(ctx)?;
     let file_path_to_contents_map_in_worktree =
         read_worktree_files_for_record_paths(&ctx.worktree_dir, rel_paths)?;
 
@@ -7976,7 +8182,6 @@ fn accept_all_unreviewed_changes_in_connection_repo(
     repo_folder: Option<&str>,
 ) -> anyhow::Result<AcceptAllResult> {
     let _ = workspace_dir;
-    sync_schema_files_from_worktree(ctx)?;
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
@@ -8064,7 +8269,6 @@ fn reject_all_unreviewed_changes_in_connection_repo(
     repo_folder: Option<&str>,
 ) -> anyhow::Result<RejectAllResult> {
     let _ = workspace_dir;
-    sync_schema_files_from_worktree(ctx)?;
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
@@ -8161,9 +8365,9 @@ fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
     crate::git_ops::read_tree_files(bare_repo, hash)
 }
 
-/// Reconcile the on-disk state of `ctx.worktree_dir` (user working tree) and
-/// `ctx.scratch_dir` (per-connection schema/validation/publish-plan files)
-/// with `target_map`.
+/// Reconcile the on-disk state of `ctx.worktree_dir` (user working tree) with
+/// `target_map`. `.scratch/` keys in either map are ignored: the connection's
+/// cache (`ctx.scratch_dir`) is never written from git (DEV-13025).
 ///
 /// **Diff-aware.** Files whose content matches `current_map` are left alone
 /// — their mtime is preserved. Only paths whose content differs are
@@ -8187,18 +8391,19 @@ fn materialize_local_repo(
     current_map: &FileMap,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&ctx.worktree_dir)?;
-    std::fs::create_dir_all(&ctx.scratch_dir)?;
 
-    // Resolve a rel_path into its on-disk path under either `worktree_dir` or
-    // `scratch_dir`. Returns `None` for `.scratch` (bare, no trailing slash)
-    // and similar oddities — those don't materialize to a real file.
+    // Resolve a rel_path into its on-disk path under `worktree_dir`. Every
+    // `.scratch` key resolves to `None`, so git never writes or deletes a file
+    // in the connection's cache (`scratch_dir`). DEV-13025: the cache's
+    // `schema.json` and `views/default.json` come from the server
+    // (`table_spec_cache_refresh`), and everything else there is local state
+    // git never tracked, such as Desktop's `validation.json`, which this
+    // delete loop used to remove on every publish.
     let resolve_disk_path = |rel_path: &str| -> Option<PathBuf> {
-        if let Some(scratch_rel) = rel_path.strip_prefix(".scratch/") {
-            Some(ctx.scratch_dir.join(scratch_rel))
-        } else if !rel_path.starts_with(".scratch") {
-            Some(ctx.worktree_dir.join(rel_path))
-        } else {
+        if rel_path.starts_with(".scratch") {
             None
+        } else {
+            Some(ctx.worktree_dir.join(rel_path))
         }
     };
 
@@ -8578,6 +8783,7 @@ fn print_file_list(paths: &[String]) {
 fn print_download_result(
     sync: &WorkspaceSyncResult,
     result: &DownloadResult,
+    table_spec_cache_refresh_report: &TableSpecCacheRefreshReport,
     elapsed_ms: u128,
     json: bool,
 ) -> anyhow::Result<()> {
@@ -8599,6 +8805,8 @@ fn print_download_result(
             "unreviewedConflictsAutoResolved": result.unreviewed_conflicts_auto_resolved,
             "messages": result.messages,
             "elapsedMs": elapsed_ms,
+            // DEV-13025: what the table-spec refresh did (see `files refresh-table-specs`).
+            "tableSpecCacheRefresh": table_spec_cache_refresh_report,
         });
         if has_sync_changes {
             output["connectionsAdded"] = serde_json::json!(sync.connections_added);
@@ -8800,13 +9008,13 @@ fn format_elapsed(ms: u128) -> String {
 }
 
 /// Outcome of `update_main_worktree_after_pull` for a single connection.
-/// Callers use `moved` to gate work that only matters when main actually
-/// advanced (sync_schema_files_from_worktree) and `changed_paths` to drive a
-/// targeted folder_index reindex.
+/// Callers use `changed_paths` to drive a targeted folder_index reindex.
 #[derive(Default)]
 struct MasterUpdateResult {
     /// `true` iff `refs/heads/main` advanced from its previous tip during
-    /// this call (or was created from scratch).
+    /// this call (or was created from scratch). Only tests read it since
+    /// DEV-13025 removed the schema sync it gated.
+    #[cfg_attr(not(test), allow(dead_code))]
     moved: bool,
     /// Repo-relative data paths whose blob OID changed between the old and
     /// new main tree. Empty when `moved` is false. Excludes `.scratch/`.
@@ -8827,8 +9035,10 @@ struct MasterUpdateResult {
 ///    tree (record JSONs were already written by `download_single_repo`'s
 ///    `materialize_local_repo`).
 /// 2. `worktree_checkout_path(_, _, ".scratch")` re-checks-out only the
-///    `.scratch/` subtree so schema files reflect the new HEAD without
-///    overwriting user record edits.
+///    `.scratch/` subtree so the worktree matches the new HEAD without
+///    overwriting user record edits. Since DEV-13025 nothing reads that copy:
+///    the table-spec cache is filled from the server
+///    (`table_spec_cache_refresh`). DEV-13028 removes this checkout.
 fn update_main_worktree_after_pull(
     ctx: &ConnectionContext,
     _token: &str,
@@ -8851,9 +9061,10 @@ fn update_main_worktree_after_pull(
     git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
     if ctx.worktree_dir.join(".git").exists() {
         crate::git_ops::worktree_reset_mixed(&ctx.worktree_dir, &new_main_hash)?;
-        // Re-check-out only the tracked `.scratch/` so the next
-        // `sync_schema_files_from_worktree` reads fresh schemas. Skips
-        // record files — `materialize_local_repo` already wrote those.
+        // Re-check-out only the tracked `.scratch/` so the worktree matches
+        // HEAD (nothing reads this copy since DEV-13025; DEV-13028 removes the
+        // checkout). Skips record files — `materialize_local_repo` already
+        // wrote those.
         crate::git_ops::worktree_checkout_path(&ctx.worktree_dir, &new_main_hash, ".scratch")?;
     }
 

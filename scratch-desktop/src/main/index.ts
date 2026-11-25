@@ -55,7 +55,7 @@ import {
   type WorkbookSettings,
 } from './preferences-store';
 import { reviewStatsNotifier } from './review-stats-notifier';
-import type { RerunValidationScope, RerunValidationSummary } from './scratchmd';
+import type { ReconcileAfterPublishOptions, RerunValidationScope, RerunValidationSummary } from './scratchmd';
 import {
   acceptFieldChanges,
   clearFolderIndex,
@@ -1132,9 +1132,16 @@ confinedIpc.handle(
 // aren't lost. `failedOpsJson` is the run-job's `failedOperations` as a JSON string.
 confinedIpc.handle(
   'scratch:reconcile-after-publish',
-  async (_, workspacePath: string, connectionId: string, failedOpsJson: string, pipelineId?: string) =>
+  async (
+    _,
+    workspacePath: string,
+    connectionId: string,
+    failedOpsJson: string,
+    pipelineId?: string,
+    options?: ReconcileAfterPublishOptions,
+  ) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
-      const result = await reconcileAfterPublish(workspacePath, connectionId, failedOpsJson, pipelineId);
+      const result = await reconcileAfterPublish(workspacePath, connectionId, failedOpsJson, pipelineId, options);
       // Mirror the pull handler: re-seed schema validators for any folders the
       // reconcile materialized so validation counts stay current.
       await seedSchemaValidatorsAndPopulateProblems(workspacePath);

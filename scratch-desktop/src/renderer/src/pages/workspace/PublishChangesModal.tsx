@@ -2061,6 +2061,9 @@ export function PublishChangesModal({
             conn.connectionId,
             JSON.stringify(conn.failedOperations ?? []),
             conn.pipelineId,
+            // DEV-13025: the pull below refreshes every connection's table specs
+            // in one call, so don't spend a rate-limited refresh per connection.
+            { skipTableSpecRefresh: true },
           );
         }
         // Bring any connections that did NOT run (e.g. advanced server-side via a
