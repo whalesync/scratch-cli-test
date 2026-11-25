@@ -1,6 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { formatRecordJson, type TableView } from '@spinner/shared-types';
+import { formatRecordJson, type CliTableSpecArtifact, type TableView } from '@spinner/shared-types';
+import { createHash } from 'crypto';
 import { isEqual, isPlainObject } from 'lodash';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
@@ -59,10 +60,21 @@ export type DataFolderTableSpecGitImportOutcome =
   | { kind: 'git-read-failed'; error: unknown }
   | { kind: 'data-folder-deleted' };
 
+/**
+ * Whether the stored text and the git file differ byte for byte (DEV-13025). Today the CLI cache holds the git bytes,
+ * so a byte difference is a folder whose cache the first `scratchmd` refresh from the server rewrites, clearing its
+ * `enforce_schema` results (the DEV-10518 hash is over raw bytes). A spec whose only difference is `generatedAt`
+ * matches but differs in bytes: `writeSchemaToGit` skips a commit when only `generatedAt` changed.
+ */
+interface StoredAndGitByteDifferences {
+  tableSpecBytesDiffer: boolean;
+  defaultViewBytesDiffer: boolean;
+}
+
 /** How a folder's stored row compares with its git copy (ignoring `generatedAt`). Read-only. */
 export type DataFolderTableSpecGitDivergenceOutcome =
-  | { kind: 'matches' }
-  | { kind: 'differs'; tableSpecDiffers: boolean; defaultViewDiffers: boolean }
+  | ({ kind: 'matches' } & StoredAndGitByteDifferences)
+  | ({ kind: 'differs'; tableSpecDiffers: boolean; defaultViewDiffers: boolean } & StoredAndGitByteDifferences)
   /** The folder has no row (the import's job, not the report's). */
   | { kind: 'no-row' }
   | { kind: 'no-table-spec-in-git' }
@@ -77,6 +89,10 @@ type TableSpecAndDefaultViewReadFromGit =
       tableSpecFromGit: Record<string, unknown>;
       /** Null when git has no `views/default.json`, or holds one that isn't a JSON object (logged). */
       defaultViewFromGit: Record<string, unknown> | null;
+      /** The raw `schema.json` text (or the legacy in-folder `.schema.json` when the new file is absent). */
+      tableSpecFileContentFromGit: string;
+      /** The raw `views/default.json` text, or null when git has none. */
+      defaultViewFileContentFromGit: string | null;
     }
   | { kind: 'no-table-spec-in-git' }
   | { kind: 'invalid-table-spec-in-git'; reason: string }
@@ -89,6 +105,22 @@ export interface StoredTableSpecsForConnectionRepoIndexBuild {
   tableSpecsByRepoRelativeFolderKey: Record<string, Record<string, unknown>>;
   /** Linked folders with a path but no stored row: scratch-git reads these folders' specs from git. */
   linkedFolderWithoutStoredRowCount: number;
+}
+
+/** One linked folder's stored table spec and default view, as `GET /cli/v1/workbooks/:id/table-specs` serves them. */
+export interface StoredTableSpecAndDefaultViewForCliCacheRefresh {
+  dataFolderId: string;
+  folderPath: string;
+  /** Null when the folder has no stored row. */
+  storedRowUpdatedAt: Date | null;
+  tableSpec: CliTableSpecArtifact;
+  defaultView: CliTableSpecArtifact;
+}
+
+/** One connection's linked folders, sorted by path, for the CLI cache refresh. */
+export interface StoredTableSpecsForCliCacheRefreshConnection {
+  connectorAccountId: string;
+  dataFolders: StoredTableSpecAndDefaultViewForCliCacheRefresh[];
 }
 
 /** The default view's file name under `.scratch/{folder}/views/`. Only the default view is ever stored. */
@@ -112,6 +144,8 @@ const DEFAULT_VIEW_NAME = 'default';
  *   default view also falls back to git for the view, without counting (connectors that build no view leave it
  *   null). Only the `data-folder-table-spec-git-import` code migration inserts rows from git
  *   ({@link importTableSpecFromGitIfAbsent}).
+ * - **The CLI cache refresh** ({@link readTableSpecsAndDefaultViewsForCliCacheRefresh}, DEV-13025) always reads
+ *   Postgres, whatever the reads flag says, and serves the stored text verbatim.
  *
  * The Live Export run store has its own store (`RunStoreTableSpecStore`) and never reaches this one.
  */
@@ -341,9 +375,13 @@ export class DataFolderTableSpecStoreService implements TableSpecStore {
     );
     const storedDefaultView: unknown = storedRow.defaultViewContent ? JSON.parse(storedRow.defaultViewContent) : null;
     const defaultViewDiffers = !isEqual(storedDefaultView, readFromGit.defaultViewFromGit);
+    const byteDifferences: StoredAndGitByteDifferences = {
+      tableSpecBytesDiffer: storedRow.tableSpecContent !== readFromGit.tableSpecFileContentFromGit,
+      defaultViewBytesDiffer: storedRow.defaultViewContent !== readFromGit.defaultViewFileContentFromGit,
+    };
     return tableSpecDiffers || defaultViewDiffers
-      ? { kind: 'differs', tableSpecDiffers, defaultViewDiffers }
-      : { kind: 'matches' };
+      ? { kind: 'differs', tableSpecDiffers, defaultViewDiffers, ...byteDifferences }
+      : { kind: 'matches', ...byteDifferences };
   }
 
   /**
@@ -409,7 +447,13 @@ export class DataFolderTableSpecStoreService implements TableSpecStore {
       }
     }
 
-    return { kind: 'found', tableSpecFromGit: tableSpecFromGit as Record<string, unknown>, defaultViewFromGit };
+    return {
+      kind: 'found',
+      tableSpecFromGit: tableSpecFromGit as Record<string, unknown>,
+      defaultViewFromGit,
+      tableSpecFileContentFromGit: schemaFileContentFromGit,
+      defaultViewFileContentFromGit,
+    };
   }
 
   /**
@@ -501,6 +545,78 @@ export class DataFolderTableSpecStoreService implements TableSpecStore {
     }
 
     return { tableSpecsByRepoRelativeFolderKey, linkedFolderWithoutStoredRowCount };
+  }
+
+  /**
+   * Every linked folder's stored table spec and default view in the workbook (or in one of its connections), for
+   * `GET /cli/v1/workbooks/:id/table-specs` (DEV-13025). `scratchmd` writes them into its local cache instead of
+   * copying them from the connection repo's git `.scratch/` mirror.
+   *
+   * - Reads Postgres only. It ignores TABLE_SPEC_POSTGRES_READS_ENABLED and never reads git: Postgres holds every
+   *   spec git has, and a client deletes its local copy on `absent`, so `absent` must only ever come from the source
+   *   of truth (a missing git copy, or the mirror being off, must never turn into a delete).
+   * - Never drops a folder: each one gets a status for both files (`present`, `absent`, or `unreadable`), so the
+   *   listing is complete for its scope.
+   * - Serves the stored text verbatim, never parsed and re-serialized, so the bytes the CLI writes (and hashes for
+   *   DEV-10518) are stable. `sha256` is computed whether or not `content` is included, so the two modes agree.
+   * - Connections are the workbook's (the same set as `GET /cli/v1/workbooks/:id`), sorted by id; folders are those
+   *   with a path, sorted by path. Both sorts compare UTF-16 code units, so the order doesn't depend on a collation.
+   *
+   * Throws NotFoundException when `connectorAccountId` isn't a connection in the workbook.
+   */
+  async readTableSpecsAndDefaultViewsForCliCacheRefresh(
+    workbookId: string,
+    options: { connectorAccountId?: string; includeContent: boolean },
+  ): Promise<StoredTableSpecsForCliCacheRefreshConnection[]> {
+    const connectorAccountsWithLinkedFolders = await this.db.client.connectorAccount.findMany({
+      where: { workbookId, ...(options.connectorAccountId ? { id: options.connectorAccountId } : {}) },
+      select: {
+        id: true,
+        dataFolders: {
+          where: { path: { not: null } },
+          select: {
+            id: true,
+            path: true,
+            storedTableSpecRow: { select: { tableSpecContent: true, defaultViewContent: true, updatedAt: true } },
+          },
+        },
+      },
+    });
+    if (options.connectorAccountId && connectorAccountsWithLinkedFolders.length === 0) {
+      throw new NotFoundException(`Connection ${options.connectorAccountId} is not in workbook ${workbookId}`);
+    }
+
+    const connectionsForCliCacheRefresh = connectorAccountsWithLinkedFolders.map(
+      ({ id: connectorAccountId, dataFolders }): StoredTableSpecsForCliCacheRefreshConnection => {
+        const linkedFoldersForCliCacheRefresh: StoredTableSpecAndDefaultViewForCliCacheRefresh[] = [];
+        for (const { id: dataFolderId, path: folderPath, storedTableSpecRow } of dataFolders) {
+          if (!folderPath) continue; // excluded by the where clause; narrows the type
+          linkedFoldersForCliCacheRefresh.push({
+            dataFolderId,
+            folderPath,
+            storedRowUpdatedAt: storedTableSpecRow?.updatedAt ?? null,
+            tableSpec: buildCliTableSpecArtifactFromStoredContent(
+              storedTableSpecRow?.tableSpecContent ?? null,
+              options.includeContent,
+            ),
+            defaultView: buildCliTableSpecArtifactFromStoredContent(
+              storedTableSpecRow?.defaultViewContent ?? null,
+              options.includeContent,
+            ),
+          });
+        }
+        linkedFoldersForCliCacheRefresh.sort(
+          (left, right) =>
+            compareByUtf16CodeUnits(left.folderPath, right.folderPath) ||
+            compareByUtf16CodeUnits(left.dataFolderId, right.dataFolderId),
+        );
+        return { connectorAccountId, dataFolders: linkedFoldersForCliCacheRefresh };
+      },
+    );
+    connectionsForCliCacheRefresh.sort((left, right) =>
+      compareByUtf16CodeUnits(left.connectorAccountId, right.connectorAccountId),
+    );
+    return connectionsForCliCacheRefresh;
   }
 
   /**
@@ -727,6 +843,36 @@ function parseStoredDefaultViewContent(defaultViewContent: string, dataFolderId:
     throw new Error(`The stored default view for data folder ${dataFolderId} is not a JSON object`);
   }
   return parsed as TableView;
+}
+
+/**
+ * How the CLI should treat its local copy of one stored file (DEV-13025): `absent` when nothing is stored,
+ * `unreadable` when the stored text isn't a JSON object (the CLI keeps its copy and warns), and otherwise `present`
+ * with the SHA-256 of the stored text's UTF-8 bytes and, when asked for, the text itself, verbatim.
+ */
+function buildCliTableSpecArtifactFromStoredContent(
+  storedContent: string | null,
+  includeContent: boolean,
+): CliTableSpecArtifact {
+  if (storedContent === null) return { status: 'absent' };
+  let parsedStoredContent: unknown;
+  try {
+    parsedStoredContent = JSON.parse(storedContent);
+  } catch {
+    parsedStoredContent = undefined;
+  }
+  if (!isPlainObject(parsedStoredContent)) {
+    return { status: 'unreadable', reason: 'stored-content-not-a-json-object' };
+  }
+  const sha256 = createHash('sha256').update(storedContent, 'utf8').digest('hex');
+  return includeContent ? { status: 'present', sha256, content: storedContent } : { status: 'present', sha256 };
+}
+
+/** A locale-independent string order (UTF-16 code units), so a listing's order never depends on a collation. */
+function compareByUtf16CodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 /** A UTF-16 surrogate half with no partner: legal in a JavaScript string, rejected by scratch-git's JSON parser. */

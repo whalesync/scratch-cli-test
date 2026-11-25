@@ -1,5 +1,7 @@
+import { NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { formatRecordJson, type TableView } from '@spinner/shared-types';
+import { createHash } from 'crypto';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
@@ -61,6 +63,7 @@ describe('DataFolderTableSpecStoreService', () => {
     buildIndex: jest.Mock;
   };
   let dataFolderDelegate: { findMany: jest.Mock };
+  let connectorAccountDelegate: { findMany: jest.Mock };
   let postgresReadsEnabled: boolean;
   let gitMirrorEnabled: boolean;
   let metricsService: { logValue: jest.Mock };
@@ -87,12 +90,17 @@ describe('DataFolderTableSpecStoreService', () => {
       buildIndex: jest.fn().mockResolvedValue({ count: 0 }),
     };
     dataFolderDelegate = { findMany: jest.fn().mockResolvedValue([]) };
+    connectorAccountDelegate = { findMany: jest.fn().mockResolvedValue([]) };
     postgresReadsEnabled = false;
     gitMirrorEnabled = true;
     metricsService = { logValue: jest.fn() };
     store = new DataFolderTableSpecStoreService(
       {
-        client: { dataFolderTableSpec: dataFolderTableSpecDelegate, dataFolder: dataFolderDelegate },
+        client: {
+          dataFolderTableSpec: dataFolderTableSpecDelegate,
+          dataFolder: dataFolderDelegate,
+          connectorAccount: connectorAccountDelegate,
+        },
       } as unknown as DbService,
       scratchGitService as unknown as ScratchGitService,
       {
@@ -426,7 +434,29 @@ describe('DataFolderTableSpecStoreService', () => {
       );
       scratchGitService.readViewFileContentFromGitOrThrow.mockResolvedValue(JSON.stringify(DEFAULT_VIEW));
 
-      await expect(store.compareStoredRowWithGit(CONNECTED_LOCATION)).resolves.toEqual({ kind: 'matches' });
+      // The CLI cache holds the git bytes today, so a generatedAt-only difference is a cache the first scratchmd
+      // refresh rewrites; JSON.stringify's compact view isn't the stored formatRecordJson text either.
+      await expect(store.compareStoredRowWithGit(CONNECTED_LOCATION)).resolves.toEqual({
+        kind: 'matches',
+        tableSpecBytesDiffer: true,
+        defaultViewBytesDiffer: true,
+      });
+    });
+
+    it('reports no byte difference when git holds the stored text exactly', async () => {
+      const storedDefaultViewContent = formatRecordJson(DEFAULT_VIEW as unknown as Record<string, unknown>);
+      dataFolderTableSpecDelegate.findUnique.mockResolvedValue({
+        tableSpecContent: formatRecordJson(storedTableSpec),
+        defaultViewContent: storedDefaultViewContent,
+      });
+      scratchGitService.readSchemaFileContentFromGitOrThrow.mockResolvedValue(formatRecordJson(storedTableSpec));
+      scratchGitService.readViewFileContentFromGitOrThrow.mockResolvedValue(storedDefaultViewContent);
+
+      await expect(store.compareStoredRowWithGit(CONNECTED_LOCATION)).resolves.toEqual({
+        kind: 'matches',
+        tableSpecBytesDiffer: false,
+        defaultViewBytesDiffer: false,
+      });
     });
 
     it('reports a table spec that a git-only write changed', async () => {
@@ -442,6 +472,8 @@ describe('DataFolderTableSpecStoreService', () => {
         kind: 'differs',
         tableSpecDiffers: true,
         defaultViewDiffers: false,
+        tableSpecBytesDiffer: true,
+        defaultViewBytesDiffer: false,
       });
     });
 
@@ -457,6 +489,8 @@ describe('DataFolderTableSpecStoreService', () => {
         kind: 'differs',
         tableSpecDiffers: false,
         defaultViewDiffers: true,
+        tableSpecBytesDiffer: false,
+        defaultViewBytesDiffer: true,
       });
     });
 
@@ -476,6 +510,230 @@ describe('DataFolderTableSpecStoreService', () => {
       expect(scratchGitService.writeViewToGit).not.toHaveBeenCalled();
     });
   });
+  describe('readTableSpecsAndDefaultViewsForCliCacheRefresh', () => {
+    const WORKBOOK_ID = 'wkb_1';
+    const storedTableSpecContent = formatRecordJson(buildTableSpec());
+    const storedDefaultViewContent = formatRecordJson(DEFAULT_VIEW as unknown as Record<string, unknown>);
+    const storedRowUpdatedAt = new Date('2026-11-20T00:00:00Z');
+
+    function sha256OfUtf8(text: string): string {
+      return createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
+    }
+
+    function linkedFolder(
+      dataFolderId: string,
+      path: string | null,
+      storedRow: { tableSpecContent: string; defaultViewContent: string | null } | null,
+    ) {
+      return {
+        id: dataFolderId,
+        path,
+        storedTableSpecRow: storedRow ? { ...storedRow, updatedAt: storedRowUpdatedAt } : null,
+      };
+    }
+
+    it('serves present, absent, and unreadable files, with the stored text verbatim', async () => {
+      connectorAccountDelegate.findMany.mockResolvedValue([
+        {
+          id: CONNECTOR_ACCOUNT_ID,
+          dataFolders: [
+            linkedFolder('dfd_with_view', '/Airtable/Contacts', {
+              tableSpecContent: storedTableSpecContent,
+              defaultViewContent: storedDefaultViewContent,
+            }),
+            linkedFolder('dfd_null_view', '/Airtable/Accounts', {
+              tableSpecContent: storedTableSpecContent,
+              defaultViewContent: null,
+            }),
+            linkedFolder('dfd_no_row', '/Airtable/Deals', null),
+            linkedFolder('dfd_not_object', '/Airtable/Broken', {
+              tableSpecContent: '[1, 2]',
+              defaultViewContent: 'not json',
+            }),
+          ],
+        },
+      ]);
+
+      const connections = await store.readTableSpecsAndDefaultViewsForCliCacheRefresh(WORKBOOK_ID, {
+        includeContent: true,
+      });
+
+      expect(connectorAccountDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { workbookId: WORKBOOK_ID } }),
+      );
+      expect(connections).toEqual([
+        {
+          connectorAccountId: CONNECTOR_ACCOUNT_ID,
+          dataFolders: [
+            {
+              dataFolderId: 'dfd_null_view',
+              folderPath: '/Airtable/Accounts',
+              storedRowUpdatedAt,
+              tableSpec: {
+                status: 'present',
+                sha256: sha256OfUtf8(storedTableSpecContent),
+                content: storedTableSpecContent,
+              },
+              defaultView: { status: 'absent' },
+            },
+            {
+              dataFolderId: 'dfd_not_object',
+              folderPath: '/Airtable/Broken',
+              storedRowUpdatedAt,
+              tableSpec: { status: 'unreadable', reason: 'stored-content-not-a-json-object' },
+              defaultView: { status: 'unreadable', reason: 'stored-content-not-a-json-object' },
+            },
+            {
+              dataFolderId: 'dfd_with_view',
+              folderPath: '/Airtable/Contacts',
+              storedRowUpdatedAt,
+              tableSpec: {
+                status: 'present',
+                sha256: sha256OfUtf8(storedTableSpecContent),
+                content: storedTableSpecContent,
+              },
+              defaultView: {
+                status: 'present',
+                sha256: sha256OfUtf8(storedDefaultViewContent),
+                content: storedDefaultViewContent,
+              },
+            },
+            {
+              dataFolderId: 'dfd_no_row',
+              folderPath: '/Airtable/Deals',
+              storedRowUpdatedAt: null,
+              tableSpec: { status: 'absent' },
+              defaultView: { status: 'absent' },
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('hashes the UTF-8 bytes of multibyte text and of lone-surrogate escape text, which it serves unchanged', async () => {
+      // A lone surrogate is stored as the six-character escape text `\ud83d` (formatRecordJson escapes it).
+      const storedContentWithMultibyteAndEscape = formatRecordJson({ name: 'Café 🎉', broken: '\ud83d' });
+      expect(storedContentWithMultibyteAndEscape).toContain('\\ud83d');
+      connectorAccountDelegate.findMany.mockResolvedValue([
+        {
+          id: CONNECTOR_ACCOUNT_ID,
+          dataFolders: [
+            linkedFolder(DATA_FOLDER_ID, FOLDER_PATH, {
+              tableSpecContent: storedContentWithMultibyteAndEscape,
+              defaultViewContent: null,
+            }),
+          ],
+        },
+      ]);
+
+      const [connection] = await store.readTableSpecsAndDefaultViewsForCliCacheRefresh(WORKBOOK_ID, {
+        includeContent: true,
+      });
+
+      expect(connection.dataFolders[0].tableSpec).toEqual({
+        status: 'present',
+        sha256: sha256OfUtf8(storedContentWithMultibyteAndEscape),
+        content: storedContentWithMultibyteAndEscape,
+      });
+      // Not the hash of the UTF-16 code units: multibyte characters must hash as UTF-8, like the file on disk.
+      expect(sha256OfUtf8(storedContentWithMultibyteAndEscape)).not.toBe(
+        createHash('sha256').update(Buffer.from(storedContentWithMultibyteAndEscape, 'utf16le')).digest('hex'),
+      );
+    });
+
+    it('gives the same statuses and hashes without content in metadata-only mode', async () => {
+      const dataFolders = [
+        linkedFolder(DATA_FOLDER_ID, FOLDER_PATH, {
+          tableSpecContent: storedTableSpecContent,
+          defaultViewContent: storedDefaultViewContent,
+        }),
+        linkedFolder('dfd_no_row', '/Airtable/Deals', null),
+      ];
+      connectorAccountDelegate.findMany.mockResolvedValue([{ id: CONNECTOR_ACCOUNT_ID, dataFolders }]);
+
+      const withContent = await store.readTableSpecsAndDefaultViewsForCliCacheRefresh(WORKBOOK_ID, {
+        includeContent: true,
+      });
+      const metadataOnly = await store.readTableSpecsAndDefaultViewsForCliCacheRefresh(WORKBOOK_ID, {
+        includeContent: false,
+      });
+
+      expect(metadataOnly[0].dataFolders[0].tableSpec).toEqual({
+        status: 'present',
+        sha256: sha256OfUtf8(storedTableSpecContent),
+      });
+      expect(metadataOnly[0].dataFolders[0].defaultView).toEqual({
+        status: 'present',
+        sha256: sha256OfUtf8(storedDefaultViewContent),
+      });
+      const withoutContent = (connections: typeof withContent): unknown =>
+        JSON.parse(JSON.stringify(connections, (key, value: unknown) => (key === 'content' ? undefined : value)));
+      expect(withoutContent(metadataOnly)).toEqual(withoutContent(withContent));
+    });
+
+    it('reads Postgres even while Postgres reads are off, and never touches git', async () => {
+      postgresReadsEnabled = false;
+      connectorAccountDelegate.findMany.mockResolvedValue([
+        { id: CONNECTOR_ACCOUNT_ID, dataFolders: [linkedFolder('dfd_no_row', FOLDER_PATH, null)] },
+      ]);
+
+      const [connection] = await store.readTableSpecsAndDefaultViewsForCliCacheRefresh(WORKBOOK_ID, {
+        includeContent: true,
+      });
+
+      // No row is `absent` (the client deletes its copy), never a fallback to the git copy.
+      expect(connection.dataFolders[0].tableSpec).toEqual({ status: 'absent' });
+      expect(connectorAccountDelegate.findMany).toHaveBeenCalledTimes(1);
+      for (const gitMethod of Object.values(scratchGitService)) expect(gitMethod).not.toHaveBeenCalled();
+      expect(metricsService.logValue).not.toHaveBeenCalled();
+    });
+
+    it('lists a connection with no linked folders, sorts connections by id, and selects only folders with a path', async () => {
+      connectorAccountDelegate.findMany.mockResolvedValue([
+        { id: 'coa_zeta', dataFolders: [] },
+        { id: 'coa_Alpha', dataFolders: [linkedFolder('dfd_1', '/', null)] },
+        { id: 'coa_alpha', dataFolders: [] },
+      ]);
+
+      const connections = await store.readTableSpecsAndDefaultViewsForCliCacheRefresh(WORKBOOK_ID, {
+        includeContent: false,
+      });
+
+      // Code-unit order: uppercase sorts before lowercase, whatever the database collation.
+      expect(connections.map((connection) => connection.connectorAccountId)).toEqual([
+        'coa_Alpha',
+        'coa_alpha',
+        'coa_zeta',
+      ]);
+      expect(connections[2].dataFolders).toEqual([]);
+      const [connectorAccountQuery] = connectorAccountDelegate.findMany.mock.calls[0] as [
+        { select: { dataFolders: { where: unknown } } },
+      ];
+      expect(connectorAccountQuery.select.dataFolders.where).toEqual({ path: { not: null } });
+    });
+
+    it('scopes to one connection of the workbook, and 404s a connection that is not in it', async () => {
+      connectorAccountDelegate.findMany.mockResolvedValueOnce([{ id: CONNECTOR_ACCOUNT_ID, dataFolders: [] }]);
+      await expect(
+        store.readTableSpecsAndDefaultViewsForCliCacheRefresh(WORKBOOK_ID, {
+          connectorAccountId: CONNECTOR_ACCOUNT_ID,
+          includeContent: false,
+        }),
+      ).resolves.toEqual([{ connectorAccountId: CONNECTOR_ACCOUNT_ID, dataFolders: [] }]);
+      expect(connectorAccountDelegate.findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({ where: { workbookId: WORKBOOK_ID, id: CONNECTOR_ACCOUNT_ID } }),
+      );
+
+      connectorAccountDelegate.findMany.mockResolvedValueOnce([]);
+      await expect(
+        store.readTableSpecsAndDefaultViewsForCliCacheRefresh(WORKBOOK_ID, {
+          connectorAccountId: 'coa_other_tenant',
+          includeContent: false,
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('rebuildConnectionRepoIndexWithStoredTableSpecs', () => {
     const contactsTableSpec = buildTableSpec({ idPath: dotPath('id.record_id') });
     const postsTableSpec = buildTableSpec({ name: 'Posts' });

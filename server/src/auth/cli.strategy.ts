@@ -15,7 +15,9 @@ interface CliRequestExtension extends Request {
 }
 
 /**
- * This strategy inspects the request for a User-Agent header and validates it matches "Scratch-cli/1.0".
+ * This strategy inspects the request for a User-Agent header and validates that it identifies a Scratch client: it
+ * starts with `scratch-cli/` or `scratchdesktop/`, or contains `electron/` (case-insensitive). `scratchmd` sends
+ * `Scratch-cli/1.0 scratchmd/<version>` since DEV-13025, and the exact constant `Scratch-cli/1.0` before it.
  * It also parses the optional X-Scratch-Connector header for connector credentials.
  * If an Authorization header with API-Token is present, it optionally loads the user.
  * This is a simple authentication mechanism for CLI requests.

@@ -1,0 +1,32 @@
+meta {
+  name: List Workbook Table Specs (CLI)
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/table-specs
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+  ~metadataOnly: true
+}
+
+docs {
+  DEV-13025. Every linked folder's table spec (`schema.json`) and default view
+  (`views/default.json`) in the workbook, grouped by connection, read from
+  Postgres. `scratchmd` writes them into its local cache instead of copying them
+  from git. Each file is `present` (the stored text, verbatim, plus the SHA-256 of
+  its UTF-8 bytes), `absent`, or `unreadable`. A connection with no linked folders
+  is listed with an empty `dataFolders`.
+
+  - `connectorAccountId` limits the listing to one connection (404 if it isn't in
+    the workbook).
+  - `metadataOnly=true` leaves out `content` and keeps `sha256`, for change
+    detection.
+
+  Read-only.
+}

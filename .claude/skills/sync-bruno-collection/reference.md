@@ -174,11 +174,13 @@ meta {
 }
 
 headers {
-  User-Agent: Scratch-cli/1.0
+  User-Agent: Scratch-cli/1.0 bruno
 }
 
 docs {
-  Folder-level header applied to every request inside.
+  Folder-level header applied to every request inside. Keep the ` bruno` suffix:
+  a User-Agent of exactly `Scratch-cli/1.0` counts as a legacy `scratchmd` binary
+  (DEV-13025).
 }
 ```
 

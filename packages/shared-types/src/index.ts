@@ -32,6 +32,7 @@ export * from './workbook-events';
 // DTOs
 export * from './dto/bug-report/create-bug-report.dto';
 export * from './dto/cli-auth/device-code.dto';
+export * from './dto/cli-table-specs/cli-workbook-table-specs.dto';
 export * from './dto/code-migrations/code-migrations.dto';
 export * from './dto/connector-account/connection-responses.dto';
 export * from './dto/connector-account/create-connector-account.dto';

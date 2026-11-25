@@ -173,6 +173,7 @@ GET    /cli/v1/workbooks                                              # List wor
 POST   /cli/v1/workbooks                                              # Create workbook (CLI)
 GET    /cli/v1/workbooks/:id                                          # Get workbook (CLI)
 DELETE /cli/v1/workbooks/:id                                          # Delete workbook (CLI)
+GET    /cli/v1/workbooks/:workbookId/table-specs                      # List table specs and default views (CLI)
 ALL    /cli/v1/workbooks/:id/connectors/:connectorAccountId/git/*path # Git proxy (CLI)
 ```
 
@@ -2188,6 +2189,57 @@ Deletes a workbook.
 **Errors:**
 
 - `404`: Workbook not found
+
+### List Workbook Table Specs (CLI)
+
+```
+GET /cli/v1/workbooks/:workbookId/table-specs?connectorAccountId=coa_1&metadataOnly=true
+```
+
+Lists every linked folder's table spec (`schema.json`) and default view (`views/default.json`) in the workbook, grouped by connection and read from Postgres (DEV-13025). `scratchmd` writes them into its local cache, `<workspace>/.scratch/connections/scratch/<connection>/<folder>/`.
+
+Each file has one of three statuses:
+
+- `present`: the stored text, served verbatim, with the lowercase hex SHA-256 of its UTF-8 bytes. The client writes it when its local bytes differ.
+- `absent`: nothing is stored. The client deletes its local copy.
+- `unreadable`: the stored text isn't a JSON object. The client keeps its local copy and warns.
+
+The listing is complete for its scope. A connection with no linked folders appears with an empty `dataFolders`. Connections are sorted by id, and folders by path. `storedRowUpdatedAt` only breaks ties between folders that map to the same local directory; use `sha256` for change detection.
+
+**Query parameters:**
+
+- `connectorAccountId` (optional): limits the listing to one connection.
+- `metadataOnly` (optional, `true`): leaves out `content`. `sha256` is still sent.
+
+**Response:**
+
+```json
+{
+  "formatVersion": 1,
+  "workbookId": "wkb_abc",
+  "connectorAccounts": [
+    {
+      "connectorAccountId": "coa_1",
+      "dataFolders": [
+        {
+          "dataFolderId": "dfd_1",
+          "path": "/Blog Posts",
+          "storedRowUpdatedAt": "2026-11-23T18:02:11.123Z",
+          "tableSpec": { "status": "present", "sha256": "9f2c…e1", "content": "{\n  \"id\": …\n}\n" },
+          "defaultView": { "status": "absent" }
+        }
+      ]
+    },
+    { "connectorAccountId": "coa_2", "dataFolders": [] }
+  ]
+}
+```
+
+**Errors:**
+
+- `400`: `metadataOnly` isn't `true` or `false`
+- `403`: The caller has no access to the workbook
+- `404`: Workbook not found, or `connectorAccountId` isn't a connection in the workbook
 
 ### Git Proxy (CLI)
 

@@ -254,9 +254,21 @@ describe('pickRandomDataFolderIdToStartWalkAfter', () => {
 describe('runDataFolderTableSpecGitDivergenceReport', () => {
   it('lists the folders whose row differs from git, and never writes', async () => {
     const outcomesInIdOrder: DataFolderTableSpecGitDivergenceOutcome[] = [
-      { kind: 'matches' },
-      { kind: 'differs', tableSpecDiffers: true, defaultViewDiffers: false },
-      { kind: 'differs', tableSpecDiffers: false, defaultViewDiffers: true },
+      { kind: 'matches', tableSpecBytesDiffer: false, defaultViewBytesDiffer: false },
+      {
+        kind: 'differs',
+        tableSpecDiffers: true,
+        defaultViewDiffers: false,
+        tableSpecBytesDiffer: true,
+        defaultViewBytesDiffer: false,
+      },
+      {
+        kind: 'differs',
+        tableSpecDiffers: false,
+        defaultViewDiffers: true,
+        tableSpecBytesDiffer: false,
+        defaultViewBytesDiffer: true,
+      },
       { kind: 'no-table-spec-in-git' },
       { kind: 'git-read-failed', error: new Error('503') },
     ];
@@ -292,7 +304,11 @@ describe('runDataFolderTableSpecGitDivergenceReport', () => {
     const { prisma } = fakePrismaServingCandidates(candidateFolders(50));
     const dataFolderTableSpecStore = {
       compareStoredRowWithGit: jest.fn(() =>
-        Promise.resolve<DataFolderTableSpecGitDivergenceOutcome>({ kind: 'matches' }),
+        Promise.resolve<DataFolderTableSpecGitDivergenceOutcome>({
+          kind: 'matches',
+          tableSpecBytesDiffer: false,
+          defaultViewBytesDiffer: false,
+        }),
       ),
     };
 
@@ -303,5 +319,51 @@ describe('runDataFolderTableSpecGitDivergenceReport', () => {
 
     expect(summary.examinedFolderCount).toBe(12);
     expect(summary.unreachedCandidateFolderCount).toBe(38);
+  });
+
+  it('counts byte differences for matching folders too, without listing them as divergent', async () => {
+    const outcomesInIdOrder: DataFolderTableSpecGitDivergenceOutcome[] = [
+      // Only generatedAt differs: the row matches git, but the CLI cache (git bytes) will be rewritten.
+      { kind: 'matches', tableSpecBytesDiffer: true, defaultViewBytesDiffer: false },
+      { kind: 'matches', tableSpecBytesDiffer: false, defaultViewBytesDiffer: true },
+      { kind: 'matches', tableSpecBytesDiffer: false, defaultViewBytesDiffer: false },
+      {
+        kind: 'differs',
+        tableSpecDiffers: true,
+        defaultViewDiffers: false,
+        tableSpecBytesDiffer: true,
+        defaultViewBytesDiffer: false,
+      },
+    ];
+    const folders = candidateFolders(outcomesInIdOrder.length);
+    const { prisma } = fakePrismaServingCandidates(folders);
+    const dataFolderTableSpecStore = {
+      compareStoredRowWithGit: jest.fn(({ dataFolderId }: { dataFolderId: string }) =>
+        Promise.resolve(outcomesInIdOrder[folders.findIndex((folder) => folder.id === dataFolderId)]),
+      ),
+    };
+
+    const { divergentDataFolderIds, summary } = await runDataFolderTableSpecGitDivergenceReport(
+      { prisma, dataFolderTableSpecStore },
+      { scope: { kind: 'workbooks', workbookIds: ['wkb_1'] } },
+    );
+
+    expect(divergentDataFolderIds).toEqual([folders[3].id]);
+    expect(summary).toMatchObject({
+      matchingFolderCount: 3,
+      tableSpecDiffersFolderCount: 1,
+      tableSpecBytesDifferFolderCount: 2,
+      defaultViewBytesDifferFolderCount: 1,
+    });
+    expect(buildDataFolderTableSpecGitDivergenceSummaryRows(summary)).toEqual(
+      expect.arrayContaining([
+        {
+          label:
+            'folders whose git schema.json bytes differ from the stored text (the first scratchmd refresh rewrites them)',
+          count: 2,
+        },
+        { label: 'folders whose git views/default.json bytes differ from the stored text', count: 1 },
+      ]),
+    );
   });
 });

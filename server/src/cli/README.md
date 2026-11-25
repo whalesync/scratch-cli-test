@@ -2,6 +2,16 @@
 
 This module provides REST API endpoints for CLI authentication with Scratch.md.
 
+It also serves the `/cli/v1` surface that `scratchmd` (and Scratch Desktop, through its bundled `scratchmd`) uses
+for workbooks, connections, linked folders, syncs, and publishing. One of those endpoints is
+`GET /cli/v1/workbooks/:workbookId/table-specs` (DEV-13025, `cli-table-specs.controller.ts`): every linked folder's
+table spec and default view, read from Postgres, which `scratchmd` writes into its local cache instead of copying them
+from git. See [the API reference](../assets/api-reference.md#list-workbook-table-specs-cli).
+
+`scratchmd-client-identification.ts` classifies a request's User-Agent. A User-Agent of exactly `Scratch-cli/1.0`
+comes from a binary from before DEV-13025, which still copies table specs from git. `cli_list_workbooks` and
+`cli_list_table_specs` events carry the result as `scratchmdClientKind`.
+
 ## Authentication Flow
 
 The CLI uses a device code flow for authentication:

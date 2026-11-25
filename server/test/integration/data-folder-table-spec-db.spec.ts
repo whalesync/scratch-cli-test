@@ -5,8 +5,10 @@
  * TEXT keeps the spec's key order (jsonb would not). Requires the `data_folder_table_specs_in_db` migration.
  */
 
+import { NotFoundException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { createDataFolderId, createWorkbookId, type DataFolderId, type WorkbookId } from '@spinner/shared-types';
+import { createHash } from 'crypto';
 import { dotPath, type BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/data-folder-table-spec-store.service';
@@ -216,5 +218,103 @@ describe('DataFolderTableSpecStoreService (real DB)', () => {
       tableSpecsByRepoRelativeFolderKey: { 'Base/Contacts': JSON.parse(JSON.stringify(contactsTableSpec)) },
       linkedFolderWithoutStoredRowCount: 1,
     });
+  });
+
+  it("lists the workbook's linked folders for the CLI cache refresh, verbatim, and only the workbook's", async () => {
+    const createConnectorAccount = async (connectorAccountWorkbookId: string, displayName: string) => {
+      const connectorAccountId = `coa_${displayName}_${Date.now()}`;
+      await prisma.connectorAccount.create({
+        data: { id: connectorAccountId, workbookId: connectorAccountWorkbookId, service: 'AIRTABLE', displayName },
+      });
+      return connectorAccountId;
+    };
+    const createFolder = async (connectorAccountId: string, path: string | null) => {
+      const folderDataFolderId = createDataFolderId();
+      await prisma.dataFolder.create({
+        data: { id: folderDataFolderId, name: path ?? 'unlinked', workbookId, connectorAccountId, path },
+      });
+      return folderDataFolderId;
+    };
+
+    const listedConnectorAccountId = await createConnectorAccount(workbookId, 'listed');
+    const emptyConnectorAccountId = await createConnectorAccount(workbookId, 'empty');
+    const otherWorkbookId = createWorkbookId();
+    const owner = await prisma.user.findFirstOrThrow({ where: { organizationId: orgId } });
+    await prisma.workbook.create({
+      data: { id: otherWorkbookId, name: 'Another workbook', userId: owner.id, organizationId: orgId },
+    });
+    const otherWorkbookConnectorAccountId = await createConnectorAccount(otherWorkbookId, 'other');
+
+    const contactsDataFolderId = await createFolder(listedConnectorAccountId, '/Base/Contacts');
+    const neverPulledDataFolderId = await createFolder(listedConnectorAccountId, '/Base/Never Pulled');
+    await createFolder(listedConnectorAccountId, null);
+    const contactsLocation = {
+      dataFolderId: contactsDataFolderId,
+      connectorAccountId: listedConnectorAccountId,
+      folderPath: '/Base/Contacts',
+    };
+    await store.writeTableSpec(contactsLocation, buildTableSpec({ name: 'Café 🎉' }), 'pull');
+    await store.writeDefaultView(contactsLocation, { columns: [] } as never, 'pull');
+    const contactsStoredRow = await prisma.dataFolderTableSpec.findUniqueOrThrow({
+      where: { dataFolderId: contactsDataFolderId },
+    });
+    const sha256OfUtf8 = (text: string) => createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
+
+    const connections = await store.readTableSpecsAndDefaultViewsForCliCacheRefresh(workbookId, {
+      includeContent: true,
+    });
+
+    // The same connections GET /cli/v1/workbooks/:id lists, and nothing from the other workbook.
+    const workbookConnectorAccountIds = (
+      await prisma.connectorAccount.findMany({ where: { workbookId }, select: { id: true } })
+    ).map(({ id }) => id);
+    expect(connections.map(({ connectorAccountId }) => connectorAccountId).sort()).toEqual(
+      workbookConnectorAccountIds.sort(),
+    );
+    const listedConnection = connections.find(
+      ({ connectorAccountId }) => connectorAccountId === listedConnectorAccountId,
+    );
+    expect(listedConnection?.dataFolders).toEqual([
+      {
+        dataFolderId: contactsDataFolderId,
+        folderPath: '/Base/Contacts',
+        storedRowUpdatedAt: contactsStoredRow.updatedAt,
+        tableSpec: {
+          status: 'present',
+          sha256: sha256OfUtf8(contactsStoredRow.tableSpecContent),
+          content: contactsStoredRow.tableSpecContent,
+        },
+        defaultView: {
+          status: 'present',
+          sha256: sha256OfUtf8(contactsStoredRow.defaultViewContent ?? ''),
+          content: contactsStoredRow.defaultViewContent,
+        },
+      },
+      {
+        dataFolderId: neverPulledDataFolderId,
+        folderPath: '/Base/Never Pulled',
+        storedRowUpdatedAt: null,
+        tableSpec: { status: 'absent' },
+        defaultView: { status: 'absent' },
+      },
+    ]);
+    expect(connections.find(({ connectorAccountId }) => connectorAccountId === emptyConnectorAccountId)).toEqual({
+      connectorAccountId: emptyConnectorAccountId,
+      dataFolders: [],
+    });
+    expect(scratchGitService.readSchemaFileContentFromGitOrThrow).not.toHaveBeenCalled();
+
+    await expect(
+      store.readTableSpecsAndDefaultViewsForCliCacheRefresh(workbookId, {
+        connectorAccountId: emptyConnectorAccountId,
+        includeContent: false,
+      }),
+    ).resolves.toEqual([{ connectorAccountId: emptyConnectorAccountId, dataFolders: [] }]);
+    await expect(
+      store.readTableSpecsAndDefaultViewsForCliCacheRefresh(workbookId, {
+        connectorAccountId: otherWorkbookConnectorAccountId,
+        includeContent: false,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

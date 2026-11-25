@@ -45,6 +45,7 @@ import {
   ListWorkbooksQueryDto,
   ListWorkbooksResponseDto,
 } from './dtos/cli-workbook.dto';
+import { classifyScratchmdClientFromUserAgent } from './scratchmd-client-identification';
 
 /**
  * Controller for CLI workbook operations.
@@ -127,7 +128,11 @@ export class CliWorkbookController {
     const actor = userToActor(req.user);
     const workbook = await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
 
-    this.posthogService.trackCliListWorkbooks(actor, { scope: 'single', workbookId: id });
+    this.posthogService.trackCliListWorkbooks(actor, {
+      scope: 'single',
+      workbookId: id,
+      scratchmdClient: classifyScratchmdClientFromUserAgent(req.get('user-agent')),
+    });
 
     const baseUrl = `${req.protocol}://${req.get('host')}`;
 

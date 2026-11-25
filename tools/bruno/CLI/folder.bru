@@ -4,7 +4,7 @@ meta {
 }
 
 headers {
-  User-Agent: Scratch-cli/1.0
+  User-Agent: Scratch-cli/1.0 bruno
 }
 
 docs {
@@ -12,4 +12,8 @@ docs {
   identifies a Scratch client — added here at the folder level. The collection's
   inherited `Authorization: API-Token` header still applies (most CLI routes load
   the user from it; the auth initiate/poll routes only need the User-Agent).
+
+  The trailing ` bruno` keeps these requests out of the legacy-binary count: since
+  DEV-13025 the server treats a User-Agent of exactly `Scratch-cli/1.0` as a
+  `scratchmd` binary that still reads table specs from git.
 }

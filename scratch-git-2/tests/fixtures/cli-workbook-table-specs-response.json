@@ -1,0 +1,66 @@
+{
+  "formatVersion": 1,
+  "workbookId": "wkb_fixture",
+  "connectorAccounts": [
+    {
+      "connectorAccountId": "coa_fixture1",
+      "dataFolders": [
+        {
+          "dataFolderId": "dfd_root",
+          "path": "/",
+          "storedRowUpdatedAt": "2026-11-20T09:14:00.000Z",
+          "tableSpec": {
+            "status": "present",
+            "sha256": "5dbe286feb15e14d627cca354f3863c3e16cf0e412ad4c3b3322fe86bc4ac4e5",
+            "content": "{\n  \"id\": {\n    \"wsId\": \"root\",\n    \"remoteId\": [\n      \"root\"\n    ]\n  },\n  \"name\": \"Root\",\n  \"idPath\": \"id\",\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {}\n  }\n}\n"
+          },
+          "defaultView": {
+            "status": "absent"
+          }
+        },
+        {
+          "dataFolderId": "dfd_broken",
+          "path": "/Broken",
+          "storedRowUpdatedAt": "2026-11-21T00:00:00.000Z",
+          "tableSpec": {
+            "status": "unreadable",
+            "reason": "stored-content-not-a-json-object"
+          },
+          "defaultView": {
+            "status": "absent"
+          }
+        },
+        {
+          "dataFolderId": "dfd_never_pulled",
+          "path": "/Never Pulled",
+          "storedRowUpdatedAt": null,
+          "tableSpec": {
+            "status": "absent"
+          },
+          "defaultView": {
+            "status": "absent"
+          }
+        },
+        {
+          "dataFolderId": "dfd_posts",
+          "path": "/Posts",
+          "storedRowUpdatedAt": "2026-11-23T18:02:11.123Z",
+          "tableSpec": {
+            "status": "present",
+            "sha256": "6f047ce7df5c0f8f98f91b46f0b137cc2619a0b829c5c384be03c28f87030c66",
+            "content": "{\n  \"id\": {\n    \"wsId\": \"tbl_posts\",\n    \"remoteId\": [\n      \"tbl_posts\"\n    ]\n  },\n  \"name\": \"Café 🎉 Posts\",\n  \"idPath\": \"id\",\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"title\": {\n        \"type\": \"string\",\n        \"description\": \"Broken emoji: \\ud83d\"\n      }\n    }\n  },\n  \"generatedAt\": \"2026-11-23T18:02:11.123Z\"\n}\n"
+          },
+          "defaultView": {
+            "status": "present",
+            "sha256": "5cc4d3a681d654460cbf4865df22b8d4c2a3c6331c46b344639a3e7b8167fd6d",
+            "content": "{\n  \"columns\": [\n    {\n      \"path\": \"title\"\n    }\n  ]\n}\n"
+          }
+        }
+      ]
+    },
+    {
+      "connectorAccountId": "coa_fixture2",
+      "dataFolders": []
+    }
+  ]
+}

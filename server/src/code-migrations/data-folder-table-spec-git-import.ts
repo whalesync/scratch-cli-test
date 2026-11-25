@@ -403,6 +403,14 @@ export interface DataFolderTableSpecGitDivergenceSummary {
   matchingFolderCount: number;
   tableSpecDiffersFolderCount: number;
   onlyDefaultViewDiffersFolderCount: number;
+  /**
+   * DEV-13025: compared folders (matching or not) whose git `schema.json` bytes differ from the stored text, e.g.
+   * only in `generatedAt`. Today's CLI caches hold the git bytes, so this is how many caches the first `scratchmd`
+   * refresh from the server rewrites (each rewrite clears that folder's `enforce_schema` results).
+   */
+  tableSpecBytesDifferFolderCount: number;
+  /** DEV-13025: the same, for `views/default.json` (including a view stored in only one place). */
+  defaultViewBytesDifferFolderCount: number;
   noTableSpecInGitFolderCount: number;
   invalidTableSpecInGitFolderCount: number;
   connectionHasNoRepoFolderCount: number;
@@ -433,6 +441,8 @@ export async function runDataFolderTableSpecGitDivergenceReport(
     matchingFolderCount: 0,
     tableSpecDiffersFolderCount: 0,
     onlyDefaultViewDiffersFolderCount: 0,
+    tableSpecBytesDifferFolderCount: 0,
+    defaultViewBytesDifferFolderCount: 0,
     noTableSpecInGitFolderCount: 0,
     invalidTableSpecInGitFolderCount: 0,
     connectionHasNoRepoFolderCount: 0,
@@ -478,6 +488,10 @@ function tallyDivergenceOutcome(
   divergenceOutcome: DataFolderTableSpecGitDivergenceOutcome | { kind: 'errored'; error: unknown },
 ): boolean {
   const { dataFolderId, folderPath } = location;
+  if (divergenceOutcome.kind === 'matches' || divergenceOutcome.kind === 'differs') {
+    if (divergenceOutcome.tableSpecBytesDiffer) summary.tableSpecBytesDifferFolderCount++;
+    if (divergenceOutcome.defaultViewBytesDiffer) summary.defaultViewBytesDifferFolderCount++;
+  }
   switch (divergenceOutcome.kind) {
     case 'matches':
       summary.matchingFolderCount++;
@@ -537,6 +551,15 @@ export function buildDataFolderTableSpecGitDivergenceSummaryRows(
     {
       label: 'folders where only the default view differs (Refresh Schema them; ids listed)',
       count: summary.onlyDefaultViewDiffersFolderCount,
+    },
+    {
+      label:
+        'folders whose git schema.json bytes differ from the stored text (the first scratchmd refresh rewrites them)',
+      count: summary.tableSpecBytesDifferFolderCount,
+    },
+    {
+      label: 'folders whose git views/default.json bytes differ from the stored text',
+      count: summary.defaultViewBytesDifferFolderCount,
     },
     { label: 'folders with no table spec in git', count: summary.noTableSpecInGitFolderCount },
     { label: 'folders whose git table spec is invalid', count: summary.invalidTableSpecInGitFolderCount },

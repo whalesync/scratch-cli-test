@@ -2,6 +2,7 @@ import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConnectorAccount, DataFolder, Sync, User } from '@prisma/client';
 import { ScratchPlanType } from '@spinner/shared-types';
 import { PostHog } from 'posthog-node';
+import type { ScratchmdClientIdentification } from 'src/cli/scratchmd-client-identification';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { WSLogger } from 'src/logger';
@@ -497,12 +498,49 @@ export class PostHogService implements OnModuleDestroy {
    *******************************************************/
   trackCliListWorkbooks(
     actor: Actor,
-    options?: { workbookCount?: number; scope?: 'list' | 'single'; workbookId?: string },
+    options?: {
+      workbookCount?: number;
+      scope?: 'list' | 'single';
+      workbookId?: string;
+      /** Which `scratchmd` build sent the request (DEV-13025), from its User-Agent. */
+      scratchmdClient?: ScratchmdClientIdentification;
+    },
   ): void {
     this.captureEvent(PostHogEventName.CLI_LIST_WORKBOOKS, actor, {
       ...(options?.workbookCount !== undefined && { workbookCount: options.workbookCount }),
       ...(options?.scope && { scope: options.scope }),
       ...(options?.workbookId && { workbookId: options.workbookId }),
+      ...options?.scratchmdClient,
+    });
+  }
+
+  /**
+   * `GET /cli/v1/workbooks/:id/table-specs` (DEV-13025). A read, so there is no audit log. The file counts cover
+   * both files of every listed folder (its table spec and its default view); `unreadableFileCount` must stay at 0
+   * before the table-spec git mirror is turned off (DEV-13027).
+   */
+  trackCliListWorkbookTableSpecs(
+    actor: Actor,
+    workbookId: string,
+    properties: {
+      connectorAccountId?: string;
+      metadataOnly: boolean;
+      connectionCount: number;
+      folderCount: number;
+      presentFileCount: number;
+      absentFileCount: number;
+      unreadableFileCount: number;
+      /** Total UTF-8 bytes of the `content` sent; 0 in metadata-only mode. */
+      contentBytes: number;
+      scratchmdClient: ScratchmdClientIdentification;
+    },
+  ): void {
+    const { connectorAccountId, scratchmdClient, ...counts } = properties;
+    this.captureEvent(PostHogEventName.CLI_LIST_TABLE_SPECS, actor, {
+      workbookId,
+      ...(connectorAccountId && { connectorAccountId }),
+      ...counts,
+      ...scratchmdClient,
     });
   }
 
@@ -621,6 +659,7 @@ export enum PostHogEventName {
   CLI_LIST_TABLES = 'cli_list_tables',
   CLI_LIST_WORKBOOKS = 'cli_list_workbooks',
   CLI_LIST_DATA_FOLDERS = 'cli_list_data_folders',
+  CLI_LIST_TABLE_SPECS = 'cli_list_table_specs',
   CLI_GIT_ACTION = 'cli_download',
   CLI_PULL = 'cli_pull',
   CLI_UPLOAD = 'cli_upload',

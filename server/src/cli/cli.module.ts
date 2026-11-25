@@ -14,6 +14,7 @@ import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { SyncModule } from 'src/sync/sync.module';
+import { DataFolderTableSpecStoreModule } from 'src/workbook/table-spec-store/data-folder-table-spec-store.module';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
@@ -22,6 +23,7 @@ import { CliAuthService } from './cli-auth.service';
 import { CliConnectionController } from './cli-connection.controller';
 import { CliLinkedController } from './cli-linked.controller';
 import { CliSyncController } from './cli-sync.controller';
+import { CliTableSpecsController } from './cli-table-specs.controller';
 import { CliWorkbookController } from './cli-workbook.controller';
 import { UploadPatchController } from './upload-patch.controller';
 
@@ -44,6 +46,7 @@ import { UploadPatchController } from './upload-patch.controller';
     AssetModule,
     AuditLogModule,
     MigrationLockModule,
+    DataFolderTableSpecStoreModule,
   ],
   controllers: [
     CliAuthController,
@@ -51,6 +54,7 @@ import { UploadPatchController } from './upload-patch.controller';
     CliConnectionController,
     CliLinkedController,
     CliSyncController,
+    CliTableSpecsController,
     UploadPatchController,
   ],
   providers: [CliAuthService, WorkbookRepoService],

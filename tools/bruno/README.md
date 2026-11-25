@@ -69,9 +69,10 @@ Authorization: API-Token {{apiToken}}
 
 - **`CLI` folder** — the `/cli/v1/*` endpoints additionally require a
   `User-Agent` that identifies a Scratch client. The folder adds
-  `User-Agent: Scratch-cli/1.0` for you (via its `folder.bru`). The inherited
-  `Authorization` token still applies. Without the User-Agent these routes return
-  `401 Invalid User-Agent`.
+  `User-Agent: Scratch-cli/1.0 bruno` for you (via its `folder.bru`). Keep the
+  ` bruno` suffix: a User-Agent of exactly `Scratch-cli/1.0` counts as a legacy
+  `scratchmd` binary (DEV-13025). The inherited `Authorization` token still
+  applies. Without the User-Agent these routes return `401 Invalid User-Agent`.
 - **`Internal - Whalesync` folder** — the `/internal/whalesync/*` endpoints are a
   server-to-server admin channel. They are **not** authenticated by the API
   token; they use a shared secret header `X-Scratch-Admin-Token: {{adminToken}}`
