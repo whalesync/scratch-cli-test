@@ -1,0 +1,16 @@
+meta {
+  name: Get Data Folder Default View
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/data-folder/{{dataFolderId}}/default-view
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the stored default view for a data folder: the connector's column layout
+  for its records. 404 if no default view is stored.
+}

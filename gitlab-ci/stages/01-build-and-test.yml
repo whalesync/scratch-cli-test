@@ -46,6 +46,10 @@ build and test shared-types:
     - !reference [.use_nvm, script]
     - yarn prettier:check
     - yarn lint-strict
+    # Regenerate .next/types from this checkout's routes before typecheck reads them (tsconfig includes
+    # .next/types). Local runners keep .next between jobs, so without this a page deleted on this branch
+    # still appears in an older build's validator.ts and fails typecheck before `yarn build` can refresh it.
+    - yarn next typegen
     - yarn typecheck
     - yarn test
     - export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY_DEVELOPMENT

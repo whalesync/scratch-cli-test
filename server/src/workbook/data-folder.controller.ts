@@ -17,6 +17,7 @@ import type {
   DataFolder,
   DataFolderId,
   RefreshConnectionSchemasResponse,
+  TableView,
   ValidatedCreateDataFolderDto,
   ValidatedUpdateDataFolderDto,
   WorkbookId,
@@ -175,6 +176,19 @@ export class DataFolderController {
       throw new NotFoundException('No schema found for this data folder');
     }
     return schema;
+  }
+
+  /**
+   * The folder's stored default view (DEV-13026), read without calling the connector. The web client's
+   * View Schema modal shows it next to the table spec; it replaced the git-backed `.scratch` sidebar viewer.
+   */
+  @Get(':id/default-view')
+  async getDataFolderDefaultView(@Param('id') id: DataFolderId, @Req() req: RequestWithUser): Promise<TableView> {
+    const storedDefaultView = await this.dataFolderService.getStoredView(id, userToActor(req.user));
+    if (!storedDefaultView) {
+      throw new NotFoundException('No default view found for this data folder');
+    }
+    return storedDefaultView;
   }
 
   @Post(':id/refresh-schema')

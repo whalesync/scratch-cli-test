@@ -14,5 +14,5 @@ export default function WorkbookRepoFilePage() {
     [params.path],
   );
 
-  return <ScratchFileViewer workbookId={workbookId} filePath={filePath} useConfigRepo />;
+  return <ScratchFileViewer workbookId={workbookId} filePath={filePath} />;
 }

@@ -618,11 +618,12 @@ export class ScratchGitService {
       const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
       const newCompare = stripGeneratedAt(schema as Record<string, unknown>);
 
-      // Both branches on purpose: server reads and the index route read `main`, but the web client's
-      // "Show hidden files" `.scratch` viewer (TreeNode.tsx / ScratchFileViewer.tsx) lists and reads
-      // `dirty`, and a rebase that isn't a fast path drops `.scratch` content that exists only on
-      // `dirty`. Writing dirty was once the cause of a phantom "Changes to approve" (the generatedAt
-      // diff); `has_visible_tree_changes` (scratch-git-2/src/service/git/repo.rs) now filters dotfiles.
+      // Both branches on purpose, so `.scratch` stays the same on `main` and `dirty`: a rebase that isn't a
+      // fast path drops `.scratch` content that exists only on `dirty`. Server reads and the index route
+      // read `main`; nothing reads the `dirty` copy since DEV-13026 replaced the web client's `.scratch`
+      // viewer, and DEV-13027 removes this mirror. Writing dirty was once the cause of a phantom "Changes
+      // to approve" (the generatedAt diff); `has_visible_tree_changes` (scratch-git-2/src/service/git/repo.rs)
+      // now filters dotfiles.
       for (const branch of [MAIN_BRANCH, DIRTY_BRANCH]) {
         // Skip the commit if the current schema on this branch is identical to what we'd write,
         // ignoring the volatile `generatedAt` timestamp. Avoids no-op commits on every publish.

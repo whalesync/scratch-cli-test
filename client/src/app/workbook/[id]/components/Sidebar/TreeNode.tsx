@@ -57,10 +57,9 @@ import {
   Trash2Icon,
   UnlinkIcon,
 } from 'lucide-react';
-import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import React, { useCallback, useMemo, useState, type MouseEvent } from 'react';
-import useSWR, { useSWRConfig } from 'swr';
+import { useSWRConfig } from 'swr';
 import { useShallow } from 'zustand/react/shallow';
 import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { PublishPlansModal } from '../modals/PublishPlansModal';
@@ -412,11 +411,14 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
     try {
       trackRefreshConnectionSchemas(connectorAccount.id, group.dataFolders.length);
       const result = await scratchApiClient.dataFolders.refreshConnectionSchemas(connectorAccount.id);
-      // Revalidate any cached schemas so open schema / advanced-settings modals reflect the new shape.
+      // Revalidate any cached schemas and default views so open schema / advanced-settings modals reflect the new
+      // shape (a schema refresh rewrites both).
       await Promise.all(
         group.dataFolders.flatMap((folder) => [
           globalMutate(SWR_KEYS.dataFolders.schema(folder.id, 'view')),
           globalMutate(SWR_KEYS.dataFolders.schema(folder.id, 'refresh')),
+          globalMutate(SWR_KEYS.dataFolders.defaultView(folder.id, 'view')),
+          globalMutate(SWR_KEYS.dataFolders.defaultView(folder.id, 'refresh')),
         ]),
       );
       setRefreshSchemasResult(result);
@@ -578,18 +580,13 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
               </Box>
             )
           ) : (
-            <>
-              <FolderTreeRenderer
-                tree={folderTree}
-                depth={0}
-                groupName={group.name}
-                workbookId={workbookId}
-                idPrefix={connectionId}
-              />
-              {showHidden && connectorAccount && (
-                <ScratchFolderNode workbookId={workbookId} connectorAccountId={connectorAccount.id} />
-              )}
-            </>
+            <FolderTreeRenderer
+              tree={folderTree}
+              depth={0}
+              groupName={group.name}
+              workbookId={workbookId}
+              idPrefix={connectionId}
+            />
           )}
         </Stack>
       </Collapse>
@@ -1461,218 +1458,6 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
         workbookId={workbookId}
         connectorAccount={connectorAccount}
       />
-    </>
-  );
-}
-
-// ============================================================================
-// ScratchFolderNode — virtual .scratch folder shown per-connection
-// when "Show hidden files" is enabled. Reads from the dirty branch so that
-// publish-plans and other CLI-written metadata are visible.
-// ============================================================================
-
-interface ScratchFolderNodeProps {
-  workbookId: WorkbookId;
-  connectorAccountId: string;
-}
-
-function ScratchFolderNode({ workbookId, connectorAccountId }: ScratchFolderNodeProps) {
-  const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
-  const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
-  const nodeId = `scratch-folder-${connectorAccountId}`;
-  const isExpanded = expandedNodes.has(nodeId);
-
-  const { data: entries, isLoading } = useSWR(
-    isExpanded ? ['repo-files', workbookId, '.scratch', connectorAccountId] : null,
-    () => scratchApiClient.git.listRepoFiles(workbookId, 'dirty', '.scratch', connectorAccountId),
-  );
-
-  return (
-    <>
-      <UnstyledButton
-        onClick={() => toggleNode(nodeId)}
-        px="sm"
-        py={4}
-        style={{ width: '100%', backgroundColor: 'transparent' }}
-        __vars={{ '--hover-bg': 'var(--mantine-color-gray-1)' }}
-        styles={{ root: { '&:hover': { backgroundColor: 'var(--hover-bg)' } } }}
-      >
-        <Group gap={6} wrap="nowrap">
-          <StyledLucideIcon Icon={isExpanded ? ChevronDownIcon : ChevronRightIcon} size="sm" c="var(--fg-secondary)" />
-          <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-muted)" />
-          <Text12Regular c="var(--fg-muted)" style={{ fontStyle: 'italic' }}>
-            .scratch
-          </Text12Regular>
-        </Group>
-      </UnstyledButton>
-
-      <Collapse in={isExpanded}>
-        <Stack gap={0}>
-          {(isLoading || !entries) && (
-            <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * 2 }}>
-              <Text12Regular c="var(--fg-muted)">Loading…</Text12Regular>
-            </Box>
-          )}
-          {!isLoading && entries && entries.length === 0 && (
-            <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * 2 }}>
-              <Text12Regular c="var(--fg-muted)">No schema files</Text12Regular>
-            </Box>
-          )}
-          {entries?.map((entry) =>
-            entry.type === 'directory' ? (
-              <ScratchSubdirNode
-                key={entry.path}
-                workbookId={workbookId}
-                connectorAccountId={connectorAccountId}
-                path={entry.path}
-                name={entry.name}
-                depth={1}
-              />
-            ) : (
-              <ScratchFileRow
-                key={entry.path}
-                name={entry.name}
-                path={entry.path}
-                depth={1}
-                workbookId={workbookId}
-                connectorAccountId={connectorAccountId}
-              />
-            ),
-          )}
-        </Stack>
-      </Collapse>
-    </>
-  );
-}
-
-function ScratchFileRow({
-  name,
-  path,
-  depth,
-  workbookId,
-  connectorAccountId,
-}: {
-  name: string;
-  path: string;
-  depth: number;
-  workbookId: WorkbookId;
-  connectorAccountId: string;
-}) {
-  const pathname = usePathname();
-  const encodedPath = path
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-  const href = `/workbook/${workbookId}/scratch/${encodedPath}?connectorAccountId=${encodeURIComponent(connectorAccountId)}`;
-  const isSelected = pathname.startsWith(`/workbook/${workbookId}/scratch/${encodedPath}`);
-
-  return (
-    <Link href={href} style={{ textDecoration: 'none' }}>
-      <UnstyledButton
-        px="sm"
-        py={4}
-        style={{
-          marginLeft: INDENT_PX * depth,
-          width: `calc(100% - ${INDENT_PX * depth}px)`,
-          backgroundColor: isSelected ? 'var(--mantine-color-gray-2)' : 'transparent',
-        }}
-        __vars={{ '--hover-bg': 'var(--mantine-color-gray-1)' }}
-        styles={{ root: { '&:hover': { backgroundColor: 'var(--hover-bg)' } } }}
-      >
-        <Group gap={6} wrap="nowrap">
-          <Box style={{ width: 20, flexShrink: 0 }} />
-          <StyledLucideIcon Icon={FileJsonIcon} size="sm" c="var(--fg-muted)" />
-          <TextMono12Regular c="var(--fg-muted)" truncate style={{ fontStyle: 'italic' }}>
-            {name}
-          </TextMono12Regular>
-        </Group>
-      </UnstyledButton>
-    </Link>
-  );
-}
-
-function ScratchSubdirNode({
-  workbookId,
-  connectorAccountId,
-  path,
-  name,
-  depth,
-}: {
-  workbookId: WorkbookId;
-  connectorAccountId: string;
-  path: string;
-  name: string;
-  depth: number;
-}) {
-  const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
-  const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
-  const nodeId = `scratch-subdir-${connectorAccountId}-${path}`;
-  const isExpanded = expandedNodes.has(nodeId);
-
-  const { data: entries, isLoading } = useSWR(
-    isExpanded ? ['repo-files', workbookId, path, connectorAccountId] : null,
-    () => scratchApiClient.git.listRepoFiles(workbookId, 'dirty', path, connectorAccountId),
-  );
-
-  return (
-    <>
-      <UnstyledButton
-        onClick={() => toggleNode(nodeId)}
-        px="sm"
-        py={4}
-        style={{
-          marginLeft: INDENT_PX * depth,
-          width: `calc(100% - ${INDENT_PX * depth}px)`,
-          backgroundColor: 'transparent',
-        }}
-        __vars={{ '--hover-bg': 'var(--mantine-color-gray-1)' }}
-        styles={{ root: { '&:hover': { backgroundColor: 'var(--hover-bg)' } } }}
-      >
-        <Group gap={6} wrap="nowrap">
-          <Box style={{ display: 'flex', alignItems: 'center', width: 20, height: 20, flexShrink: 0 }}>
-            <StyledLucideIcon
-              Icon={isExpanded ? ChevronDownIcon : ChevronRightIcon}
-              size="sm"
-              c="var(--fg-secondary)"
-            />
-          </Box>
-          <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-muted)" />
-          <Text12Regular c="var(--fg-muted)" truncate style={{ fontStyle: 'italic' }}>
-            {name}
-          </Text12Regular>
-        </Group>
-      </UnstyledButton>
-
-      <Collapse in={isExpanded}>
-        <Stack gap={0}>
-          {(isLoading || !entries) && (
-            <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * (depth + 1) }}>
-              <Text12Regular c="var(--fg-muted)">Loading…</Text12Regular>
-            </Box>
-          )}
-          {entries?.map((entry) =>
-            entry.type === 'directory' ? (
-              <ScratchSubdirNode
-                key={entry.path}
-                workbookId={workbookId}
-                connectorAccountId={connectorAccountId}
-                path={entry.path}
-                name={entry.name}
-                depth={depth + 1}
-              />
-            ) : (
-              <ScratchFileRow
-                key={entry.path}
-                name={entry.name}
-                path={entry.path}
-                depth={depth + 1}
-                workbookId={workbookId}
-                connectorAccountId={connectorAccountId}
-              />
-            ),
-          )}
-        </Stack>
-      </Collapse>
     </>
   );
 }

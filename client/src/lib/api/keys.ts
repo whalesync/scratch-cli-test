@@ -158,6 +158,9 @@ export const SWR_KEYS = {
     publishStatus: (workbookId: WorkbookId) => ['data-folders', 'publish-status', workbookId] as const,
     schema: (dataFolderId: DataFolderId, mode: 'view' | 'refresh') =>
       ['data-folders', 'schema', dataFolderId, mode] as const,
+    /** Keyed by the schema modal's mode like `schema`, so a refresh never shows a view cached before it. */
+    defaultView: (dataFolderId: DataFolderId, mode: 'view' | 'refresh') =>
+      ['data-folders', 'default-view', dataFolderId, mode] as const,
   },
   publishPlans: {
     recordPlan: (workbookId: WorkbookId, planId: string, filePath: string) =>

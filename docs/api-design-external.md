@@ -82,6 +82,7 @@ POST   /data-folder/:id/files                           # Create file in folder
 POST   /data-folder/:id/publish                         # Publish single data folder
 POST   /data-folder/:id/pull-files                      # Pull files for data folder
 GET    /data-folder/:id/schema                          # Get data folder schema
+GET    /data-folder/:id/default-view                    # Get data folder default view
 POST   /data-folder/:id/refresh-schema                  # Refresh data folder schema
 GET    /data-folder/:id/schema-paths                    # Get schema paths for data folder
 ```
@@ -1095,6 +1096,14 @@ GET /data-folder/:id/schema
 ```
 
 Returns the schema for a data folder, describing the structure and fields of its records.
+
+### Get Data Folder Default View
+
+```
+GET /data-folder/:id/default-view
+```
+
+Returns the stored default view for a data folder: the connector's column layout (`TableView`) for its records. Returns 404 when no default view is stored.
 
 ### Refresh Data Folder Schema
 

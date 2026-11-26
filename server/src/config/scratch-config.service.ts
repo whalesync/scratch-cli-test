@@ -162,8 +162,8 @@ export class ScratchConfigService {
    * DEV-12616: whether every write of a folder's table spec or default view to Postgres
    * (`DataFolderTableSpec`) is also mirrored to `.scratch/{folder}/schema.json` and `views/default.json`
    * in the connection's git repo. Defaults to true. Do NOT turn it off yet: the scratchmd CLI, Desktop,
-   * the web "Show hidden files" viewer, and the scratch-git index build still read the git copies. Turning
-   * it off is the follow-up that gives those readers another source.
+   * and the scratch-git index build still read the git copies. Turning it off is the follow-up that gives
+   * those readers another source.
    */
   isTableSpecGitMirrorEnabled(): boolean {
     return this.getOptionalFlagVariable('TABLE_SPEC_GIT_MIRROR_ENABLED', true);

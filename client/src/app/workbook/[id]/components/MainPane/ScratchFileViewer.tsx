@@ -14,24 +14,22 @@ import useSWR from 'swr';
 
 interface ScratchFileViewerProps {
   workbookId: WorkbookId;
-  /** Full git path to the file, e.g. ".scratch/schema/MyTable/schema.json" */
+  /** Path to the file in the workbook config repo, e.g. "syncs/my-sync.json" */
   filePath: string;
-  /** The connectorAccountId to scope the git repo */
-  connectorAccountId?: string;
-  /** When true, reads from the workbook repo instead of a connection repo */
-  useConfigRepo?: boolean;
 }
 
-export function ScratchFileViewer({ workbookId, filePath, connectorAccountId, useConfigRepo }: ScratchFileViewerProps) {
+/**
+ * Read-only view of a file on `main` in the workbook config repo (the sidebar's workbook-repo node). Connection repos
+ * have no file viewer here: a folder's table spec and default view are shown by `DataFolderSchemaModal`.
+ */
+export function ScratchFileViewer({ workbookId, filePath }: ScratchFileViewerProps) {
   const { colorScheme } = useMantineColorScheme();
   const {
     data: content,
     isLoading,
     error,
-  } = useSWR<string, Error>(SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId, useConfigRepo), () =>
-    scratchApiClient.git
-      .getRepoFile(workbookId, filePath, useConfigRepo ? 'main' : 'dirty', connectorAccountId, useConfigRepo)
-      .then((r) => r?.content ?? ''),
+  } = useSWR<string, Error>(SWR_KEYS.files.repoFile(workbookId, filePath, undefined, true), () =>
+    scratchApiClient.git.getRepoFile(workbookId, filePath, 'main', undefined, true).then((r) => r?.content ?? ''),
   );
 
   const fileName = useMemo(() => {

@@ -1,3 +1,4 @@
+import type { TableView } from '../../connector/table-view';
 import type { DataFolder, DataFolderGroup } from '../../db';
 import type { CreateDataFolderDto } from '../../dto/data-folder/create-data-folder.dto';
 import type { MoveDataFolderDto } from '../../dto/data-folder/move-data-folder.dto';
@@ -100,6 +101,14 @@ export function createDataFoldersApi(http: Http) {
     getSchema: async (dataFolderId: string): Promise<Record<string, unknown>> => {
       const res = await http.get<Record<string, unknown>>(`/data-folder/${dataFolderId}/schema`, {
         fallbackMessage: 'Failed to get schema for data folder: ' + dataFolderId,
+      });
+      return res.data;
+    },
+
+    /** GET `/data-folder/:id/default-view` — read a data folder's stored default view. 404 when none is stored. (web-only) */
+    getDefaultView: async (dataFolderId: string): Promise<TableView> => {
+      const res = await http.get<TableView>(`/data-folder/${dataFolderId}/default-view`, {
+        fallbackMessage: 'Failed to get default view for data folder: ' + dataFolderId,
       });
       return res.data;
     },
