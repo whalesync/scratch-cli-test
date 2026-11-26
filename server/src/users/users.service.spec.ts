@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method */
+import { ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { WorkbookProvisioningService } from 'src/workbook/workbook-provisioning.service';
@@ -44,6 +46,7 @@ describe('UsersService — Whalesync shadow users', () => {
       id: 'usr_native_1',
       clerkId: 'user_realclerkid',
       whalesyncUserId: null,
+      whalesyncTeamId: null,
       name: 'Ada Lovelace',
       email: 'ada@example.com',
       organizationId: 'org_native_1',
@@ -72,8 +75,10 @@ describe('UsersService — Whalesync shadow users', () => {
         user: {
           findFirst: jest.fn(),
           findUnique: jest.fn(),
+          findMany: jest.fn(),
           create: jest.fn(),
           update: jest.fn(),
+          updateMany: jest.fn(),
           delete: jest.fn(),
         },
         workbook: {
@@ -284,6 +289,332 @@ describe('UsersService — Whalesync shadow users', () => {
     });
   });
 
+  describe('a shadow user per Whalesync team (DEV-13019)', () => {
+    const TEAM_ID = 'tm_abc123def456';
+    const ACTING_USER_ID = 'wsu-123';
+    // How Whalesync names the team on a session: with whether the acting person is its only member.
+    const ONLY_MEMBER_OF_TEAM = { whalesyncTeamId: TEAM_ID, actingUserIsTeamsOnlyMember: true };
+    const ONE_OF_SEVERAL_IN_TEAM = { whalesyncTeamId: TEAM_ID, actingUserIsTeamsOnlyMember: false };
+
+    // The service looks a shadow user up by team id and by Whalesync user id, both through `findFirst`.
+    function mockShadowUserLookups(found: {
+      byTeamId?: Array<UserCluster.User | null>;
+      byUserId?: UserCluster.User | null;
+    }): void {
+      const byTeamId = [...(found.byTeamId ?? [])];
+      (dbService.client.user.findFirst as jest.Mock).mockImplementation(
+        (args: { where: { whalesyncTeamId?: string; whalesyncUserId?: string } }) => {
+          if (args.where.whalesyncTeamId !== undefined) {
+            return Promise.resolve(byTeamId.length > 1 ? byTeamId.shift() : (byTeamId[0] ?? null));
+          }
+          return Promise.resolve(found.byUserId ?? null);
+        },
+      );
+    }
+
+    function uniqueConstraintViolation(): Error {
+      return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+    }
+
+    it("reuses the team's shadow user without touching its name or email", async () => {
+      const teamShadowUser = makeShadowUser({
+        clerkId: `ws_${TEAM_ID}`,
+        whalesyncUserId: null,
+        whalesyncTeamId: TEAM_ID,
+      });
+      mockShadowUserLookups({ byTeamId: [teamShadowUser] });
+
+      const result = await service.getOrCreateShadowUserFromWhalesync(
+        ACTING_USER_ID,
+        'someone.else@example.com',
+        'Someone Else',
+        undefined,
+        ONE_OF_SEVERAL_IN_TEAM,
+      );
+
+      expect(result).toBe(teamShadowUser);
+      expect(dbService.client.user.create).not.toHaveBeenCalled();
+      expect(dbService.client.user.update).not.toHaveBeenCalled();
+      expect(dbService.client.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("makes the acting person's shadow user from before teams the team's, recording the team id on it", async () => {
+      const shadowUserMadeBeforeTeams = makeShadowUser({ whalesyncTeamId: null });
+      const afterRecording = { ...shadowUserMadeBeforeTeams, whalesyncTeamId: TEAM_ID };
+      mockShadowUserLookups({ byTeamId: [null, afterRecording], byUserId: shadowUserMadeBeforeTeams });
+
+      const result = await service.getOrCreateShadowUserFromWhalesync(
+        ACTING_USER_ID,
+        'ada@example.com',
+        'Ada Lovelace',
+        undefined,
+        ONLY_MEMBER_OF_TEAM,
+      );
+
+      // A pure shadow user stops carrying its person's email, so a later Scratch sign-up with it can't claim the team's.
+      expect(dbService.client.user.updateMany).toHaveBeenCalledWith({
+        where: { id: 'usr_shadow_1', whalesyncTeamId: null },
+        data: { whalesyncTeamId: TEAM_ID, email: null },
+      });
+      expect(result).toBe(afterRecording);
+      expect(dbService.client.user.create).not.toHaveBeenCalled();
+    });
+
+    it("keeps the email of a real Scratch account that becomes its person's team's", async () => {
+      const realAccountMadeBeforeTeams = makeNativeUser({ whalesyncUserId: ACTING_USER_ID, whalesyncTeamId: null });
+      mockShadowUserLookups({
+        byTeamId: [null, { ...realAccountMadeBeforeTeams, whalesyncTeamId: TEAM_ID }],
+        byUserId: realAccountMadeBeforeTeams,
+      });
+
+      await service.getOrCreateShadowUserFromWhalesync(
+        ACTING_USER_ID,
+        'ada@example.com',
+        undefined,
+        undefined,
+        ONLY_MEMBER_OF_TEAM,
+      );
+
+      expect(dbService.client.user.updateMany).toHaveBeenCalledWith({
+        where: { id: 'usr_native_1', whalesyncTeamId: null },
+        data: { whalesyncTeamId: TEAM_ID },
+      });
+    });
+
+    it("leaves a person's own shadow user alone in a team with several members, and creates the team's", async () => {
+      mockShadowUserLookups({ byTeamId: [null], byUserId: makeShadowUser({ whalesyncTeamId: null }) });
+      (dbService.client.user.create as jest.Mock).mockResolvedValue(
+        makeShadowUser({ id: 'usr_new', clerkId: `ws_${TEAM_ID}`, whalesyncUserId: null, whalesyncTeamId: TEAM_ID }),
+      );
+
+      const result = await service.getOrCreateShadowUserFromWhalesync(
+        ACTING_USER_ID,
+        'ada@example.com',
+        'Acme',
+        undefined,
+        ONE_OF_SEVERAL_IN_TEAM,
+      );
+
+      expect(result.id).toBe('usr_new');
+      expect(dbService.client.user.updateMany).not.toHaveBeenCalled();
+      expect(firstCallData(dbService.client.user.create as jest.Mock).whalesyncUserId).toBeUndefined();
+    });
+
+    it("gives a new team's shadow user its only member's id too, so a lookup by person finds the same one", async () => {
+      mockShadowUserLookups({ byTeamId: [null], byUserId: null });
+      (dbService.client.user.create as jest.Mock).mockResolvedValue(
+        makeShadowUser({ id: 'usr_new', clerkId: `ws_${TEAM_ID}`, whalesyncTeamId: TEAM_ID }),
+      );
+
+      await service.getOrCreateShadowUserFromWhalesync(
+        ACTING_USER_ID,
+        'ada@example.com',
+        undefined,
+        undefined,
+        ONLY_MEMBER_OF_TEAM,
+      );
+
+      const created = firstCallData(dbService.client.user.create as jest.Mock);
+      expect(created.whalesyncTeamId).toBe(TEAM_ID);
+      expect(created.whalesyncUserId).toBe(ACTING_USER_ID);
+      expect(created.email).toBeUndefined();
+    });
+
+    it("does not refresh a team's shadow user from a person when it is found by person", async () => {
+      // A Whalesync server that still asks by person, during a deploy or after a revert.
+      const teamShadowUser = makeShadowUser({ whalesyncTeamId: TEAM_ID, email: null, name: 'Acme' });
+      mockShadowUserLookups({ byUserId: teamShadowUser });
+
+      const result = await service.getOrCreateShadowUserFromWhalesync(ACTING_USER_ID, 'ada@example.com', 'Ada');
+
+      expect(result).toBe(teamShadowUser);
+      expect(dbService.client.user.update).not.toHaveBeenCalled();
+    });
+
+    it("creates a pure shadow user with no email when the person's own already holds another team's exports", async () => {
+      mockShadowUserLookups({ byTeamId: [null], byUserId: makeShadowUser({ whalesyncTeamId: 'tm_other' }) });
+      (dbService.client.user.create as jest.Mock).mockResolvedValue(
+        makeShadowUser({ id: 'usr_new', clerkId: `ws_${TEAM_ID}`, whalesyncUserId: null, whalesyncTeamId: TEAM_ID }),
+      );
+
+      await service.getOrCreateShadowUserFromWhalesync(
+        ACTING_USER_ID,
+        'ada@example.com',
+        'Acme',
+        undefined,
+        ONLY_MEMBER_OF_TEAM,
+      );
+
+      expect(dbService.client.user.updateMany).not.toHaveBeenCalled();
+      const created = firstCallData(dbService.client.user.create as jest.Mock);
+      expect(created.clerkId).toBe(`ws_${TEAM_ID}`);
+      expect(created.whalesyncTeamId).toBe(TEAM_ID);
+      expect(created.whalesyncUserId).toBeUndefined();
+      expect(created.email).toBeUndefined();
+      expect(created.name).toBe('Acme');
+    });
+
+    it('never adopts a native Scratch account by email for a new team', async () => {
+      mockShadowUserLookups({ byTeamId: [null], byUserId: null });
+      (dbService.client.user.findUnique as jest.Mock).mockResolvedValue(makeNativeUser());
+      (dbService.client.user.create as jest.Mock).mockResolvedValue(
+        makeShadowUser({ id: 'usr_new', clerkId: `ws_${TEAM_ID}`, whalesyncUserId: null, whalesyncTeamId: TEAM_ID }),
+      );
+
+      const result = await service.getOrCreateShadowUserFromWhalesync(
+        ACTING_USER_ID,
+        'ada@example.com',
+        'Ada Lovelace',
+        undefined,
+        ONLY_MEMBER_OF_TEAM,
+      );
+
+      expect(result.id).toBe('usr_new');
+      expect(dbService.client.user.findUnique).not.toHaveBeenCalled();
+      expect(dbService.client.user.update).not.toHaveBeenCalled();
+    });
+
+    it('returns the shadow user another request created when two first sessions race', async () => {
+      const createdByOtherRequest = makeShadowUser({
+        id: 'usr_other',
+        clerkId: `ws_${TEAM_ID}`,
+        whalesyncTeamId: TEAM_ID,
+      });
+      mockShadowUserLookups({ byTeamId: [null, createdByOtherRequest], byUserId: null });
+      (dbService.client.user.create as jest.Mock).mockRejectedValue(uniqueConstraintViolation());
+
+      const result = await service.getOrCreateShadowUserFromWhalesync(
+        ACTING_USER_ID,
+        'ada@example.com',
+        undefined,
+        undefined,
+        ONLY_MEMBER_OF_TEAM,
+      );
+
+      expect(result).toBe(createdByOtherRequest);
+    });
+
+    it("refuses a teammate when the team's Live Exports are held by a real Scratch account", async () => {
+      const realAccountHoldingTeam = makeNativeUser({ whalesyncUserId: 'wsu-owner', whalesyncTeamId: TEAM_ID });
+      mockShadowUserLookups({ byTeamId: [realAccountHoldingTeam] });
+
+      await expect(
+        service.getOrCreateShadowUserFromWhalesync(
+          'wsu-teammate',
+          'teammate@example.com',
+          undefined,
+          undefined,
+          ONE_OF_SEVERAL_IN_TEAM,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('lets the person a real Scratch account belongs to act as it', async () => {
+      const realAccountHoldingTeam = makeNativeUser({ whalesyncUserId: 'wsu-owner', whalesyncTeamId: TEAM_ID });
+      mockShadowUserLookups({ byTeamId: [realAccountHoldingTeam] });
+
+      const result = await service.getOrCreateShadowUserFromWhalesync(
+        'wsu-owner',
+        'ada@example.com',
+        undefined,
+        undefined,
+        ONLY_MEMBER_OF_TEAM,
+      );
+
+      expect(result).toBe(realAccountHoldingTeam);
+    });
+
+    it('finds a shadow user made before teams without recording the team when asked not to', async () => {
+      const shadowUserMadeBeforeTeams = makeShadowUser({ whalesyncTeamId: null });
+      mockShadowUserLookups({ byTeamId: [null], byUserId: shadowUserMadeBeforeTeams });
+
+      const result = await service.findShadowUserForWhalesyncTeam(TEAM_ID, ACTING_USER_ID, {
+        recordTeamIdOnShadowUserMadeBeforeTeams: false,
+      });
+
+      expect(result).toBe(shadowUserMadeBeforeTeams);
+      expect(dbService.client.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('finds nothing by team alone when no member is named', async () => {
+      mockShadowUserLookups({ byTeamId: [null], byUserId: makeShadowUser({ whalesyncTeamId: null }) });
+
+      const result = await service.findShadowUserForWhalesyncTeam(TEAM_ID, undefined, {
+        recordTeamIdOnShadowUserMadeBeforeTeams: true,
+      });
+
+      expect(result).toBeNull();
+      expect(dbService.client.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('lists the Whalesync user ids of shadow users with no team, after a cursor', async () => {
+      (dbService.client.user.findMany as jest.Mock).mockResolvedValue([
+        { whalesyncUserId: 'wsu-b' },
+        { whalesyncUserId: 'wsu-c' },
+      ]);
+
+      const result = await service.findWhalesyncUserIdsOfShadowUsersWithoutTeam('wsu-a', 500);
+
+      expect(result).toEqual(['wsu-b', 'wsu-c']);
+      expect(dbService.client.user.findMany).toHaveBeenCalledWith({
+        where: { whalesyncTeamId: null, whalesyncUserId: { gt: 'wsu-a' } },
+        select: { whalesyncUserId: true },
+        orderBy: { whalesyncUserId: 'asc' },
+        take: 500,
+      });
+    });
+
+    it('links each shadow user to its team and reports the ones it could not', async () => {
+      const usersByWhalesyncUserId: Record<string, UserCluster.User | null> = {
+        'wsu-new': makeShadowUser({ id: 'usr_new', whalesyncUserId: 'wsu-new', whalesyncTeamId: null }),
+        'wsu-done': makeShadowUser({ id: 'usr_done', whalesyncUserId: 'wsu-done', whalesyncTeamId: 'tm_done' }),
+        'wsu-elsewhere': makeShadowUser({ id: 'usr_else', whalesyncUserId: 'wsu-elsewhere', whalesyncTeamId: 'tm_x' }),
+        'wsu-late': makeShadowUser({ id: 'usr_late', whalesyncUserId: 'wsu-late', whalesyncTeamId: null }),
+        'wsu-gone': null,
+      };
+      const usersByWhalesyncTeamId: Record<string, UserCluster.User | null> = {
+        tm_new: { ...usersByWhalesyncUserId['wsu-new'], whalesyncTeamId: 'tm_new' } as UserCluster.User,
+        // tm_taken already belongs to a different shadow user, so wsu-late's write fails on the unique index.
+        tm_taken: makeShadowUser({ id: 'usr_holder', whalesyncTeamId: 'tm_taken' }),
+      };
+      (dbService.client.user.findFirst as jest.Mock).mockImplementation(
+        (args: { where: { whalesyncTeamId?: string; whalesyncUserId?: string } }) =>
+          Promise.resolve(
+            args.where.whalesyncTeamId !== undefined
+              ? (usersByWhalesyncTeamId[args.where.whalesyncTeamId] ?? null)
+              : (usersByWhalesyncUserId[args.where.whalesyncUserId ?? ''] ?? null),
+          ),
+      );
+      (dbService.client.user.updateMany as jest.Mock).mockImplementation(
+        (args: { data: { whalesyncTeamId: string } }) =>
+          args.data.whalesyncTeamId === 'tm_taken'
+            ? Promise.reject(uniqueConstraintViolation())
+            : Promise.resolve({ count: 1 }),
+      );
+
+      const result = await service.linkShadowUsersToWhalesyncTeams([
+        { whalesyncUserId: 'wsu-new', whalesyncTeamId: 'tm_new' },
+        { whalesyncUserId: 'wsu-done', whalesyncTeamId: 'tm_done' },
+        { whalesyncUserId: 'wsu-elsewhere', whalesyncTeamId: 'tm_y' },
+        { whalesyncUserId: 'wsu-late', whalesyncTeamId: 'tm_taken' },
+        { whalesyncUserId: 'wsu-gone', whalesyncTeamId: 'tm_z' },
+      ]);
+
+      expect(result).toEqual({
+        linked: 1,
+        alreadyLinked: 1,
+        skipped: [
+          { whalesyncUserId: 'wsu-elsewhere', whalesyncTeamId: 'tm_y', reason: 'linked_to_another_team' },
+          { whalesyncUserId: 'wsu-late', whalesyncTeamId: 'tm_taken', reason: 'team_has_another_shadow_user' },
+          { whalesyncUserId: 'wsu-gone', whalesyncTeamId: 'tm_z', reason: 'no_shadow_user' },
+        ],
+      });
+    });
+  });
+
   describe('getOrCreateUserFromClerk', () => {
     it('adopts a Whalesync shadow user that owns the email, updating only its clerkId (DEV-10731)', async () => {
       // No user by clerkId (the shadow row stores ws_…), but a shadow user owns the email → adopt it
@@ -422,7 +753,7 @@ describe('UsersService — Whalesync shadow users', () => {
   });
 
   describe('unlinkUserFromWhalesyncIdentity', () => {
-    it('revokes only WHALESYNC_SESSION tokens and clears whalesyncUserId in one transaction', async () => {
+    it('revokes only WHALESYNC_SESSION tokens and clears the Whalesync ids in one transaction', async () => {
       (dbService.client.apiToken.deleteMany as jest.Mock).mockResolvedValue({ count: 2 });
       (dbService.client.user.update as jest.Mock).mockResolvedValue({ id: 'usr_real_1', whalesyncUserId: null });
 
@@ -436,7 +767,7 @@ describe('UsersService — Whalesync shadow users', () => {
       // Only the Whalesync link is cleared: clerkId, email, and organizationId are left alone.
       expect(dbService.client.user.update).toHaveBeenCalledWith({
         where: { id: 'usr_real_1' },
-        data: { whalesyncUserId: null },
+        data: { whalesyncUserId: null, whalesyncTeamId: null },
       });
       expect(dbService.client.user.delete).not.toHaveBeenCalled();
     });

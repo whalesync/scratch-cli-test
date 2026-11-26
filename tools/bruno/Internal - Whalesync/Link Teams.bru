@@ -1,0 +1,31 @@
+meta {
+  name: Link Teams
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/internal/whalesync/team-links
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "links": [
+      { "whalesyncUserId": "ws_user_123", "whalesyncTeamId": "tm_abc123def456" }
+    ]
+  }
+}
+
+docs {
+  Record the team of each shadow user made before teams, at most 500 a request. Safe to
+  repeat. Returns { linked, alreadyLinked, skipped: [{ whalesyncUserId, whalesyncTeamId,
+  reason }] }. A link is skipped, never forced, when there is no shadow user for that
+  person, it already holds another team's Live Exports, or the team already has a
+  different shadow user.
+}

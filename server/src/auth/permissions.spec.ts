@@ -16,6 +16,7 @@ describe('permissions', () => {
       updatedAt: new Date(),
       clerkId: 'clerk_123',
       whalesyncUserId: null,
+      whalesyncTeamId: null,
       name: 'Test User',
       email: 'test@example.com',
       role,

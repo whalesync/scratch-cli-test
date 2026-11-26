@@ -1,0 +1,24 @@
+meta {
+  name: List Team Live Exports
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/internal/whalesync/teams/{{whalesyncTeamId}}/live-exports
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~whalesyncUserId: {{whalesyncUserId}}
+}
+
+docs {
+  List a team's Live Export workbooks, newest first, skipping those pending deletion.
+  Returns { liveExports: [{ id, name, createdAt, updatedAt }] }. Returns an empty list if
+  the team has no shadow user (never creates one).
+
+  The optional `whalesyncUserId` is the team's one member, used to find a shadow user
+  made before teams.
+}

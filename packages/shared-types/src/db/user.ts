@@ -29,6 +29,8 @@ export interface User {
   id: string;
   clerkId: string | null;
   whalesyncUserId: string | null;
+  /** The Whalesync team (`tm_…`) whose Live Exports this user holds, or null for a native Scratch user. */
+  whalesyncTeamId: string | null;
   createdAt: string;
   updatedAt: string;
   isAdmin: boolean;

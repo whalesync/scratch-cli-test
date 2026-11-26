@@ -27,6 +27,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     updatedAt: new Date('2026-06-04T00:00:00Z'),
     clerkId: 'user_native',
     whalesyncUserId: null,
+    whalesyncTeamId: null,
     name: 'Native User',
     email: 'native@example.com',
     role: 'USER',

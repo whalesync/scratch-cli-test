@@ -1,0 +1,35 @@
+meta {
+  name: Create Team Session
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/internal/whalesync/sessions
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "whalesyncTeamId": "tm_abc123def456",
+    "whalesyncUserId": "ws_user_123",
+    "whalesyncUserIsTeamsOnlyMember": true,
+    "email": "user@example.com",
+    "name": "Example Team"
+  }
+}
+
+docs {
+  Ensure the team's shadow user exists and mint a 10-minute session token that names
+  the acting person (`whalesyncUserId`). Idempotent on `whalesyncTeamId`. Returns
+  { scratchUserId, apiToken, expiresAt }.
+
+  With `whalesyncUserIsTeamsOnlyMember`, a shadow user made for the person before teams
+  becomes the team's. Returns 409 when the team's shadow user is another person's real
+  Scratch account.
+}

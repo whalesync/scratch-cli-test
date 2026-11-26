@@ -1,0 +1,25 @@
+meta {
+  name: Deprovision Team
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/internal/whalesync/teams/{{whalesyncTeamId}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~whalesyncUserId: {{whalesyncUserId}}
+}
+
+docs {
+  Deprovision the Scratch user that holds a team's Live Exports. A pure shadow user is
+  deleted (workbooks, org, user, tokens). A real Scratch account is only unlinked: its
+  Live Exports, Whalesync plan, and session tokens go. Idempotent if the team has no
+  shadow user. Returns 204.
+
+  The optional `whalesyncUserId` is the team's one member, used to find a shadow user
+  made before teams.
+}

@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import {
+  WHALESYNC_TEAM_LINK_BATCH_LIMIT,
+  WhalesyncLinkTeamsResponse,
   WhalesyncListLiveExportsResponse,
+  WhalesyncPendingTeamLinksResponse,
   WhalesyncSubscriptionPayload,
   WhalesyncUpdateSubscriptionResponse,
   WorkbookId,
@@ -33,18 +36,24 @@ export class WhalesyncInternalService {
     private readonly stripePaymentService: StripePaymentService,
   ) {}
 
-  /** Ensure the shadow user exists, then mint a fresh 10-minute session token. Idempotent on `whalesyncUserId`. */
+  /**
+   * Ensure the shadow user exists, then mint a fresh 10-minute session token. With a `team` the shadow user is the
+   * team's and `whalesyncUserId` is the person acting in it (DEV-13019); without one it is the person's own.
+   * Idempotent on whichever id finds it.
+   */
   public async ensureSessionForWhalesyncUser(
     whalesyncUserId: string,
     email: string,
     name?: string,
     subscription?: WhalesyncSubscriptionPayload,
+    team?: { whalesyncTeamId: string; actingUserIsTeamsOnlyMember: boolean },
   ): Promise<{ scratchUserId: string; apiToken: string; expiresAt: Date }> {
     const shadowUser = await this.usersService.getOrCreateShadowUserFromWhalesync(
       whalesyncUserId,
       email,
       name,
       subscription,
+      team,
     );
     const { token, expiresAt } = await this.usersService.mintWhalesyncSessionToken(shadowUser.id);
     return { scratchUserId: shadowUser.id, apiToken: token, expiresAt };
@@ -56,14 +65,31 @@ export class WhalesyncInternalService {
     email: string,
     name?: string,
     subscription?: WhalesyncSubscriptionPayload,
+    team?: { whalesyncTeamId: string; actingUserIsTeamsOnlyMember: boolean },
   ): Promise<{ scratchUserId: string }> {
     const shadowUser = await this.usersService.getOrCreateShadowUserFromWhalesync(
       whalesyncUserId,
       email,
       name,
       subscription,
+      team,
     );
     return { scratchUserId: shadowUser.id };
+  }
+
+  /**
+   * The shadow user a request names: the team's when it names a team (falling back to the shadow user made for
+   * `whalesyncUserId` before teams, see {@link UsersService.findShadowUserForWhalesyncTeam}), and otherwise the one
+   * linked to `whalesyncUserId`. Null when there is none; never creates one.
+   */
+  private async findShadowUser(
+    ids: { whalesyncTeamId?: string; whalesyncUserId?: string },
+    options: { recordTeamIdOnShadowUserMadeBeforeTeams: boolean },
+  ): Promise<UserCluster.User | null> {
+    if (ids.whalesyncTeamId) {
+      return this.usersService.findShadowUserForWhalesyncTeam(ids.whalesyncTeamId, ids.whalesyncUserId, options);
+    }
+    return ids.whalesyncUserId ? this.usersService.findByWhalesyncUserId(ids.whalesyncUserId) : null;
   }
 
   /**
@@ -75,10 +101,12 @@ export class WhalesyncInternalService {
    * lifecycle hooks are safe.
    */
   public async updateWhalesyncSubscription(
-    whalesyncUserId: string,
+    ids: { whalesyncTeamId?: string; whalesyncUserId?: string },
     subscription: WhalesyncSubscriptionPayload,
   ): Promise<WhalesyncUpdateSubscriptionResponse> {
-    const shadowUser = await this.usersService.findByWhalesyncUserId(whalesyncUserId);
+    // Recording the team here is what keeps a plan change reaching a shadow user whose person hasn't opened Live
+    // Export since teams: its scheduled exports depend on the renewal arriving.
+    const shadowUser = await this.findShadowUser(ids, { recordTeamIdOnShadowUserMadeBeforeTeams: true });
     if (!shadowUser) {
       return { scratchUserId: null, updated: false, planType: null };
     }
@@ -127,7 +155,22 @@ export class WhalesyncInternalService {
    * workbooks pending deletion. Read-only: a user that doesn't exist gets an empty list and is not created.
    */
   public async listLiveExportsForWhalesyncUser(whalesyncUserId: string): Promise<WhalesyncListLiveExportsResponse> {
-    const shadowUser = await this.usersService.findByWhalesyncUserId(whalesyncUserId);
+    return this.listLiveExports({ whalesyncUserId });
+  }
+
+  /** A team's Live Exports, newest first. Read-only: a team with no shadow user gets an empty list. */
+  public async listLiveExportsForWhalesyncTeam(
+    whalesyncTeamId: string,
+    whalesyncUserIdOfTeamsOnlyMember?: string,
+  ): Promise<WhalesyncListLiveExportsResponse> {
+    return this.listLiveExports({ whalesyncTeamId, whalesyncUserId: whalesyncUserIdOfTeamsOnlyMember });
+  }
+
+  private async listLiveExports(ids: {
+    whalesyncTeamId?: string;
+    whalesyncUserId?: string;
+  }): Promise<WhalesyncListLiveExportsResponse> {
+    const shadowUser = await this.findShadowUser(ids, { recordTeamIdOnShadowUserMadeBeforeTeams: false });
     if (!shadowUser) {
       return { liveExports: [] };
     }
@@ -166,17 +209,57 @@ export class WhalesyncInternalService {
    * Bottlenose's retries.
    */
   public async deprovisionWhalesyncUser(whalesyncUserId: string): Promise<void> {
-    const linkedUser = await this.usersService.findByWhalesyncUserId(whalesyncUserId);
+    await this.deprovision({ whalesyncUserId });
+  }
+
+  /**
+   * Deprovision the Scratch user that holds a Whalesync team's Live Exports, when Whalesync deletes or archives the
+   * team. The same two branches as {@link deprovisionWhalesyncUser}, and as idempotent.
+   */
+  public async deprovisionWhalesyncTeam(
+    whalesyncTeamId: string,
+    whalesyncUserIdOfTeamsOnlyMember?: string,
+  ): Promise<void> {
+    await this.deprovision({ whalesyncTeamId, whalesyncUserId: whalesyncUserIdOfTeamsOnlyMember });
+  }
+
+  private async deprovision(ids: { whalesyncTeamId?: string; whalesyncUserId?: string }): Promise<void> {
+    const linkedUser = await this.findShadowUser(ids, { recordTeamIdOnShadowUserMadeBeforeTeams: false });
     if (!linkedUser) {
       // Already gone or unlinked (or never provisioned) — idempotent success.
       return;
     }
 
     if (isPureWhalesyncShadowUser(linkedUser)) {
-      await this.deleteShadowUserWithItsOrganizationAndOwnedWorkbooks(linkedUser, whalesyncUserId);
+      await this.deleteShadowUserWithItsOrganizationAndOwnedWorkbooks(linkedUser, ids);
     } else {
-      await this.unlinkRealScratchUserFromWhalesyncIdentity(linkedUser, whalesyncUserId);
+      await this.unlinkRealScratchUserFromWhalesyncIdentity(linkedUser, ids);
     }
+  }
+
+  /** One page of the Whalesync user ids whose shadow users have no team id yet, for Whalesync to answer with teams. */
+  public async listPendingTeamLinks(afterWhalesyncUserId?: string): Promise<WhalesyncPendingTeamLinksResponse> {
+    return {
+      whalesyncUserIds: await this.usersService.findWhalesyncUserIdsOfShadowUsersWithoutTeam(
+        afterWhalesyncUserId,
+        WHALESYNC_TEAM_LINK_BATCH_LIMIT,
+      ),
+    };
+  }
+
+  /** Record the team of each shadow user made before teams. Idempotent. */
+  public async linkTeams(
+    links: { whalesyncUserId: string; whalesyncTeamId: string }[],
+  ): Promise<WhalesyncLinkTeamsResponse> {
+    const result = await this.usersService.linkShadowUsersToWhalesyncTeams(links);
+    WSLogger.info({
+      source: LOG_SOURCE,
+      message: `Linked shadow users to Whalesync teams: ${result.linked} linked, ${result.alreadyLinked} already linked, ${result.skipped.length} skipped`,
+      linked: result.linked,
+      alreadyLinked: result.alreadyLinked,
+      skipped: result.skipped,
+    });
+    return result;
   }
 
   /**
@@ -193,7 +276,7 @@ export class WhalesyncInternalService {
    */
   private async deleteShadowUserWithItsOrganizationAndOwnedWorkbooks(
     shadowUser: UserCluster.User,
-    whalesyncUserId: string,
+    requestedIds: { whalesyncTeamId?: string; whalesyncUserId?: string },
   ): Promise<void> {
     const shadowUserOrganizationId = shadowUser.organizationId ?? undefined;
     const isSoleMemberOfOrganization = await this.usersService.isSoleMemberOfOrganization(shadowUser);
@@ -209,7 +292,7 @@ export class WhalesyncInternalService {
       message: `Deprovisioning shadow user ${shadowUser.id} by deleting it: deleting ${workbookIdsOwnedByShadowUserOrganization.length} workbook(s), organizationDeleted=${isSoleMemberOfOrganization}`,
       deprovisionBranch: 'delete',
       scratchUserId: shadowUser.id,
-      whalesyncUserId,
+      ...requestedIds,
       organizationId: shadowUserOrganizationId,
     });
 
@@ -233,14 +316,14 @@ export class WhalesyncInternalService {
    *      and their scheduled runs would otherwise keep exporting with no Whalesync owner.
    *   2. Remove the internal `WHALESYNC_PLAN` subscription. A real Scratch Stripe subscription is never touched, and
    *      having one does not block the unlink.
-   *   3. Revoke the WHALESYNC_SESSION tokens and clear `whalesyncUserId`, together.
+   *   3. Revoke the WHALESYNC_SESSION tokens and clear `whalesyncUserId` and `whalesyncTeamId`, together.
    *
-   * The unlink runs last on purpose: until it commits, the user is still found by `whalesyncUserId`, so if an
+   * The unlink runs last on purpose: until it commits, the user is still found by its Whalesync ids, so if an
    * earlier step throws, Bottlenose's retry re-runs every (idempotent) step. Once it commits, a retry is a no-op.
    */
   private async unlinkRealScratchUserFromWhalesyncIdentity(
     realScratchUser: UserCluster.User,
-    whalesyncUserId: string,
+    requestedIds: { whalesyncTeamId?: string; whalesyncUserId?: string },
   ): Promise<void> {
     const liveExportWorkbookIdsCreatedByUser = await this.workbookService.findIdsOfLiveExportWorkbooksCreatedByUser(
       realScratchUser.id,
@@ -265,7 +348,7 @@ export class WhalesyncInternalService {
       message: `Deprovisioned Whalesync identity from real Scratch user ${realScratchUser.id} by unlinking it: kept the user and organization, deleted ${liveExportWorkbookIdsCreatedByUser.length} Live Export workbook(s), whalesyncPlanSubscriptionCleared=${whalesyncPlanSubscriptionCleared}, revoked ${revokedWhalesyncSessionTokenCount} session token(s)`,
       deprovisionBranch: 'unlink',
       scratchUserId: realScratchUser.id,
-      whalesyncUserId,
+      ...requestedIds,
       organizationId: realScratchUser.organizationId ?? undefined,
     });
   }

@@ -94,13 +94,14 @@ export class PostHogService implements OnModuleDestroy {
     // for every user (true for shadow, explicitly false for native) to keep the exclusion filter
     // unambiguous, and is set via `$set` (not `$set_once`) so it stays correct if a user is ever
     // reconciled from shadow to native later.
-    const isWhalesyncShadowUser = !!user.whalesyncUserId;
+    const isWhalesyncShadowUser = !!user.whalesyncUserId || !!user.whalesyncTeamId;
 
     const eventProperties = {
       email: user.email,
       name: user.name,
       is_whalesync_shadow_user: isWhalesyncShadowUser,
       whalesync_user_id: user.whalesyncUserId ?? null,
+      whalesync_team_id: user.whalesyncTeamId ?? null,
       $set_once: {
         signed_up_at: signedUpAt,
       },
@@ -117,6 +118,7 @@ export class PostHogService implements OnModuleDestroy {
         role: user.role,
         is_whalesync_shadow_user: isWhalesyncShadowUser,
         whalesync_user_id: user.whalesyncUserId ?? null,
+        whalesync_team_id: user.whalesyncTeamId ?? null,
         $set_once: {
           signed_up_at: signedUpAt,
         },

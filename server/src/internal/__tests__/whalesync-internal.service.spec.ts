@@ -12,6 +12,9 @@ describe('WhalesyncInternalService', () => {
     Pick<
       UsersService,
       | 'findByWhalesyncUserId'
+      | 'findShadowUserForWhalesyncTeam'
+      | 'findWhalesyncUserIdsOfShadowUsersWithoutTeam'
+      | 'linkShadowUsersToWhalesyncTeams'
       | 'isSoleMemberOfOrganization'
       | 'deleteShadowUserAndOrganization'
       | 'unlinkUserFromWhalesyncIdentity'
@@ -33,6 +36,9 @@ describe('WhalesyncInternalService', () => {
   beforeEach(() => {
     mockUsersService = {
       findByWhalesyncUserId: jest.fn(),
+      findShadowUserForWhalesyncTeam: jest.fn(),
+      findWhalesyncUserIdsOfShadowUsersWithoutTeam: jest.fn(),
+      linkShadowUsersToWhalesyncTeams: jest.fn(),
       isSoleMemberOfOrganization: jest.fn(),
       deleteShadowUserAndOrganization: jest.fn(),
       unlinkUserFromWhalesyncIdentity: jest.fn(),
@@ -90,7 +96,10 @@ describe('WhalesyncInternalService', () => {
     it('is an idempotent no-op when no shadow user exists', async () => {
       mockUsersService.findByWhalesyncUserId.mockResolvedValue(null);
 
-      const result = await service.updateWhalesyncSubscription('ws_missing', { status: 'expired' });
+      const result = await service.updateWhalesyncSubscription(
+        { whalesyncUserId: 'ws_missing' },
+        { status: 'expired' },
+      );
 
       expect(result).toEqual({ scratchUserId: null, updated: false, planType: null });
       expect(mockStripePaymentService.applyWhalesyncSubscriptionState).not.toHaveBeenCalled();
@@ -101,7 +110,7 @@ describe('WhalesyncInternalService', () => {
       mockUsersService.findByWhalesyncUserId.mockResolvedValue(shadowUser);
       mockStripePaymentService.applyWhalesyncSubscriptionState.mockResolvedValue({ planType: null, updated: true });
 
-      const result = await service.updateWhalesyncSubscription('ws_1', { status: 'cancelled' });
+      const result = await service.updateWhalesyncSubscription({ whalesyncUserId: 'ws_1' }, { status: 'cancelled' });
 
       expect(mockStripePaymentService.applyWhalesyncSubscriptionState).toHaveBeenCalledWith(
         shadowUser,
@@ -116,9 +125,119 @@ describe('WhalesyncInternalService', () => {
       mockUsersService.findByWhalesyncUserId.mockResolvedValue(shadowUser);
       mockStripePaymentService.applyWhalesyncSubscriptionState.mockRejectedValue(new ConflictException('nope'));
 
-      await expect(service.updateWhalesyncSubscription('ws_paid', { status: 'active' })).rejects.toBeInstanceOf(
-        ConflictException,
+      await expect(
+        service.updateWhalesyncSubscription({ whalesyncUserId: 'ws_paid' }, { status: 'active' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('by team (DEV-13019)', () => {
+    const teamShadowUser = {
+      id: 'usr_team_shadow',
+      clerkId: 'ws_tm_1',
+      organizationId: 'org_team_shadow',
+    } as unknown as UserCluster.User;
+
+    it("applies a plan change to the team's shadow user, recording the team on one made before teams", async () => {
+      mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(teamShadowUser);
+      mockStripePaymentService.applyWhalesyncSubscriptionState.mockResolvedValue({ planType: null, updated: true });
+
+      const result = await service.updateWhalesyncSubscription(
+        { whalesyncTeamId: 'tm_1', whalesyncUserId: 'wsu_only_member' },
+        { status: 'active' },
       );
+
+      expect(mockUsersService.findShadowUserForWhalesyncTeam).toHaveBeenCalledWith('tm_1', 'wsu_only_member', {
+        recordTeamIdOnShadowUserMadeBeforeTeams: true,
+      });
+      expect(mockUsersService.findByWhalesyncUserId).not.toHaveBeenCalled();
+      expect(result).toEqual({ scratchUserId: 'usr_team_shadow', updated: true, planType: null });
+    });
+
+    it('is a no-op for a plan change to a team with no shadow user', async () => {
+      mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(null);
+
+      const result = await service.updateWhalesyncSubscription({ whalesyncTeamId: 'tm_none' }, { status: 'active' });
+
+      expect(result).toEqual({ scratchUserId: null, updated: false, planType: null });
+      expect(mockStripePaymentService.applyWhalesyncSubscriptionState).not.toHaveBeenCalled();
+    });
+
+    it("lists a team's Live Exports without recording anything", async () => {
+      mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(teamShadowUser);
+      mockWorkbookService.findAllForUser.mockResolvedValue([
+        {
+          id: 'wkb_1',
+          name: 'Orders',
+          isPendingDelete: false,
+          createdAt: new Date('2026-11-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-11-02T00:00:00.000Z'),
+        },
+      ] as unknown as WorkbookCluster.Workbook[]);
+
+      const result = await service.listLiveExportsForWhalesyncTeam('tm_1', 'wsu_only_member');
+
+      expect(mockUsersService.findShadowUserForWhalesyncTeam).toHaveBeenCalledWith('tm_1', 'wsu_only_member', {
+        recordTeamIdOnShadowUserMadeBeforeTeams: false,
+      });
+      expect(result.liveExports.map((liveExport) => liveExport.id)).toEqual(['wkb_1']);
+    });
+
+    it("deletes a team's pure shadow user with its organization and workbooks", async () => {
+      mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(teamShadowUser);
+      mockUsersService.isSoleMemberOfOrganization.mockResolvedValue(true);
+      mockWorkbookService.findIdsOfAllWorkbooksOwnedByOrganization.mockResolvedValue(['wkb_1' as WorkbookId]);
+
+      await service.deprovisionWhalesyncTeam('tm_1');
+
+      expect(mockUsersService.findShadowUserForWhalesyncTeam).toHaveBeenCalledWith('tm_1', undefined, {
+        recordTeamIdOnShadowUserMadeBeforeTeams: false,
+      });
+      expect(mockWorkbookService.executeHardDeleteWorkbook).toHaveBeenCalledWith('wkb_1', expect.anything());
+      expect(mockUsersService.deleteShadowUserAndOrganization).toHaveBeenCalledWith(
+        'usr_team_shadow',
+        'org_team_shadow',
+      );
+    });
+
+    it("unlinks rather than deletes when the team's Live Exports are held by a real Scratch account", async () => {
+      const realScratchUser = { id: 'usr_real', clerkId: 'user_real', organizationId: 'org_real' };
+      mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(realScratchUser as unknown as UserCluster.User);
+      mockWorkbookService.findIdsOfLiveExportWorkbooksCreatedByUser.mockResolvedValue([]);
+      mockStripePaymentService.clearWhalesyncPlanSubscription.mockResolvedValue({ cleared: false });
+      mockUsersService.unlinkUserFromWhalesyncIdentity.mockResolvedValue({ revokedWhalesyncSessionTokenCount: 0 });
+
+      await service.deprovisionWhalesyncTeam('tm_1', 'wsu_only_member');
+
+      expect(mockUsersService.unlinkUserFromWhalesyncIdentity).toHaveBeenCalledWith('usr_real');
+      expect(mockUsersService.deleteShadowUserAndOrganization).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op when the team has no shadow user', async () => {
+      mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(null);
+
+      await service.deprovisionWhalesyncTeam('tm_none');
+
+      expect(mockUsersService.deleteShadowUserAndOrganization).not.toHaveBeenCalled();
+      expect(mockUsersService.unlinkUserFromWhalesyncIdentity).not.toHaveBeenCalled();
+    });
+
+    it('pages through the shadow users that have no team yet', async () => {
+      mockUsersService.findWhalesyncUserIdsOfShadowUsersWithoutTeam.mockResolvedValue(['wsu_b', 'wsu_c']);
+
+      const result = await service.listPendingTeamLinks('wsu_a');
+
+      expect(mockUsersService.findWhalesyncUserIdsOfShadowUsersWithoutTeam).toHaveBeenCalledWith('wsu_a', 500);
+      expect(result).toEqual({ whalesyncUserIds: ['wsu_b', 'wsu_c'] });
+    });
+
+    it('passes the team links through and returns what was done with each', async () => {
+      const outcome = { linked: 1, alreadyLinked: 0, skipped: [] };
+      mockUsersService.linkShadowUsersToWhalesyncTeams.mockResolvedValue(outcome);
+      const links = [{ whalesyncUserId: 'wsu_a', whalesyncTeamId: 'tm_a' }];
+
+      expect(await service.linkTeams(links)).toEqual(outcome);
+      expect(mockUsersService.linkShadowUsersToWhalesyncTeams).toHaveBeenCalledWith(links);
     });
   });
 

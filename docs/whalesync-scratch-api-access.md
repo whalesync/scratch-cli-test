@@ -152,6 +152,54 @@ Provisioning reconciles the incoming Whalesync email against the existing Scratc
 
 **No backfill migration is needed.** The shadow-user provisioning path has only ever run in local development — the Whalesync (Bottlenose/Dusky) wiring that calls it is not yet complete — so there are no `ws:`-prefixed rows in any shared environment to convert. Any leftover `ws:` rows in a local database are un-prefixed organically by the collision-safe refresh path (case 1) the next time that user provisions a session. If the `ws:` stop-gap ever does reach a shared environment before this lands, a one-time data migration would be the way to convert it — un-prefixing where the address is free and leaving genuine collisions for an explicit, reviewed merge (never merging users in SQL).
 
+### A shadow user per Whalesync team (DEV-13019)
+
+Whalesync moved everything a person owned to a team, and a team's Live Exports have to show for every member. So a
+shadow user now holds the Live Exports of one Whalesync **team**, keyed by a unique `User.whalesyncTeamId` (`tm_…`).
+Whichever member opens Live Export, Bottlenose asks for a session with the team's id and gets the team's shadow user.
+The rollout plan is `docs/plans/2026-11-25-live-exports-by-team.md` in the whalesync repo.
+
+One shadow user per team, rather than one per person in a shared organization, because Scratch lists workbooks
+through per-user `WorkspacePermission` rows: a shadow user per person would need a row for every member on every Live
+Export, kept current as people join and leave.
+
+A session request that names a team (`whalesyncTeamId`) resolves in this order:
+
+1. **The team's shadow user.** Reused as it is. Its name and email are not refreshed, since several people act in one
+   team.
+2. **The acting person's shadow user from before teams**, when the request says they are the team's only member
+   (`whalesyncUserIsTeamsOnlyMember`). It carries their `whalesyncUserId` and no team id, so it becomes the team's and
+   the team id is recorded on it. Existing Live Exports stay where they are. This is removed once every existing
+   shadow user has its team.
+3. **A new pure shadow user**, with clerkId `ws_<whalesyncTeamId>` and no email. A team has no email, so a team's
+   shadow user is never matched to a native Scratch account by email, in either direction.
+
+A request that names no team is handled as before teams, by `whalesyncUserId`, for a Bottlenose that hasn't deployed
+its side yet.
+
+**While Bottlenose changes over, one shadow user answers both lookups.** A person who is their team's only member has
+one shadow user, found by team or by person. A shadow user from before teams keeps its `whalesyncUserId` when it gets
+its team, and one created for a team also gets its only member's `whalesyncUserId`. So a Bottlenose server still asking
+by person, during a deploy or after a revert, reaches the same Live Exports as one asking by team. In a team with
+several members nobody's own shadow user is the team's, and neither rule applies.
+
+**A team's pure shadow user carries no person's email.** The email is cleared when a pure shadow user gets its team,
+and a lookup by person no longer refreshes the name or email of a row that has a team. Otherwise whoever later signed
+up for Scratch with that address, the person or someone who took the address over, would be given the team's shadow
+user and its Live Exports (`getOrCreateUserFromClerk` adopts by email).
+
+**Shadow users made before teams get their team id two ways.** The first session or plan change that names their
+team records it (step 2). For the rest, Bottlenose pages through `GET /internal/whalesync/team-links/pending` and
+answers each Whalesync user id with that person's team on `POST /internal/whalesync/team-links`. A link is skipped
+and reported, never forced, when the shadow user already holds another team's Live Exports or the team already has a
+different shadow user.
+
+**A real Scratch account can be a team's shadow user**: one adopted by email before teams, or a shadow user whose
+person signed in to Scratch before it got its team. A session for it reaches that person's own workbooks too, so Scratch mints one only
+for the person it is linked to (`whalesyncUserId`) and answers anyone else in the team with a 409. Before a second
+person can join such a team, its Live Exports have to move to a pure shadow user. On 2026-11-25 production had 621
+linked users, 22 of them real accounts, 6 of which held Live Exports.
+
 ## The two Bottlenose → Scratch channels
 
 | Channel              | Credential                       | Used for                                                                 | Auth on Scratch                         |
@@ -193,9 +241,13 @@ Mounted under an internal-only route prefix, ideally network/IP-restricted in ad
 ```
 POST /internal/whalesync/sessions
   Header: X-Scratch-Admin-Token: <secret>
-  Body:   { whalesyncUserId: string, email: string, name?: string }
+  Body:   { whalesyncUserId: string, whalesyncTeamId?: string, whalesyncUserIsTeamsOnlyMember?: boolean,
+            email: string, name?: string }
   200:    { scratchUserId, apiToken, expiresAt }   // apiToken TTL = 10 minutes; expiresAt is a UTC ISO-8601 timestamp
-  Behavior: ensure-shadow-user-then-mint; idempotent on whalesyncUserId.
+  409:    the team's shadow user is another person's real Scratch account
+  Behavior: ensure-shadow-user-then-mint. With whalesyncTeamId the shadow user is the team's and
+            whalesyncUserId is the person acting; idempotent on whalesyncTeamId. Without it,
+            idempotent on whalesyncUserId, as before teams.
             Folds provisioning + token minting into one round-trip.
 
 POST /internal/whalesync/users
@@ -215,6 +267,29 @@ GET /internal/whalesync/users/:whalesyncUserId/live-exports
   Behavior: lists the user's Live Export workbooks, skipping those pending deletion, for
             Whalesync's admin Users dev tool. Read-only: an unknown user gets an empty
             list and is not created.
+```
+
+By team (DEV-13019). Where a route takes `?whalesyncUserId=`, it is the team's one member, used to find a shadow user
+that has no team id yet:
+
+```
+PATCH /internal/whalesync/subscription
+  Body:   { whalesyncTeamId?: string, whalesyncUserId?: string, subscription }   // at least one id
+  Behavior: applies the team's plan to its shadow user, and records the team id on a shadow user
+            made before teams.
+
+DELETE /internal/whalesync/teams/:whalesyncTeamId[?whalesyncUserId=]
+  204, idempotent. Deletes a pure shadow user; unlinks a real Scratch account, as for a user.
+
+GET /internal/whalesync/teams/:whalesyncTeamId/live-exports[?whalesyncUserId=]
+  200:    { liveExports: [{ id, name, createdAt, updatedAt }] }   // newest first
+
+GET /internal/whalesync/team-links/pending[?after=<whalesyncUserId>]
+  200:    { whalesyncUserIds: string[] }   // shadow users with no team id, ascending, 500 a page
+
+POST /internal/whalesync/team-links
+  Body:   { links: [{ whalesyncUserId, whalesyncTeamId }] }   // at most 500
+  200:    { linked, alreadyLinked, skipped: [{ whalesyncUserId, whalesyncTeamId, reason }] }
 ```
 
 Minting reuses `generateUserApiToken` (`spinner/server/src/users/users.service.ts`).
@@ -349,6 +424,7 @@ If we did not want any Scratch token in the browser at all, Bottlenose could pro
 | Shadow-user mapping key                    | ✅ Resolved | Whalesync user UUID (`whalesyncUserId`, unique on Scratch `User`).                                           |
 | Shadow-user Clerk ID                        | ✅ Resolved | Synthetic `ws_<whalesyncUserId>` (native users get Clerk's `user_…`); satisfies the `@unique` `clerkId`.     |
 | Org model                                  | ✅ Resolved | Each shadow user gets its own auto-created Scratch org. Cross-user workbook sharing is out of scope for v1.  |
+| Whalesync teams                            | ✅ Resolved | One shadow user per Whalesync team, keyed by `whalesyncTeamId` ([DEV-13019](https://linear.app/whalesync/issue/DEV-13019)). See "A shadow user per Whalesync team". |
 | Token TTL                                  | ✅ Resolved | **10 minutes.** Dusky refreshes before expiry (and on `401`).                                                |
 | Token scopes                               | ✅ Resolved | `ApiToken.scopes` not enforced in v1; the `WHALESYNC_SESSION` token type is the flag.                        |
 | Rate limiting                              | ✅ Resolved | `WHALESYNC_SESSION` tokens bypass `ApiRateLimitGuard`.                                                       |

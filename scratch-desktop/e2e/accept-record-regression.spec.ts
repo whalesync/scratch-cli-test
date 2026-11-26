@@ -49,6 +49,7 @@ const FAKE_CURRENT_USER = {
   id: 'user_e2e',
   clerkId: null,
   whalesyncUserId: null,
+  whalesyncTeamId: null,
   createdAt: '2024-01-01T00:00:00Z',
   updatedAt: '2024-01-01T00:00:00Z',
   isAdmin: false,

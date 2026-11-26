@@ -1,0 +1,33 @@
+meta {
+  name: Update Team Subscription
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/internal/whalesync/subscription
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "whalesyncTeamId": "tm_abc123def456",
+    "whalesyncUserId": "ws_user_123",
+    "subscription": {
+      "status": "active",
+      "liveExportCadence": "daily"
+    }
+  }
+}
+
+docs {
+  Apply a Whalesync plan change to the team's shadow user. `whalesyncUserId` is optional:
+  the team's one member, used to find a shadow user made before teams, which then gets
+  the team recorded on it. Returns { scratchUserId, updated, planType }, or 409 when the
+  Scratch account pays for Scratch directly.
+}

@@ -43,9 +43,26 @@ export type WhalesyncSubscriptionPayload = z.infer<typeof whalesyncSubscriptionP
 
 // ── Request DTOs ──────────────────────────────────────────────────────────────
 
+/**
+ * Who a session or shadow user is for. A shadow user holds the Live Exports of one Whalesync team (DEV-13019), so
+ * `whalesyncTeamId` is its identity and `whalesyncUserId` is the person acting in that team. Without a team id the
+ * shadow user is found and created by `whalesyncUserId` alone, as before teams, which is how a Whalesync backend that
+ * hasn't deployed its side yet still calls.
+ */
 export const whalesyncShadowUserSchema = z.object({
+  /** The Whalesync person acting. Recorded on the session token it mints. */
   whalesyncUserId: z.string().min(1),
+  /** The Whalesync team (`tm_…`) the person is working in. */
+  whalesyncTeamId: z.string().min(1).optional(),
+  /**
+   * Whether the person is the team's only member, which makes their own shadow user and their team's the same one.
+   * Only then is a shadow user made for the person before teams taken as the team's, and only then does a shadow
+   * user created for the team also carry the person's id. Left out, it counts as false.
+   */
+  whalesyncUserIsTeamsOnlyMember: z.boolean().optional(),
+  /** The person's email. Not stored on a shadow user created for a team, which has no email of its own. */
   email: z.string().min(1),
+  /** A label for the shadow user: the team's name, or the person's for a team with no name. */
   name: z.string().optional(),
   /**
    * Optional Whalesync subscription state to apply while provisioning. Optional for backwards
@@ -62,12 +79,36 @@ export type WhalesyncShadowUserDto = z.infer<typeof whalesyncShadowUserSchema>;
  * changes on their side (expire / cancel / upgrade). The user is identified in-body since the path carries
  * no id. Only a `WHALESYNC_PLAN` subscription is mutated — a real Scratch Stripe subscription yields a 409.
  */
-export const whalesyncUpdateSubscriptionSchema = z.object({
-  whalesyncUserId: z.string().min(1),
-  subscription: whalesyncSubscriptionPayloadSchema,
-});
+export const whalesyncUpdateSubscriptionSchema = z
+  .object({
+    /**
+     * The team whose plan changed. When no shadow user carries it yet, `whalesyncUserId` finds the shadow user made
+     * for the team's one member before teams, and the team id is recorded on it.
+     */
+    whalesyncTeamId: z.string().min(1).optional(),
+    whalesyncUserId: z.string().min(1).optional(),
+    subscription: whalesyncSubscriptionPayloadSchema,
+  })
+  .refine((body) => body.whalesyncTeamId !== undefined || body.whalesyncUserId !== undefined, {
+    message: 'whalesyncTeamId or whalesyncUserId is required',
+  });
 
 export type WhalesyncUpdateSubscriptionDto = z.infer<typeof whalesyncUpdateSubscriptionSchema>;
+
+/** How many shadow users one team link request may name, and how many one page of unlinked ones lists. */
+export const WHALESYNC_TEAM_LINK_BATCH_LIMIT = 500;
+
+/**
+ * Body for `POST /internal/whalesync/team-links`: the team of each Whalesync person whose shadow user predates teams.
+ * Whalesync reads the people from `GET /internal/whalesync/team-links/pending` and answers with their teams.
+ */
+export const whalesyncLinkTeamsSchema = z.object({
+  links: z
+    .array(z.object({ whalesyncUserId: z.string().min(1), whalesyncTeamId: z.string().min(1) }))
+    .max(WHALESYNC_TEAM_LINK_BATCH_LIMIT),
+});
+
+export type WhalesyncLinkTeamsDto = z.infer<typeof whalesyncLinkTeamsSchema>;
 
 // ── Response Entities ─────────────────────────────────────────────────────────
 
@@ -117,6 +158,31 @@ export interface WhalesyncLiveExportSummary {
 export interface WhalesyncListLiveExportsResponse {
   /** Newest first. Empty when no shadow user exists. Excludes workbooks pending deletion. */
   liveExports: WhalesyncLiveExportSummary[];
+}
+
+export interface WhalesyncPendingTeamLinksResponse {
+  /**
+   * Whalesync user ids of shadow users with no team id yet, in ascending order, at most
+   * `WHALESYNC_TEAM_LINK_BATCH_LIMIT`. Pass the last one as `after` for the next page; an empty list is the end.
+   */
+  whalesyncUserIds: string[];
+}
+
+/** Why a requested team link was not made. */
+export type WhalesyncTeamLinkSkipReason =
+  /** No shadow user is linked to that Whalesync user. */
+  | 'no_shadow_user'
+  /** The shadow user already carries a different team id. */
+  | 'linked_to_another_team'
+  /** Another shadow user already carries that team id. */
+  | 'team_has_another_shadow_user';
+
+export interface WhalesyncLinkTeamsResponse {
+  /** Shadow users that got their team id from this request. */
+  linked: number;
+  /** Shadow users that already carried the requested team id. */
+  alreadyLinked: number;
+  skipped: { whalesyncUserId: string; whalesyncTeamId: string; reason: WhalesyncTeamLinkSkipReason }[];
 }
 
 /**

@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { ConflictException, Injectable } from '@nestjs/common';
+import { Prisma, UserRole } from '@prisma/client';
 import {
   createApiTokenId,
   createOrganizationId,
@@ -8,6 +8,7 @@ import {
   ScratchPlanType,
   TokenType,
   UpdateSettingsDto,
+  WhalesyncLinkTeamsResponse,
   WhalesyncSubscriptionPayload,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -35,6 +36,11 @@ import { isPureWhalesyncShadowUser, UserSettings, WHALESYNC_SHADOW_USER_CLERK_ID
 // When the waitlist is required, the user is blocked from using the app and will get an email until an
 // admin clicks approve.
 const REQUIRE_WAITLIST_APPROVAL_FOR_NEW_USER = false;
+
+/** Prisma's error for a write that would break a unique index, such as two shadow users for one Whalesync team. */
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
 
 @Injectable()
 export class UsersService {
@@ -205,16 +211,18 @@ export class UsersService {
    * provisioning. It performs only the database writes — analytics/Slack/invite side effects stay with
    * the caller so each provisioning path controls its own behavior.
    *
-   * @param clerkId Real Clerk ID (`user_…`) for native users, or synthetic `ws_<whalesyncUserId>` for shadow users.
-   * @param whalesyncUserId Set only for Whalesync shadow users; null for native Scratch users.
+   * @param clerkId Real Clerk ID (`user_…`) for native users, or synthetic `ws_<whalesync id>` for shadow users.
+   * @param whalesyncUserId Set only for shadow users made for a Whalesync person, before teams.
+   * @param whalesyncTeamId Set only for shadow users made for a Whalesync team.
    */
   private async createUserWithOrgAndDefaultWorkbook(params: {
     clerkId: string;
     whalesyncUserId?: string;
+    whalesyncTeamId?: string;
     name?: string;
     email?: string;
   }): Promise<UserCluster.User> {
-    const { clerkId, whalesyncUserId, name, email } = params;
+    const { clerkId, whalesyncUserId, whalesyncTeamId, name, email } = params;
     const newUserId = createUserId();
     const newOrganizationId = createOrganizationId();
 
@@ -223,6 +231,7 @@ export class UsersService {
         id: newUserId,
         clerkId,
         whalesyncUserId,
+        whalesyncTeamId,
         updatedAt: new Date(),
         role: UserRole.USER,
         name,
@@ -274,6 +283,134 @@ export class UsersService {
     });
   }
 
+  public async findByWhalesyncTeamId(whalesyncTeamId: string): Promise<UserCluster.User | null> {
+    return this.db.client.user.findFirst({
+      where: { whalesyncTeamId },
+      include: UserCluster._validator.include,
+    });
+  }
+
+  /**
+   * The shadow user that holds a Whalesync team's Live Exports, or null when the team has none (DEV-13019). Never
+   * creates one.
+   *
+   * A shadow user made before teams carries only the id of the person it was made for. Until Whalesync has sent
+   * every such shadow user its team id, a team with no shadow user of its own falls back to the one made for
+   * `whalesyncUserIdOfTeamsOnlyMember`, the team's one member, as long as that shadow user belongs to no team yet.
+   * With `recordTeamIdOnShadowUserMadeBeforeTeams` the team id is written to it, so the next lookup finds it by team.
+   */
+  public async findShadowUserForWhalesyncTeam(
+    whalesyncTeamId: string,
+    whalesyncUserIdOfTeamsOnlyMember: string | undefined,
+    options: { recordTeamIdOnShadowUserMadeBeforeTeams: boolean },
+  ): Promise<UserCluster.User | null> {
+    const shadowUserOfTeam = await this.findByWhalesyncTeamId(whalesyncTeamId);
+    if (shadowUserOfTeam || !whalesyncUserIdOfTeamsOnlyMember) {
+      return shadowUserOfTeam;
+    }
+
+    const shadowUserMadeBeforeTeams = await this.findByWhalesyncUserId(whalesyncUserIdOfTeamsOnlyMember);
+    if (!shadowUserMadeBeforeTeams || shadowUserMadeBeforeTeams.whalesyncTeamId) {
+      // No shadow user, or one that already holds another team's Live Exports and must not be taken over.
+      return null;
+    }
+    if (!options.recordTeamIdOnShadowUserMadeBeforeTeams) {
+      return shadowUserMadeBeforeTeams;
+    }
+    return this.recordWhalesyncTeamIdOnShadowUser(shadowUserMadeBeforeTeams, whalesyncTeamId);
+  }
+
+  /**
+   * Writes a team id to a shadow user that has none, making it the team's. Guarded on the row still having none, so
+   * two requests naming different teams can't both win; the loser reads back whichever team id was written.
+   */
+  private async recordWhalesyncTeamIdOnShadowUser(
+    shadowUserWithoutTeamId: UserCluster.User,
+    whalesyncTeamId: string,
+  ): Promise<UserCluster.User | null> {
+    try {
+      await this.db.client.user.updateMany({
+        where: { id: shadowUserWithoutTeamId.id, whalesyncTeamId: null },
+        // A pure shadow user stops carrying its person's email once it is a team's. Otherwise whoever later signs up
+        // for Scratch with that address would be given the team's shadow user (`getOrCreateUserFromClerk`), and with
+        // it the team's Live Exports. A real Scratch account keeps its email: it is how its person signs in.
+        data: { whalesyncTeamId, ...(isPureWhalesyncShadowUser(shadowUserWithoutTeamId) ? { email: null } : {}) },
+      });
+    } catch (error) {
+      if (!isUniqueConstraintViolation(error)) {
+        throw error;
+      }
+      // Another shadow user took this team id between the lookup and the write.
+    }
+    const shadowUserOfTeam = await this.findByWhalesyncTeamId(whalesyncTeamId);
+    if (shadowUserOfTeam?.id === shadowUserWithoutTeamId.id) {
+      WSLogger.info({
+        source: 'UsersService',
+        message: 'Recorded the Whalesync team on a shadow user made before teams',
+        userId: shadowUserWithoutTeamId.id,
+        whalesyncUserId: shadowUserWithoutTeamId.whalesyncUserId,
+        whalesyncTeamId,
+      });
+    }
+    return shadowUserOfTeam;
+  }
+
+  /**
+   * Shadow users with no team id yet, as the Whalesync user ids they were made for, ascending. Whalesync pages
+   * through these to send each one's team (`linkShadowUsersToWhalesyncTeams`).
+   */
+  public async findWhalesyncUserIdsOfShadowUsersWithoutTeam(
+    afterWhalesyncUserId: string | undefined,
+    limit: number,
+  ): Promise<string[]> {
+    const shadowUsersWithoutTeam = await this.db.client.user.findMany({
+      where: {
+        whalesyncTeamId: null,
+        whalesyncUserId: afterWhalesyncUserId ? { gt: afterWhalesyncUserId } : { not: null },
+      },
+      select: { whalesyncUserId: true },
+      orderBy: { whalesyncUserId: 'asc' },
+      take: limit,
+    });
+    return shadowUsersWithoutTeam.flatMap((user) => (user.whalesyncUserId ? [user.whalesyncUserId] : []));
+  }
+
+  /**
+   * Records the team of each shadow user made before teams, as Whalesync reports them. Safe to repeat: a shadow user
+   * that already carries the team id is counted and left alone. A link is skipped, never forced, when the shadow
+   * user is gone, already holds another team's Live Exports, or the team already has a different shadow user.
+   */
+  public async linkShadowUsersToWhalesyncTeams(
+    links: { whalesyncUserId: string; whalesyncTeamId: string }[],
+  ): Promise<WhalesyncLinkTeamsResponse> {
+    const result: WhalesyncLinkTeamsResponse = { linked: 0, alreadyLinked: 0, skipped: [] };
+    for (const link of links) {
+      const shadowUser = await this.findByWhalesyncUserId(link.whalesyncUserId);
+      if (!shadowUser) {
+        result.skipped.push({ ...link, reason: 'no_shadow_user' });
+        continue;
+      }
+      if (shadowUser.whalesyncTeamId === link.whalesyncTeamId) {
+        result.alreadyLinked += 1;
+        continue;
+      }
+      if (shadowUser.whalesyncTeamId) {
+        result.skipped.push({ ...link, reason: 'linked_to_another_team' });
+        continue;
+      }
+      const shadowUserOfTeam = await this.recordWhalesyncTeamIdOnShadowUser(shadowUser, link.whalesyncTeamId);
+      if (shadowUserOfTeam?.id === shadowUser.id) {
+        result.linked += 1;
+      } else if (shadowUserOfTeam) {
+        result.skipped.push({ ...link, reason: 'team_has_another_shadow_user' });
+      } else {
+        // A concurrent request gave the shadow user a different team between the lookup and the write.
+        result.skipped.push({ ...link, reason: 'linked_to_another_team' });
+      }
+    }
+    return result;
+  }
+
   /**
    * Looks up a user by their (already-normalized) email. `User.email` is `@unique` and is stored
    * lowercased + trimmed by the `user_email_normalize` DB trigger, so callers must pass the email in
@@ -299,16 +436,117 @@ export class UsersService {
    *
    * Both Whalesync internal entry points (`ensureSessionForWhalesyncUser` and `ensureWhalesyncUser`)
    * funnel through here, so this is the single choke point where a shadow user's plan is reconciled.
+   *
+   * With a `team` the shadow user is the team's (see {@link resolveShadowUserForWhalesyncTeam}) and `whalesyncUserId`
+   * is the person acting in it. Without one it is the person's own, as before teams.
    */
   public async getOrCreateShadowUserFromWhalesync(
     whalesyncUserId: string,
     email: string,
     name?: string,
     subscription?: WhalesyncSubscriptionPayload,
+    team?: { whalesyncTeamId: string; actingUserIsTeamsOnlyMember: boolean },
   ): Promise<UserCluster.User> {
-    const shadowUser = await this.resolveShadowUserFromWhalesync(whalesyncUserId, email, name);
+    const shadowUser = team
+      ? await this.resolveShadowUserForWhalesyncTeam(
+          team.whalesyncTeamId,
+          whalesyncUserId,
+          team.actingUserIsTeamsOnlyMember,
+          name,
+        )
+      : await this.resolveShadowUserFromWhalesync(whalesyncUserId, email, name);
     await this.stripePaymentService.ensureWhalesyncPlanSubscription(shadowUser, subscription);
     return shadowUser;
+  }
+
+  /**
+   * Ensures a Scratch user exists to hold a Whalesync team's Live Exports (DEV-13019). Idempotent on
+   * `whalesyncTeamId`. Resolved in order:
+   *
+   * 1. **The team's shadow user.** A Scratch user already carries this team id → reuse it. Its name and email are
+   *    left alone: they aren't the acting person's, and several people can act in one team.
+   * 2. **The acting person's shadow user from before teams**, when they are the team's only member. It carries
+   *    their Whalesync user id and no team id → it becomes the team's, with the team id recorded on it. This is how
+   *    existing Live Exports stay where they are. It goes away once Whalesync has sent every existing shadow user
+   *    its team.
+   * 3. **Create fresh.** A pure shadow user with a synthetic `ws_<whalesyncTeamId>` clerkId and no email. A team has
+   *    no email of its own, so a team's shadow user is never matched to a native Scratch account by email, in
+   *    either direction.
+   *
+   * `actingUserIsTeamsOnlyMember` is what makes a person's shadow user and their team's the same one. Only then
+   * does step 2 apply, and only then does a shadow user created in step 3 also carry the person's Whalesync user id.
+   * That keeps the two lookups in step while Whalesync is changing over: a server that still asks by person, during
+   * a deploy or after a revert, finds the shadow user a server asking by team created, and the other way round. In a
+   * team with several members nobody's own shadow user is the team's, so neither applies.
+   *
+   * A team's shadow user may be a real Scratch account: one adopted by email before teams (case 2 of
+   * {@link resolveShadowUserFromWhalesync}). A session for it reaches that person's own workbooks too, so only they
+   * may act as it; anyone else in the team is refused with a 409 until its Live Exports are moved to a shadow user
+   * of their own.
+   */
+  private async resolveShadowUserForWhalesyncTeam(
+    whalesyncTeamId: string,
+    actingWhalesyncUserId: string,
+    actingUserIsTeamsOnlyMember: boolean,
+    name?: string,
+  ): Promise<UserCluster.User> {
+    const existingShadowUser = await this.findShadowUserForWhalesyncTeam(
+      whalesyncTeamId,
+      actingUserIsTeamsOnlyMember ? actingWhalesyncUserId : undefined,
+      { recordTeamIdOnShadowUserMadeBeforeTeams: true },
+    );
+    if (existingShadowUser) {
+      this.assertWhalesyncUserMayActAsTeamShadowUser(existingShadowUser, actingWhalesyncUserId);
+      return existingShadowUser;
+    }
+
+    // Unique, so only given to the new shadow user when the person has no shadow user of their own. They have one
+    // only if it already holds another team's Live Exports, or step 2 would have returned it.
+    const whalesyncUserIdForNewShadowUser =
+      actingUserIsTeamsOnlyMember && !(await this.findByWhalesyncUserId(actingWhalesyncUserId))
+        ? actingWhalesyncUserId
+        : undefined;
+    try {
+      const newShadowUser = await this.createUserWithOrgAndDefaultWorkbook({
+        clerkId: `${WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX}${whalesyncTeamId}`,
+        whalesyncTeamId,
+        whalesyncUserId: whalesyncUserIdForNewShadowUser,
+        name,
+        // email omitted: the team has none, and the acting person's would tie the team's Live Exports to them.
+      });
+      this.postHogService.identifyNewUser(newShadowUser);
+      return newShadowUser;
+    } catch (error) {
+      if (!isUniqueConstraintViolation(error)) {
+        throw error;
+      }
+      // Two first sessions for the same team raced; the other one created the shadow user.
+      const shadowUserCreatedConcurrently = await this.findByWhalesyncTeamId(whalesyncTeamId);
+      if (!shadowUserCreatedConcurrently) {
+        throw error;
+      }
+      this.assertWhalesyncUserMayActAsTeamShadowUser(shadowUserCreatedConcurrently, actingWhalesyncUserId);
+      return shadowUserCreatedConcurrently;
+    }
+  }
+
+  private assertWhalesyncUserMayActAsTeamShadowUser(
+    teamShadowUser: UserCluster.User,
+    actingWhalesyncUserId: string,
+  ): void {
+    if (isPureWhalesyncShadowUser(teamShadowUser) || teamShadowUser.whalesyncUserId === actingWhalesyncUserId) {
+      return;
+    }
+    WSLogger.warn({
+      source: 'UsersService',
+      message: "Refused a Whalesync session: the team's Live Exports are held by another person's Scratch account",
+      userId: teamShadowUser.id,
+      whalesyncTeamId: teamShadowUser.whalesyncTeamId,
+      actingWhalesyncUserId,
+    });
+    throw new ConflictException(
+      "This team's Live Exports are held by a teammate's own Scratch account, which only they can use.",
+    );
   }
 
   /**
@@ -491,6 +729,11 @@ export class UsersService {
     incomingName: string | undefined,
     normalizedIncomingEmail: string,
   ): Promise<UserCluster.User> {
+    if (linkedUser.whalesyncTeamId) {
+      // It is a team's shadow user now, reached here by a Whalesync server that still asks by person. Its name and
+      // email are no longer that person's to set.
+      return linkedUser;
+    }
     const nameChanged = !!incomingName && incomingName !== linkedUser.name;
     const emailChanged = normalizedIncomingEmail !== linkedUser.email;
 
@@ -554,7 +797,7 @@ export class UsersService {
 
   /**
    * Removes a user's link to their Whalesync identity: revokes their WHALESYNC_SESSION tokens and clears
-   * `whalesyncUserId`, in one transaction so the user is never left linked with no sessions or unlinked with live
+   * `whalesyncUserId` and `whalesyncTeamId`, in one transaction so the user is never left linked with no sessions or unlinked with live
    * ones. The inverse of {@link adoptExistingUserIntoWhalesyncIdentity}, used when Whalesync deprovisions a real
    * Scratch account (DEV-12578). Deliberately touches nothing else: the user's clerkId (their native login), email,
    * organization, workspace permissions, and CLI/desktop (USER/WEBSOCKET) tokens all stay.
@@ -562,7 +805,7 @@ export class UsersService {
   public async unlinkUserFromWhalesyncIdentity(userId: string): Promise<{ revokedWhalesyncSessionTokenCount: number }> {
     const [revokedWhalesyncSessionTokens] = await this.db.client.$transaction([
       this.db.client.apiToken.deleteMany({ where: { userId, type: TokenType.WHALESYNC_SESSION } }),
-      this.db.client.user.update({ where: { id: userId }, data: { whalesyncUserId: null } }),
+      this.db.client.user.update({ where: { id: userId }, data: { whalesyncUserId: null, whalesyncTeamId: null } }),
     ]);
     return { revokedWhalesyncSessionTokenCount: revokedWhalesyncSessionTokens.count };
   }
@@ -611,6 +854,7 @@ export class UsersService {
           { id: { contains: query, mode: 'insensitive' } },
           { clerkId: { contains: query, mode: 'insensitive' } },
           { whalesyncUserId: { contains: query, mode: 'insensitive' } },
+          { whalesyncTeamId: { contains: query, mode: 'insensitive' } },
           { stripeCustomerId: { contains: query, mode: 'insensitive' } },
           { name: { contains: query, mode: 'insensitive' } },
           { email: { contains: query, mode: 'insensitive' } },

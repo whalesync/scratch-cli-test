@@ -51,6 +51,7 @@ describe('UserDetail.subscriptionDetails', () => {
       updatedAt: new Date('2026-01-01'),
       clerkId: 'clerk_test',
       whalesyncUserId: null,
+      whalesyncTeamId: null,
       role: 'USER',
       name: 'Test User',
       email: 'test@example.com',
