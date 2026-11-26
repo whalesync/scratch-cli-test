@@ -209,7 +209,7 @@ describe('WhalesyncInternalService', () => {
 
       await service.deprovisionWhalesyncTeam('tm_1', 'wsu_only_member');
 
-      expect(mockUsersService.unlinkUserFromWhalesyncIdentity).toHaveBeenCalledWith('usr_real');
+      expect(mockUsersService.unlinkUserFromWhalesyncIdentity).toHaveBeenCalledWith('usr_real', {});
       expect(mockUsersService.deleteShadowUserAndOrganization).not.toHaveBeenCalled();
     });
 
@@ -427,7 +427,7 @@ describe('WhalesyncInternalService', () => {
       it('revokes the session tokens and clears whalesyncUserId last', async () => {
         await service.deprovisionWhalesyncUser('ws_real');
 
-        expect(mockUsersService.unlinkUserFromWhalesyncIdentity).toHaveBeenCalledWith('usr_real');
+        expect(mockUsersService.unlinkUserFromWhalesyncIdentity).toHaveBeenCalledWith('usr_real', {});
         const unlinkCallOrder = mockUsersService.unlinkUserFromWhalesyncIdentity.mock.invocationCallOrder[0];
         expect(unlinkCallOrder).toBeGreaterThan(
           mockWorkbookService.executeHardDeleteWorkbook.mock.invocationCallOrder[0],
@@ -435,6 +435,37 @@ describe('WhalesyncInternalService', () => {
         expect(unlinkCallOrder).toBeGreaterThan(
           mockStripePaymentService.clearWhalesyncPlanSubscription.mock.invocationCallOrder[0],
         );
+      });
+
+      describe('for the migration off real accounts (DEV-13019)', () => {
+        it('refuses, deleting nothing, while the account still created a Live Export', async () => {
+          await expect(service.unlinkRealScratchUserFromWhalesyncIdentity(realScratchUser, {}, {})).rejects.toThrow(
+            ConflictException,
+          );
+
+          expect(mockWorkbookService.executeHardDeleteWorkbook).not.toHaveBeenCalled();
+          expect(mockStripePaymentService.clearWhalesyncPlanSubscription).not.toHaveBeenCalled();
+          expect(mockUsersService.unlinkUserFromWhalesyncIdentity).not.toHaveBeenCalled();
+        });
+
+        it('hands the Whalesync ids to the shadow user in the unlink, which refuses inside its transaction too', async () => {
+          mockWorkbookService.findIdsOfLiveExportWorkbooksCreatedByUser.mockResolvedValue([]);
+          const teamShadowUser = { ...realScratchUser, id: 'usr_team_shadow' };
+
+          await service.unlinkRealScratchUserFromWhalesyncIdentity(
+            realScratchUser,
+            {},
+            {
+              handOverWhalesyncIdentityTo: teamShadowUser,
+            },
+          );
+
+          expect(mockWorkbookService.executeHardDeleteWorkbook).not.toHaveBeenCalled();
+          expect(mockUsersService.unlinkUserFromWhalesyncIdentity).toHaveBeenCalledWith('usr_real', {
+            refuseWhileUserOwnsLiveExports: true,
+            handOverWhalesyncIdentityToUserId: 'usr_team_shadow',
+          });
+        });
       });
 
       it('unlinks rather than deletes a user with no clerkId', async () => {
@@ -446,7 +477,7 @@ describe('WhalesyncInternalService', () => {
         await service.deprovisionWhalesyncUser('ws_real');
 
         expect(mockUsersService.deleteShadowUserAndOrganization).not.toHaveBeenCalled();
-        expect(mockUsersService.unlinkUserFromWhalesyncIdentity).toHaveBeenCalledWith('usr_real');
+        expect(mockUsersService.unlinkUserFromWhalesyncIdentity).toHaveBeenCalledWith('usr_real', {});
       });
 
       it('stays linked when an earlier step fails, so a retry can finish the job', async () => {

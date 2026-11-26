@@ -80,9 +80,11 @@ describe('UsersService — Whalesync shadow users', () => {
           update: jest.fn(),
           updateMany: jest.fn(),
           delete: jest.fn(),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ whalesyncUserId: null, whalesyncTeamId: null }),
         },
         workbook: {
           create: jest.fn().mockResolvedValue({ id: 'wkb_1' }),
+          count: jest.fn().mockResolvedValue(0),
         },
         apiToken: {
           create: jest.fn().mockResolvedValue(makeFutureWebsocketToken()),
@@ -95,8 +97,11 @@ describe('UsersService — Whalesync shadow users', () => {
         workspaceInvites: {
           findMany: jest.fn().mockResolvedValue([]),
         },
-        // Array form: resolves the already-built operations, the way Prisma runs them in one transaction.
-        $transaction: jest.fn((operations: Promise<unknown>[]) => Promise.all(operations)),
+        // Array form resolves the already-built operations, the way Prisma runs them in one transaction; the
+        // interactive form gets the client itself as its transaction.
+        $transaction: jest.fn((operations: Promise<unknown>[] | ((transaction: unknown) => Promise<unknown>)) =>
+          typeof operations === 'function' ? operations(dbService.client) : Promise.all(operations),
+        ),
       },
     } as unknown as jest.Mocked<DbService>;
 
@@ -770,6 +775,58 @@ describe('UsersService — Whalesync shadow users', () => {
         data: { whalesyncUserId: null, whalesyncTeamId: null },
       });
       expect(dbService.client.user.delete).not.toHaveBeenCalled();
+      expect(dbService.client.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses, changing nothing, while the user still created a Live Export', async () => {
+      (dbService.client.workbook.count as jest.Mock).mockResolvedValue(2);
+
+      await expect(
+        service.unlinkUserFromWhalesyncIdentity('usr_real_1', { refuseWhileUserOwnsLiveExports: true }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(dbService.client.workbook.count).toHaveBeenCalledWith({
+        where: { userId: 'usr_real_1', managedBy: 'ws_export' },
+      });
+      expect(dbService.client.apiToken.deleteMany).not.toHaveBeenCalled();
+      expect(dbService.client.user.update).not.toHaveBeenCalled();
+    });
+
+    it("hands the user's Whalesync ids to another user after clearing them, in the same transaction", async () => {
+      (dbService.client.user.findUniqueOrThrow as jest.Mock).mockResolvedValue({
+        whalesyncUserId: 'ws_user_1',
+        whalesyncTeamId: 'tm_1',
+      });
+      (dbService.client.apiToken.deleteMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (dbService.client.user.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+
+      await service.unlinkUserFromWhalesyncIdentity('usr_real_1', {
+        refuseWhileUserOwnsLiveExports: true,
+        handOverWhalesyncIdentityToUserId: 'usr_team_shadow',
+      });
+
+      expect(dbService.client.$transaction).toHaveBeenCalledTimes(1);
+      expect(dbService.client.user.update).toHaveBeenCalledWith({
+        where: { id: 'usr_real_1' },
+        data: { whalesyncUserId: null, whalesyncTeamId: null },
+      });
+      expect(dbService.client.user.updateMany).toHaveBeenCalledWith({
+        where: { id: 'usr_team_shadow', whalesyncUserId: null, whalesyncTeamId: null },
+        data: { whalesyncUserId: 'ws_user_1', whalesyncTeamId: 'tm_1' },
+      });
+      // The unique ids are cleared on the real account before they are written to the new one.
+      expect((dbService.client.user.update as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        (dbService.client.user.updateMany as jest.Mock).mock.invocationCallOrder[0],
+      );
+    });
+
+    it('throws, so the transaction rolls back, when the receiving user already has a Whalesync identity', async () => {
+      (dbService.client.apiToken.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (dbService.client.user.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.unlinkUserFromWhalesyncIdentity('usr_real_1', { handOverWhalesyncIdentityToUserId: 'usr_taken' }),
+      ).rejects.toThrow(ConflictException);
     });
   });
 

@@ -17,5 +17,7 @@ import { WhalesyncController } from './whalesync.controller';
   imports: [ScratchConfigModule, UserModule, WorkbookModule, PaymentModule],
   controllers: [WhalesyncController],
   providers: [WhalesyncInternalService, ScratchAdminGuard],
+  // The DEV-13019 code migration reuses its unlink of a real Scratch account.
+  exports: [WhalesyncInternalService],
 })
 export class InternalModule {}

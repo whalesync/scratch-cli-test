@@ -265,6 +265,17 @@ export default function MigrationsDevPage() {
                   </div>
                 )}
 
+                {lastResult.report && lastResult.report.length > 0 && (
+                  <div>
+                    <Text size="xs" c="dimmed" mb={4}>
+                      Report
+                    </Text>
+                    <Text size="xs" ff="monospace" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {lastResult.report.join('\n')}
+                    </Text>
+                  </div>
+                )}
+
                 {lastResult.migratedIds.length > 0 && (
                   <div>
                     <Text size="xs" c="dimmed" mb={4}>

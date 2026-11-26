@@ -232,6 +232,14 @@ export class ScratchGitService {
     await this.scratchGitClient.deleteRepo(repoId);
   }
 
+  /**
+   * Gives a repo a new id, as when its workbook moves to another organization (DEV-13019). See
+   * {@link ScratchGitClient.moveRepo}: atomic, refuses an existing destination, and safe to retry.
+   */
+  async moveRepo(fromRepoId: string, toRepoId: string): Promise<{ moved: boolean }> {
+    return this.scratchGitClient.moveRepo(fromRepoId, toRepoId);
+  }
+
   async discardChanges(repoId: string, path?: string): Promise<void> {
     await this.scratchGitClient.resetRepo(repoId, path);
   }

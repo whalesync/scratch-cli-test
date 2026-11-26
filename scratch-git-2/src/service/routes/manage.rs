@@ -1,5 +1,5 @@
 use axum::extract::{Path, Query, State};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -49,22 +49,7 @@ pub async fn delete_repo(State(state): State<AppState>, Path(id): Path<String>) 
                 // Best-effort cleanup of index DB
                 let index_path = state.index_db_path(&id);
                 let _ = std::fs::remove_file(&index_path);
-                // Best-effort cleanup of empty parent dirs up to repos_dir
-                let mut dir = repo_path.parent();
-                while let Some(parent) = dir {
-                    if parent == state.repos_dir {
-                        break;
-                    }
-                    if std::fs::read_dir(parent)
-                        .map(|mut d| d.next().is_none())
-                        .unwrap_or(false)
-                    {
-                        let _ = std::fs::remove_dir(parent);
-                        dir = parent.parent();
-                    } else {
-                        break;
-                    }
-                }
+                remove_empty_parent_dirs_below_repos_dir(&state.repos_dir, &repo_path);
                 Ok::<_, AppError>(json!({ "success": true }))
             }
         })
@@ -604,6 +589,300 @@ pub async fn copy_repo(State(state): State<AppState>, Json(body): Json<CopyBody>
         .await;
 
     envelope_result(&state, "copy", result)
+}
+
+/// Best-effort removal of the directories a repo leaves empty behind it (`org/wkb/` once its last
+/// repo is gone), walking up from the repo's parent and stopping at `repos_dir` or the first
+/// directory that still has something in it.
+fn remove_empty_parent_dirs_below_repos_dir(
+    repos_dir: &std::path::Path,
+    repo_path: &std::path::Path,
+) {
+    let mut dir = repo_path.parent();
+    while let Some(parent) = dir {
+        if parent == repos_dir || !parent.starts_with(repos_dir) {
+            break;
+        }
+        if std::fs::read_dir(parent)
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_dir(parent);
+            dir = parent.parent();
+        } else {
+            break;
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct MoveBody {
+    pub from: String,
+    pub to: String,
+}
+
+/// `POST /api/repo/manage/move` — give a repo a new id by renaming its directory (DEV-13019: a
+/// workbook moving to another organization takes its repos with it, and every repo id starts with
+/// the organization id).
+///
+/// - **Atomic.** One `rename(2)` within `repos_dir`, so a reader sees the repo at exactly one of
+///   the two ids, never a half-copied one.
+/// - **Never overwrites.** A destination that already exists is refused with 409, even if empty.
+///   On Linux the rename itself also refuses (`RENAME_NOREPLACE`), so a destination created by
+///   another process between the check and the rename is safe too.
+/// - **Idempotent.** A source that is gone with the destination present is a move that already
+///   happened (a retry after a lost response or a crash): 200 with `moved: false`. Neither present
+///   is 404.
+///
+/// Holds both repos' `main` + `dirty` locks (in a fixed order, see
+/// `RepoLocks::run_write_main_and_dirty_of_two_repos`), refuses while a gc or repair holds the
+/// source's `gcInProgress` marker, and takes the source's cross-instance maintenance lock, so no
+/// write, gc, or background maintenance step is running in the directory as it moves. The
+/// derived index DB follows the repo when it can and is otherwise dropped (it is rebuilt from the
+/// repo on the next index build).
+pub async fn move_repo(State(state): State<AppState>, Json(body): Json<MoveBody>) -> Response {
+    let source_repo_id = body.from.trim_start_matches('/').to_string();
+    let destination_repo_id = body.to.trim_start_matches('/').to_string();
+    if source_repo_id.is_empty() || destination_repo_id.is_empty() {
+        return envelope_error(
+            &state,
+            None,
+            AppError::bad_request("from and to must be non-empty"),
+        );
+    }
+    if source_repo_id.contains("..") || destination_repo_id.contains("..") {
+        return envelope_error(
+            &state,
+            None,
+            AppError::bad_request("Path traversal (..) is not allowed"),
+        );
+    }
+    if source_repo_id == destination_repo_id {
+        return envelope_error(
+            &state,
+            None,
+            AppError::bad_request("from and to must be different repos"),
+        );
+    }
+
+    let result = state
+        .repo_locks
+        .run_write_main_and_dirty_of_two_repos(&source_repo_id, &destination_repo_id, {
+            let state = state.clone();
+            let source_repo_id = source_repo_id.clone();
+            let destination_repo_id = destination_repo_id.clone();
+            move || {
+                // Taken under the branch locks, so two moves of one repo queue on the locks
+                // instead of refusing each other here.
+                let Some(_gc_marker_held_for_the_whole_move) =
+                    GcMarkerGuard::try_acquire(&state.gc_state, &source_repo_id)
+                else {
+                    return Err(AppError::conflict("GC already in progress"));
+                };
+                move_repo_directory_and_index(&state, &source_repo_id, &destination_repo_id)
+            }
+        })
+        .await;
+
+    match result {
+        // Said in so many words, so a caller can tell "nothing to move" from any other 404 (such as a
+        // scratch-git that predates this route): every NotFound otherwise renders as "File not found".
+        Err(AppError::NotFound(message)) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({
+                "data": { "error": message, "reason": MOVE_FOUND_NEITHER_REPO_REASON },
+                "status": { "gcInProgress": null }
+            })),
+        )
+            .into_response(),
+        other => envelope_result(&state, "move", other),
+    }
+}
+
+/// The `reason` of the move's 404 when the repo is at neither id.
+pub const MOVE_FOUND_NEITHER_REPO_REASON: &str = "neither_repo_exists";
+
+fn move_repo_directory_and_index(
+    state: &AppState,
+    source_repo_id: &str,
+    destination_repo_id: &str,
+) -> Result<serde_json::Value, AppError> {
+    let source_repo_path = state.repo_path(source_repo_id);
+    let destination_repo_path = state.repo_path(destination_repo_id);
+
+    match (source_repo_path.exists(), destination_repo_path.exists()) {
+        (false, true) => {
+            return Ok(json!({
+                "success": true,
+                "moved": false,
+                "from": source_repo_id,
+                "to": destination_repo_id,
+            }));
+        }
+        (false, false) => {
+            return Err(AppError::not_found(format!(
+                "Neither the source repo {} nor the destination repo {} exists",
+                source_repo_id, destination_repo_id
+            )));
+        }
+        (true, true) => {
+            return Err(AppError::conflict(format!(
+                "Destination repo already exists: {}",
+                destination_repo_id
+            )));
+        }
+        (true, false) => {}
+    }
+
+    // The flock lives on an open file inside the repo, so it stays held across the rename.
+    let _cross_instance_maintenance_lock =
+        lock_repo_for_maintenance_with_retries(&source_repo_path, source_repo_id)?;
+
+    if let Some(destination_parent) = destination_repo_path.parent() {
+        std::fs::create_dir_all(destination_parent)
+            .map_err(|e| AppError::internal(format!("Failed to create destination dirs: {}", e)))?;
+    }
+    rename_without_replacing(&source_repo_path, &destination_repo_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            AppError::conflict(format!(
+                "Destination repo already exists: {}",
+                destination_repo_id
+            ))
+        } else {
+            AppError::internal(format!("Failed to move repo: {}", e))
+        }
+    })?;
+    tracing::info!(
+        "[API] Moved repo {} -> {}",
+        source_repo_id,
+        destination_repo_id
+    );
+
+    move_index_db_best_effort(
+        &state.index_db_path(source_repo_id),
+        &state.index_db_path(destination_repo_id),
+    );
+    remove_empty_parent_dirs_below_repos_dir(&state.repos_dir, &source_repo_path);
+
+    Ok(json!({
+        "success": true,
+        "moved": true,
+        "from": source_repo_id,
+        "to": destination_repo_id,
+    }))
+}
+
+/// How long a move waits for the source's cross-instance maintenance lock before answering 409.
+const MOVE_MAINTENANCE_LOCK_ATTEMPTS: u32 = 20;
+const MOVE_MAINTENANCE_LOCK_RETRY_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(100);
+
+/// Takes the repo's cross-instance maintenance lock, retrying for about two seconds. Besides a
+/// maintenance step on this or the partner instance, the lock reads as busy for a moment whenever
+/// this process forks a `git` child: the child holds a copy of the lock file's descriptor until
+/// it execs. Retrying rides that out; a lock still held after the retries is real work, and the
+/// move answers 409 for the caller to retry later.
+fn lock_repo_for_maintenance_with_retries(
+    repo_path: &std::path::Path,
+    repo_id: &str,
+) -> Result<std::fs::File, AppError> {
+    for attempt in 1..=MOVE_MAINTENANCE_LOCK_ATTEMPTS {
+        match crate::service::maintenance::try_lock_repo_for_maintenance(repo_path) {
+            Ok(Some(lock)) => return Ok(lock),
+            Ok(None) if attempt < MOVE_MAINTENANCE_LOCK_ATTEMPTS => {
+                std::thread::sleep(MOVE_MAINTENANCE_LOCK_RETRY_INTERVAL);
+            }
+            Ok(None) => break,
+            Err(e) => {
+                return Err(AppError::internal(format!(
+                    "Failed to take the maintenance lock on {}: {}",
+                    repo_id, e
+                )));
+            }
+        }
+    }
+    Err(AppError::conflict(format!(
+        "Repo maintenance is running on {}",
+        repo_id
+    )))
+}
+
+/// `rename(2)` that fails with `AlreadyExists` instead of replacing an existing destination.
+#[cfg(target_os = "linux")]
+fn rename_without_replacing(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let to_c_path = |path: &std::path::Path| {
+        CString::new(path.as_os_str().as_bytes())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+    };
+    let source_c_path = to_c_path(source)?;
+    let destination_c_path = to_c_path(destination)?;
+    // SAFETY: both pointers are valid NUL-terminated strings that outlive the call.
+    let return_code = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            source_c_path.as_ptr(),
+            libc::AT_FDCWD,
+            destination_c_path.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if return_code == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Elsewhere (macOS dev machines) there is no portable no-replace rename; the existence check
+/// made under the repo locks is what refuses an existing destination.
+#[cfg(not(target_os = "linux"))]
+fn rename_without_replacing(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    if destination.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "destination exists",
+        ));
+    }
+    std::fs::rename(source, destination)
+}
+
+/// Moves the repo's derived index DB (and any SQLite `-wal` / `-shm` sidecars) to the new id. When
+/// that fails, or something is already at the new id, the old one is removed instead: the index is
+/// rebuilt from the repo, and a stale one left at the old id would be picked up by a repo created
+/// there later.
+fn move_index_db_best_effort(
+    source_index_path: &std::path::Path,
+    destination_index_path: &std::path::Path,
+) {
+    for sidecar_suffix in ["", "-wal", "-shm"] {
+        let source =
+            std::path::PathBuf::from(format!("{}{}", source_index_path.display(), sidecar_suffix));
+        if !source.exists() {
+            continue;
+        }
+        let destination = std::path::PathBuf::from(format!(
+            "{}{}",
+            destination_index_path.display(),
+            sidecar_suffix
+        ));
+        let moved = !destination.exists()
+            && destination
+                .parent()
+                .map(|parent| std::fs::create_dir_all(parent).is_ok())
+                .unwrap_or(true)
+            && std::fs::rename(&source, &destination).is_ok();
+        if !moved {
+            let _ = std::fs::remove_file(&source);
+        }
+    }
 }
 
 pub async fn strip_prefix(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -1676,6 +1955,265 @@ mod tests {
         let response = delete_future.await.unwrap();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         assert!(!repo_path.exists());
+    }
+
+    fn move_body(from: &str, to: &str) -> Json<MoveBody> {
+        Json(MoveBody {
+            from: from.to_string(),
+            to: to.to_string(),
+        })
+    }
+
+    /// A repo id in another organization, as a workbook moving organizations gives its repos.
+    fn same_repo_in_another_organization(repo_id: &str) -> String {
+        repo_id.replacen("org_t/", "org_moved/", 1)
+    }
+
+    #[tokio::test]
+    async fn move_repo_moves_the_repo_and_its_index_and_removes_emptied_parents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_repo_id = unique_repo_id("move");
+        let destination_repo_id = same_repo_in_another_organization(&source_repo_id);
+        let source_repo = GitRepo::init(tmp.path(), &source_repo_id).unwrap();
+        let head_before_move = source_repo.resolve_ref("main").ok();
+        drop(source_repo);
+        let state = make_state(tmp.path());
+        std::fs::write(state.index_db_path(&source_repo_id), b"index").unwrap();
+
+        let response = move_repo(
+            State(state.clone()),
+            move_body(&format!("/{}", source_repo_id), &destination_repo_id),
+        )
+        .await;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["moved"], true);
+
+        assert!(!state.repo_path(&source_repo_id).exists());
+        let moved_repo = GitRepo::open(tmp.path(), &destination_repo_id).unwrap();
+        assert_eq!(moved_repo.resolve_ref("main").ok(), head_before_move);
+        assert!(!state.index_db_path(&source_repo_id).exists());
+        assert_eq!(
+            std::fs::read(state.index_db_path(&destination_repo_id)).unwrap(),
+            b"index"
+        );
+        assert!(
+            !tmp.path().join("org_t").exists(),
+            "the emptied source organization directory is removed"
+        );
+    }
+
+    #[tokio::test]
+    async fn move_repo_retried_after_it_happened_succeeds_without_moving() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_repo_id = unique_repo_id("moveretry");
+        let destination_repo_id = same_repo_in_another_organization(&source_repo_id);
+        GitRepo::init(tmp.path(), &source_repo_id).unwrap();
+        let state = make_state(tmp.path());
+
+        let first = move_repo(
+            State(state.clone()),
+            move_body(&source_repo_id, &destination_repo_id),
+        )
+        .await;
+        assert_eq!(first.status(), axum::http::StatusCode::OK);
+        let retry = move_repo(
+            State(state.clone()),
+            move_body(&source_repo_id, &destination_repo_id),
+        )
+        .await;
+        assert_eq!(retry.status(), axum::http::StatusCode::OK);
+        let body = response_json(retry).await;
+        assert_eq!(body["data"]["success"], true);
+        assert_eq!(body["data"]["moved"], false);
+        assert!(GitRepo::open(tmp.path(), &destination_repo_id).is_ok());
+    }
+
+    #[tokio::test]
+    async fn move_repo_never_overwrites_an_existing_destination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_repo_id = unique_repo_id("moveconflict");
+        let destination_repo_id = same_repo_in_another_organization(&source_repo_id);
+        GitRepo::init(tmp.path(), &source_repo_id).unwrap();
+        GitRepo::init(tmp.path(), &destination_repo_id).unwrap();
+        let state = make_state(tmp.path());
+        let marker_in_destination = state.repo_path(&destination_repo_id).join("marker");
+        std::fs::write(&marker_in_destination, b"keep").unwrap();
+
+        let response = move_repo(
+            State(state.clone()),
+            move_body(&source_repo_id, &destination_repo_id),
+        )
+        .await;
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+        assert!(GitRepo::open(tmp.path(), &source_repo_id).is_ok());
+        assert_eq!(std::fs::read(&marker_in_destination).unwrap(), b"keep");
+
+        // An empty directory at the destination is refused too (a plain rename would replace it).
+        let other_source_repo_id = unique_repo_id("moveemptydest");
+        let other_destination_repo_id = same_repo_in_another_organization(&other_source_repo_id);
+        GitRepo::init(tmp.path(), &other_source_repo_id).unwrap();
+        std::fs::create_dir_all(state.repo_path(&other_destination_repo_id)).unwrap();
+        let response = move_repo(
+            State(state.clone()),
+            move_body(&other_source_repo_id, &other_destination_repo_id),
+        )
+        .await;
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+        assert!(GitRepo::open(tmp.path(), &other_source_repo_id).is_ok());
+    }
+
+    #[tokio::test]
+    async fn move_repo_validates_ids_and_reports_a_missing_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_state(tmp.path());
+        let missing_repo_id = unique_repo_id("movemissing");
+
+        let response = move_repo(
+            State(state.clone()),
+            move_body(
+                &missing_repo_id,
+                &same_repo_in_another_organization(&missing_repo_id),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["reason"], MOVE_FOUND_NEITHER_REPO_REASON);
+        for (from, to) in [
+            ("../x", "org_a/wkb_a/coa_a"),
+            ("org_a/wkb_a/coa_a", "org_b/../coa_a"),
+            ("", "org_a/wkb_a/coa_a"),
+            ("org_a/wkb_a/coa_a", "/org_a/wkb_a/coa_a"),
+        ] {
+            let response = move_repo(State(state.clone()), move_body(from, to)).await;
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::BAD_REQUEST,
+                "{from} -> {to}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn move_repo_refuses_while_a_gc_is_running_on_the_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_repo_id = unique_repo_id("movegc");
+        GitRepo::init(tmp.path(), &source_repo_id).unwrap();
+        let state = make_state(tmp.path());
+        let gc_marker = GcMarkerGuard::try_acquire(&state.gc_state, &source_repo_id).unwrap();
+
+        let response = move_repo(
+            State(state.clone()),
+            move_body(
+                &source_repo_id,
+                &same_repo_in_another_organization(&source_repo_id),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+        assert!(state.repo_path(&source_repo_id).exists());
+        drop(gc_marker);
+    }
+
+    /// The move waits for an in-flight write on the source rather than renaming the directory
+    /// out from under it.
+    #[tokio::test]
+    async fn move_repo_waits_for_in_flight_write_on_the_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_repo_id = unique_repo_id("movewaits");
+        let destination_repo_id = same_repo_in_another_organization(&source_repo_id);
+        GitRepo::init(tmp.path(), &source_repo_id).unwrap();
+        let state = make_state(tmp.path());
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let writer = tokio::spawn({
+            let locks = state.repo_locks.clone();
+            let source_repo_id = source_repo_id.clone();
+            async move {
+                locks
+                    .run_write(&source_repo_id, DIRTY_BRANCH, move || {
+                        started_tx.send(()).unwrap();
+                        release_rx
+                            .recv_timeout(std::time::Duration::from_secs(10))
+                            .unwrap();
+                        Ok::<_, AppError>(())
+                    })
+                    .await
+            }
+        });
+        tokio::task::spawn_blocking(move || {
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+        let move_future = tokio::spawn({
+            let state = state.clone();
+            let source_repo_id = source_repo_id.clone();
+            let destination_repo_id = destination_repo_id.clone();
+            async move {
+                move_repo(
+                    State(state),
+                    move_body(&source_repo_id, &destination_repo_id),
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(
+            !move_future.is_finished(),
+            "move ran under an in-flight write"
+        );
+        assert!(state.repo_path(&source_repo_id).exists());
+
+        release_tx.send(()).unwrap();
+        writer.await.unwrap().unwrap();
+        let response = move_future.await.unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert!(state.repo_path(&destination_repo_id).exists());
+    }
+
+    /// Two moves between the same pair of repos in opposite directions take the locks in the
+    /// same order, so they finish instead of deadlocking.
+    #[tokio::test]
+    async fn opposite_moves_of_the_same_pair_do_not_deadlock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first_repo_id = unique_repo_id("movepair");
+        let second_repo_id = same_repo_in_another_organization(&first_repo_id);
+        GitRepo::init(tmp.path(), &first_repo_id).unwrap();
+        let state = make_state(tmp.path());
+
+        let mut moves = Vec::new();
+        for _ in 0..10 {
+            for (from, to) in [
+                (first_repo_id.clone(), second_repo_id.clone()),
+                (second_repo_id.clone(), first_repo_id.clone()),
+            ] {
+                let state = state.clone();
+                moves.push(tokio::spawn(async move {
+                    let response = move_repo(State(state), move_body(&from, &to)).await;
+                    let status = response.status();
+                    (status, response_json(response).await)
+                }));
+            }
+        }
+        let all_moves = async {
+            for handle in moves {
+                let (status, body) = handle.await.unwrap();
+                assert!(status.is_success(), "got {status}: {body}");
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(30), all_moves)
+            .await
+            .expect("moves deadlocked");
+        assert!(
+            state.repo_path(&first_repo_id).exists() != state.repo_path(&second_repo_id).exists(),
+            "the repo is at exactly one of the two ids"
+        );
     }
 
     #[tokio::test]

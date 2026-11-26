@@ -246,6 +246,7 @@ pub async fn run() {
         .route("/api/repo/manage/{id}/fsck", get(routes::manage::fsck))
         .route("/api/repo/manage/{id}/repair", post(routes::manage::repair))
         .route("/api/repo/manage/copy", post(routes::manage::copy_repo))
+        .route("/api/repo/manage/move", post(routes::manage::move_repo))
         .route(
             "/api/repo/manage/{id}/strip-prefix",
             post(routes::manage::strip_prefix),

@@ -55,6 +55,10 @@ flate2 = "1.1.9"
 jsonschema = { version = "0.46", default-features = false }
 sha2 = "0.10"
 
+# `renameat2(RENAME_NOREPLACE)` for the no-overwrite repo move (DEV-13019). Already in the tree via tokio.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [patch.crates-io]
 # Two patches on the `fix/windows-gnu-get-tz-info` branch:
 #  1. get_tz_info was gated on cfg(target_env="msvc") but referenced unconditionally

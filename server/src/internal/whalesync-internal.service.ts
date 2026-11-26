@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import {
   WHALESYNC_TEAM_LINK_BATCH_LIMIT,
   WhalesyncLinkTeamsResponse,
@@ -320,14 +320,26 @@ export class WhalesyncInternalService {
    *
    * The unlink runs last on purpose: until it commits, the user is still found by its Whalesync ids, so if an
    * earlier step throws, Bottlenose's retry re-runs every (idempotent) step. Once it commits, a retry is a no-op.
+   *
+   * The migration that takes Whalesync teams off real Scratch accounts (DEV-13019) passes
+   * `forMigrationOffRealAccount`. Then step 1 deletes nothing: a Live Export still created by the user makes the
+   * unlink throw instead, here and again inside step 3's transaction, since the migration moves Live Exports rather
+   * than dropping them. With `handOverWhalesyncIdentityTo`, step 3 also gives the user's Whalesync ids to the team's
+   * new pure shadow user, in the same transaction.
    */
-  private async unlinkRealScratchUserFromWhalesyncIdentity(
+  public async unlinkRealScratchUserFromWhalesyncIdentity(
     realScratchUser: UserCluster.User,
     requestedIds: { whalesyncTeamId?: string; whalesyncUserId?: string },
+    forMigrationOffRealAccount?: { handOverWhalesyncIdentityTo?: UserCluster.User },
   ): Promise<void> {
     const liveExportWorkbookIdsCreatedByUser = await this.workbookService.findIdsOfLiveExportWorkbooksCreatedByUser(
       realScratchUser.id,
     );
+    if (forMigrationOffRealAccount && liveExportWorkbookIdsCreatedByUser.length > 0) {
+      throw new ConflictException(
+        `Real Scratch user ${realScratchUser.id} still holds ${liveExportWorkbookIdsCreatedByUser.length} Live Export(s); refusing to unlink it from Whalesync.`,
+      );
+    }
 
     const actor = userToActor(realScratchUser);
     for (const workbookId of liveExportWorkbookIdsCreatedByUser) {
@@ -341,6 +353,12 @@ export class WhalesyncInternalService {
 
     const { revokedWhalesyncSessionTokenCount } = await this.usersService.unlinkUserFromWhalesyncIdentity(
       realScratchUser.id,
+      forMigrationOffRealAccount
+        ? {
+            refuseWhileUserOwnsLiveExports: true,
+            handOverWhalesyncIdentityToUserId: forMigrationOffRealAccount.handOverWhalesyncIdentityTo?.id,
+          }
+        : {},
     );
 
     WSLogger.info({
@@ -348,6 +366,7 @@ export class WhalesyncInternalService {
       message: `Deprovisioned Whalesync identity from real Scratch user ${realScratchUser.id} by unlinking it: kept the user and organization, deleted ${liveExportWorkbookIdsCreatedByUser.length} Live Export workbook(s), whalesyncPlanSubscriptionCleared=${whalesyncPlanSubscriptionCleared}, revoked ${revokedWhalesyncSessionTokenCount} session token(s)`,
       deprovisionBranch: 'unlink',
       scratchUserId: realScratchUser.id,
+      handedWhalesyncIdentityToUserId: forMigrationOffRealAccount?.handOverWhalesyncIdentityTo?.id,
       ...requestedIds,
       organizationId: realScratchUser.organizationId ?? undefined,
     });

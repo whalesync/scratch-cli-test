@@ -201,10 +201,38 @@ Scratch keeps no record of which person in a team created a Live Export or acted
 Live Export belongs to its team.
 
 **A real Scratch account can be a team's shadow user**: one adopted by email before teams, or a shadow user whose
-person signed in to Scratch before it got its team. A session for it reaches that person's own workbooks too, so Scratch mints one only
-for the person it is linked to (`whalesyncUserId`) and answers anyone else in the team with a 409. Before a second
-person can join such a team, its Live Exports have to move to a pure shadow user. On 2026-11-25 production had 621
-linked users, 22 of them real accounts, 6 of which held Live Exports.
+person signed in to Scratch before it got its team. A session for it reaches that person's own workbooks too, so Scratch
+mints one only for the person it is linked to (`whalesyncUserId`) and answers anyone else in the team with a 409. On
+2026-11-26 production had 22 such accounts, 6 of which held Live Exports (36 Live Exports, 71 connections, 3
+schedules). No new ones are made: a team has no email, so its shadow user is never matched to a Scratch account.
+
+**The `whalesync-teams-off-real-accounts` code migration ends them** (Settings → Dev → Migrations). It finds its
+candidates in the data on every run, never by id: users with a `whalesyncTeamId` or `whalesyncUserId` that are not pure
+shadow users. For each, one at a time:
+
+- **Holds no Live Export:** unlinked, through the same routine as a deprovision
+  (`WhalesyncInternalService.unlinkRealScratchUserFromWhalesyncIdentity`): its `WHALESYNC_PLAN` subscription and
+  Whalesync sessions go, and both ids are cleared. The team's next session creates a pure shadow user.
+- **Holds Live Exports:** a new pure shadow user is made for the team (clerkId `ws_<whalesyncTeamId>`, no email) in an
+  organization of its own, which gets a copy of the account's Whalesync plan. Each Live Export is paused (its
+  connections quiesced and every schedule in it disabled, both behind crash-safe markers), its connection, workbook,
+  and scratch repos are renamed on scratch-git to the new organization (`POST /api/repo/manage/move`: atomic, never
+  overwrites, idempotent), its rows move to the new user and organization in one transaction (workbook, each
+  connection's `repoPath` and creator, schedules, the workspace permission, and the publish plans, jobs, and routine
+  runs that name the account), and it is released. Last, the account is unlinked and its `whalesyncTeamId` and
+  `whalesyncUserId` move to the new user in the same transaction, which refuses while a Live Export is still on the
+  account. The person keeps their account, organization, and every other workbook.
+
+An account is skipped and reported, never forced, when its state isn't what the migration expects: a routine run or job
+in progress (picked up by a later run), an organization with another member, a Live Export it didn't create, one
+pending deletion or shared with someone else, or a team that already has a pure shadow user. A dry run reports what
+each account would take. A run that stops at any step is finished by the next: the account stays linked, and so a
+candidate, until the final unlink commits, and every step before it is idempotent.
+
+**Once it has run everywhere, no team's shadow user is a real Scratch account**, and nothing depends on one having been:
+every Live Export sits with a pure shadow user that owns its own organization, as for any team that started after
+teams. The 409 for a teammate of a real account, the real-account branch of deprovisioning a team, and the migration
+itself then exist only for accounts that are gone, and can be removed.
 
 ## The two Bottlenose → Scratch channels
 

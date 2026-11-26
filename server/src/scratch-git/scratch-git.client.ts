@@ -254,6 +254,17 @@ export class ScratchGitClient {
     await this.callGitApi(`/api/repo/manage/copy`, 'POST', { from, to });
   }
 
+  /**
+   * Renames a repo on scratch-git's disk (DEV-13019). Atomic, never overwrites an existing destination (409,
+   * `ScratchGitConflictError`), and idempotent: a source already gone with the destination present returns
+   * `{ moved: false }`. Neither present is a 404 (`ScratchGitNotFoundError`) whose body has
+   * `reason: 'neither_repo_exists'`.
+   */
+  async moveRepo(from: string, to: string): Promise<{ moved: boolean }> {
+    const result = (await this.callGitApi(`/api/repo/manage/move`, 'POST', { from, to })) as { moved?: unknown };
+    return { moved: result?.moved === true };
+  }
+
   async resetRepo(repoId: string, path?: string): Promise<void> {
     await this.callGitApi(`/api/repo/manage/${this.encodeRepoId(repoId)}/reset`, 'POST', { path });
   }

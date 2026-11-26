@@ -15,7 +15,7 @@
 //! after the request that started it has been abandoned. Handlers must not
 //! acquire a guard and then call `spawn_blocking` themselves. Every route that
 //! mutates a repo (branch writes, tags, staging commits, repair, and the
-//! lifecycle routes init/delete/copy/strip-prefix) goes through `run_write` /
+//! lifecycle routes init/delete/copy/move/strip-prefix) goes through `run_write` /
 //! `run_write_main_and_dirty`; the one exception is the git smart-HTTP
 //! receive-pack path, which hands its guard to the task that supervises the
 //! `git http-backend` child (`smart_http.rs`).
@@ -134,6 +134,33 @@ impl RepoLocks {
             f,
         )
         .await
+    }
+
+    /// Like [`RepoLocks::run_write_main_and_dirty`] but for an operation on two repos at once (a
+    /// repo move, DEV-13019). The two repos are locked in lexicographic order of their ids, `main`
+    /// before `dirty` within each, so two such operations can never deadlock each other, and a
+    /// single-repo writer, which never holds a second repo's lock, can't be part of a cycle.
+    pub async fn run_write_main_and_dirty_of_two_repos<F, T>(
+        &self,
+        first_repo_id: &str,
+        second_repo_id: &str,
+        f: F,
+    ) -> Result<T, AppError>
+    where
+        F: FnOnce() -> Result<T, AppError> + Send + 'static,
+        T: Send + 'static,
+    {
+        let (repo_id_locked_first, repo_id_locked_second) = if first_repo_id <= second_repo_id {
+            (first_repo_id, second_repo_id)
+        } else {
+            (second_repo_id, first_repo_id)
+        };
+        let mut guards = Vec::with_capacity(4);
+        for repo_id in [repo_id_locked_first, repo_id_locked_second] {
+            guards.push(self.acquire_branch_write_guard(repo_id, MAIN_BRANCH).await);
+            guards.push(self.acquire_branch_write_guard(repo_id, DIRTY_BRANCH).await);
+        }
+        run_blocking_holding_guards(&self.lock_activity_registry, guards, f).await
     }
 }
 

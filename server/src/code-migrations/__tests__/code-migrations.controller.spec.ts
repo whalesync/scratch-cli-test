@@ -13,6 +13,7 @@ import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/d
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { CodeMigrationsController } from '../code-migrations.controller';
 import { ConnectionDrainTimeoutError, ConnectionQuiesceService } from '../connection-quiesce.service';
+import { WhalesyncRealAccountMigrationService } from '../whalesync-real-account-migration.service';
 
 const makeReqWithUser = (isAdmin = true) =>
   ({
@@ -38,6 +39,7 @@ describe('CodeMigrationsController', () => {
   let auditLogService: jest.Mocked<AuditLogService>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let connectionQuiesceService: jest.Mocked<ConnectionQuiesceService>;
+  let whalesyncRealAccountMigrationService: jest.Mocked<WhalesyncRealAccountMigrationService>;
   let metricsService: jest.Mocked<CustomMetricsService>;
   let dataFolderTableSpecStore: jest.Mocked<DataFolderTableSpecStoreService>;
 
@@ -107,6 +109,15 @@ describe('CodeMigrationsController', () => {
       withLoggedExecTimeForConnector: jest.fn(),
     } as unknown as jest.Mocked<CustomMetricsService>;
 
+    whalesyncRealAccountMigrationService = {
+      run: jest.fn().mockResolvedValue({
+        migrationName: 'whalesync-teams-off-real-accounts',
+        migratedIds: [],
+        remainingCount: 0,
+        dryRun: true,
+      }),
+    } as unknown as jest.Mocked<WhalesyncRealAccountMigrationService>;
+
     dataFolderTableSpecStore = {
       importTableSpecFromGitIfAbsent: jest.fn().mockResolvedValue({ kind: 'imported', importedDefaultView: true }),
     } as unknown as jest.Mocked<DataFolderTableSpecStoreService>;
@@ -121,6 +132,7 @@ describe('CodeMigrationsController', () => {
       connectionQuiesceService,
       metricsService,
       dataFolderTableSpecStore,
+      whalesyncRealAccountMigrationService,
     );
   });
 
@@ -167,6 +179,33 @@ describe('CodeMigrationsController', () => {
 
   // A dry-run must only be accepted for a migration that actually honors it —
   // otherwise a user could believe they dry-ran a migration that wrote for real.
+  describe('runMigration - whalesync-teams-off-real-accounts (DEV-13019)', () => {
+    it('is listed with dry-run support and hands ids, qty, and dryRun to the migration service', async () => {
+      const descriptor = controller
+        .getAvailableMigrations(makeReqWithUser())
+        .migrations.find((migration) => migration.name === 'whalesync-teams-off-real-accounts');
+      expect(descriptor?.supportsDryRun).toBe(true);
+
+      await controller.runMigration(makeReqWithUser(), {
+        migration: 'whalesync-teams-off-real-accounts',
+        ids: ['usr_a'],
+        dryRun: true,
+      });
+      expect(whalesyncRealAccountMigrationService.run).toHaveBeenCalledWith({
+        dryRun: true,
+        realUserIds: ['usr_a'],
+        maximumAccountCount: undefined,
+      });
+
+      await controller.runMigration(makeReqWithUser(), { migration: 'whalesync-teams-off-real-accounts', qty: 5 });
+      expect(whalesyncRealAccountMigrationService.run).toHaveBeenLastCalledWith({
+        dryRun: false,
+        realUserIds: undefined,
+        maximumAccountCount: 5,
+      });
+    });
+  });
+
   describe('runMigration - dry-run gating', () => {
     it('rejects dryRun for a migration that does not support it', async () => {
       await expect(

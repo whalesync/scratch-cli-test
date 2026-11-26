@@ -110,6 +110,8 @@ import {
   WebflowFolderRestructureInverseSummary,
 } from './webflow-folder-restructure-inverse-backfill';
 import { applyWebflowFolderMovePathRewrite } from './webflow-folder-restructure-path-rewrite';
+import { WHALESYNC_TEAMS_OFF_REAL_ACCOUNTS_MIGRATION_NAME } from './whalesync-real-account-migration';
+import { WhalesyncRealAccountMigrationService } from './whalesync-real-account-migration.service';
 
 const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
   {
@@ -249,6 +251,28 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'folder. `ids` are WORKBOOK ids; `qty` compares that many folders from a random starting point.',
   },
   {
+    name: WHALESYNC_TEAMS_OFF_REAL_ACCOUNTS_MIGRATION_NAME,
+    supportsDryRun: true,
+    description:
+      'DEV-13019: no Whalesync team keeps a real Scratch account as its shadow user. Candidates are re-derived on ' +
+      'every run: users with a whalesyncTeamId or whalesyncUserId that are not pure shadow users (no synthetic ws_ ' +
+      'clerkId). An account holding no Live Export is unlinked (WHALESYNC_PLAN cleared, Whalesync sessions revoked, ' +
+      'both ids cleared); the team gets a pure shadow user on its next session. An account holding Live Exports gets a ' +
+      'new pure shadow user for its team (clerkId ws_<teamId>, no email) in an organization of its own, with a copy ' +
+      "of the organization's Whalesync plan; each Live Export is paused (connections quiesced, every schedule " +
+      'disabled), its connection, workbook, and scratch repos are moved to the new organization on scratch-git, and ' +
+      'its workbook, connections, schedules, permission, publish plans, jobs, and routine runs are moved to the new ' +
+      'user in one transaction, then it is released. Last, the account is unlinked and its Whalesync ids move to the ' +
+      'new user in the same transaction, which refuses while any Live Export is still on the account. The person ' +
+      'keeps their account, organization, and every other workbook. Skips (and reports) an account with a routine ' +
+      'run or job in progress, an organization with another member, a Live Export it did not create, pending ' +
+      'deletion, or shared, or a team that already has a pure shadow user. One account at a time: a failure is ' +
+      'reported and the rest go on. Idempotent: a re-run after a stop at any step finishes the job. Deploy ' +
+      'scratch-git (repo move endpoint) before running. `ids` are Scratch user ids (each must still be a ' +
+      'candidate); `qty` takes that many candidates in id order. Supports dryRun, which reports each account’s ' +
+      'branch, team, Live Exports, connections, schedules, and repo moves.',
+  },
+  {
     name: 'webflow-folder-restructure-inverse',
     supportsDryRun: true,
     description:
@@ -286,6 +310,7 @@ export class CodeMigrationsController {
     private readonly connectionQuiesceService: ConnectionQuiesceService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
     private readonly dataFolderTableSpecStore: DataFolderTableSpecStoreService,
+    private readonly whalesyncRealAccountMigrationService: WhalesyncRealAccountMigrationService,
   ) {}
 
   @Get('available')
@@ -346,6 +371,12 @@ export class CodeMigrationsController {
         return this.runDataFolderTableSpecGitImportMigration(dto);
       case DATA_FOLDER_TABLE_SPEC_GIT_DIVERGENCE_REPORT_MIGRATION_NAME:
         return this.runDataFolderTableSpecGitDivergenceReportMigration(dto);
+      case WHALESYNC_TEAMS_OFF_REAL_ACCOUNTS_MIGRATION_NAME:
+        return this.whalesyncRealAccountMigrationService.run({
+          dryRun: dto.dryRun ?? false,
+          realUserIds: dto.ids && dto.ids.length > 0 ? dto.ids : undefined,
+          maximumAccountCount: dto.qty,
+        });
       default:
         throw new BadRequestException(`Unknown migration: ${dto.migration}`);
     }

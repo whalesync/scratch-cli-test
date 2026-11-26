@@ -307,6 +307,41 @@ export class ScheduleService {
   }
 
   /**
+   * DEV-13019 — the workbook-wide counterpart of {@link disableSchedulesForConnectionMigration}, for a migration
+   * that moves a whole workbook to another organization. Covers every schedule in the workbook, including ROUTINE
+   * schedules (a Live Export's), which target a routine file rather than a connection and so are not reached by the
+   * connection quiesce. Same marker, same rules: only enabled, unmarked schedules are touched, so a schedule the user
+   * disabled stays disabled, and a re-run leaves the marker alone.
+   */
+  async disableSchedulesForWorkbookMigration(workbookId: WorkbookId): Promise<void> {
+    await this.db.client.schedule.updateMany({
+      where: { workbookId, enabled: true, disabledForMigrationAt: null },
+      data: { enabled: false, disabledForMigrationAt: new Date() },
+    });
+  }
+
+  /**
+   * DEV-13019 — re-enables every schedule in the workbook that a migration disabled (marker set), recomputing its
+   * `nextRunAt` so it fires on its next natural tick. Crash-safe and idempotent, like
+   * {@link restoreSchedulesForConnectionMigration}.
+   */
+  async restoreSchedulesForWorkbookMigration(workbookId: WorkbookId): Promise<void> {
+    const schedulesDisabledForMigration = await this.db.client.schedule.findMany({
+      where: { workbookId, disabledForMigrationAt: { not: null } },
+    });
+    for (const schedule of schedulesDisabledForMigration) {
+      await this.db.client.schedule.update({
+        where: { id: schedule.id },
+        data: {
+          enabled: true,
+          disabledForMigrationAt: null,
+          nextRunAt: this.computeNextRunAt(schedule.cronExpression, schedule.timezone),
+        },
+      });
+    }
+  }
+
+  /**
    * Resolve the ids of every schedule that targets a connection, across the three
    * polymorphic `entityId` kinds: the ConnectorAccount itself (connection-wide
    * pulls), each of its linked DataFolders (per-table pull/publish), and each Sync

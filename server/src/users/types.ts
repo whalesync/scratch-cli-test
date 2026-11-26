@@ -57,6 +57,11 @@ export function isSystemActor(actor: Actor): boolean {
  */
 export const WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX = 'ws_';
 
+/** The synthetic clerkId of a Whalesync team's pure shadow user (and of its organization). */
+export function pureShadowUserClerkIdForWhalesyncTeam(whalesyncTeamId: string): string {
+  return `${WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX}${whalesyncTeamId}`;
+}
+
 /**
  * Whether the user is a pure Whalesync shadow user: an account Whalesync created, which still carries the synthetic
  * `ws_` clerkId and so has never had a real Clerk login. A user adopted into either identity (a native

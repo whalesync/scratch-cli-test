@@ -11,6 +11,7 @@ import {
   WhalesyncLinkTeamsResponse,
   WhalesyncSubscriptionPayload,
   WorkbookId,
+  WorkbookManager,
 } from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
@@ -31,7 +32,12 @@ import {
   generateWebsocketTokenExpirationDate,
   generateWhalesyncSessionTokenExpirationDate,
 } from './tokens';
-import { isPureWhalesyncShadowUser, UserSettings, WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX } from './types';
+import {
+  isPureWhalesyncShadowUser,
+  pureShadowUserClerkIdForWhalesyncTeam,
+  UserSettings,
+  WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX,
+} from './types';
 
 // When the waitlist is required, the user is blocked from using the app and will get an email until an
 // admin clicks approve.
@@ -291,6 +297,21 @@ export class UsersService {
   }
 
   /**
+   * Creates the pure shadow user, with its own organization and default workbook, that a Whalesync team's Live
+   * Exports move to off a real Scratch account (DEV-13019 migration). Its clerkId is `ws_<whalesyncTeamId>`, as for
+   * any team's shadow user, and it has no email. It is created holding no Whalesync ids: the team id is still on the
+   * real account, and both columns are unique, so they move over at the end, in
+   * {@link unlinkUserFromWhalesyncIdentity}'s hand-over. Until then the clerkId is what identifies it.
+   */
+  public async createPureShadowUserAwaitingWhalesyncTeam(whalesyncTeamId: string): Promise<UserCluster.User> {
+    const newShadowUser = await this.createUserWithOrgAndDefaultWorkbook({
+      clerkId: pureShadowUserClerkIdForWhalesyncTeam(whalesyncTeamId),
+    });
+    this.postHogService.identifyNewUser(newShadowUser);
+    return newShadowUser;
+  }
+
+  /**
    * The shadow user that holds a Whalesync team's Live Exports, or null when the team has none (DEV-13019). Never
    * creates one.
    *
@@ -482,7 +503,7 @@ export class UsersService {
    * A team's shadow user may be a real Scratch account: one adopted by email before teams (case 2 of
    * {@link resolveShadowUserFromWhalesync}). A session for it reaches that person's own workbooks too, so only they
    * may act as it; anyone else in the team is refused with a 409 until its Live Exports are moved to a shadow user
-   * of their own.
+   * of their own (the `whalesync-teams-off-real-accounts` code migration).
    */
   private async resolveShadowUserForWhalesyncTeam(
     whalesyncTeamId: string,
@@ -508,7 +529,7 @@ export class UsersService {
         : undefined;
     try {
       const newShadowUser = await this.createUserWithOrgAndDefaultWorkbook({
-        clerkId: `${WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX}${whalesyncTeamId}`,
+        clerkId: pureShadowUserClerkIdForWhalesyncTeam(whalesyncTeamId),
         whalesyncTeamId,
         whalesyncUserId: whalesyncUserIdForNewShadowUser,
         name,
@@ -797,17 +818,60 @@ export class UsersService {
 
   /**
    * Removes a user's link to their Whalesync identity: revokes their WHALESYNC_SESSION tokens and clears
-   * `whalesyncUserId` and `whalesyncTeamId`, in one transaction so the user is never left linked with no sessions or unlinked with live
-   * ones. The inverse of {@link adoptExistingUserIntoWhalesyncIdentity}, used when Whalesync deprovisions a real
-   * Scratch account (DEV-12578). Deliberately touches nothing else: the user's clerkId (their native login), email,
-   * organization, workspace permissions, and CLI/desktop (USER/WEBSOCKET) tokens all stay.
+   * `whalesyncUserId` and `whalesyncTeamId`, in one transaction so the user is never left linked with no sessions or
+   * unlinked with live ones. The inverse of {@link adoptExistingUserIntoWhalesyncIdentity}, used when Whalesync
+   * deprovisions a real Scratch account (DEV-12578). Deliberately touches nothing else: the user's clerkId (their
+   * native login), email, organization, workspace permissions, and CLI/desktop (USER/WEBSOCKET) tokens all stay.
+   *
+   * For the migration that takes Whalesync teams off real Scratch accounts (DEV-13019):
+   * - `refuseWhileUserOwnsLiveExports` throws a `ConflictException`, inside the transaction, when the user still
+   *   created any Live Export workbook, so a Live Export is never left behind on an account that no longer belongs
+   *   to its team.
+   * - `handOverWhalesyncIdentityToUserId` gives the user's `whalesyncTeamId` and `whalesyncUserId` to that user in
+   *   the same transaction, which has to hold neither yet. Both columns are unique, so the team is never without a
+   *   shadow user, nor with two.
    */
-  public async unlinkUserFromWhalesyncIdentity(userId: string): Promise<{ revokedWhalesyncSessionTokenCount: number }> {
-    const [revokedWhalesyncSessionTokens] = await this.db.client.$transaction([
-      this.db.client.apiToken.deleteMany({ where: { userId, type: TokenType.WHALESYNC_SESSION } }),
-      this.db.client.user.update({ where: { id: userId }, data: { whalesyncUserId: null, whalesyncTeamId: null } }),
-    ]);
-    return { revokedWhalesyncSessionTokenCount: revokedWhalesyncSessionTokens.count };
+  public async unlinkUserFromWhalesyncIdentity(
+    userId: string,
+    options: { refuseWhileUserOwnsLiveExports?: boolean; handOverWhalesyncIdentityToUserId?: string } = {},
+  ): Promise<{ revokedWhalesyncSessionTokenCount: number }> {
+    return this.db.client.$transaction(async (transaction) => {
+      const whalesyncIdentityBeingUnlinked = await transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { whalesyncUserId: true, whalesyncTeamId: true },
+      });
+      if (options.refuseWhileUserOwnsLiveExports) {
+        const liveExportWorkbookCountStillCreatedByUser = await transaction.workbook.count({
+          where: { userId, managedBy: WorkbookManager.WS_EXPORT },
+        });
+        if (liveExportWorkbookCountStillCreatedByUser > 0) {
+          throw new ConflictException(
+            `User ${userId} still holds ${liveExportWorkbookCountStillCreatedByUser} Live Export(s); refusing to unlink it from Whalesync.`,
+          );
+        }
+      }
+
+      const revokedWhalesyncSessionTokens = await transaction.apiToken.deleteMany({
+        where: { userId, type: TokenType.WHALESYNC_SESSION },
+      });
+      await transaction.user.update({ where: { id: userId }, data: { whalesyncUserId: null, whalesyncTeamId: null } });
+
+      if (options.handOverWhalesyncIdentityToUserId) {
+        const { count: usersGivenTheWhalesyncIdentity } = await transaction.user.updateMany({
+          where: { id: options.handOverWhalesyncIdentityToUserId, whalesyncUserId: null, whalesyncTeamId: null },
+          data: {
+            whalesyncUserId: whalesyncIdentityBeingUnlinked.whalesyncUserId,
+            whalesyncTeamId: whalesyncIdentityBeingUnlinked.whalesyncTeamId,
+          },
+        });
+        if (usersGivenTheWhalesyncIdentity !== 1) {
+          throw new ConflictException(
+            `User ${options.handOverWhalesyncIdentityToUserId} is missing or already has a Whalesync identity; refusing to hand ${userId}'s over.`,
+          );
+        }
+      }
+      return { revokedWhalesyncSessionTokenCount: revokedWhalesyncSessionTokens.count };
+    });
   }
 
   /**

@@ -70,4 +70,10 @@ export interface MigrationResult {
    * `remainingCount`.
    */
   summary?: MigrationResultSummaryRow[];
+  /**
+   * Optional free-text report, one line per entry, rendered verbatim (monospace) by the admin UI. For migrations
+   * whose per-entity detail doesn't fit a labeled count, e.g. what each account would take on a dry run. Kept
+   * migration-agnostic like `summary`.
+   */
+  report?: string[];
 }
