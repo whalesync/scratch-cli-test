@@ -222,33 +222,45 @@ const ROUTINE_RUN_TRIGGER_VALUES = {
 
 /**
  * Body of `POST {WHALESYNC_INTERNAL_API_URL}/internal/scratch/live-export-runs/finished`: one Live Export run that
- * reached a terminal state, as Scratch recorded it. Whalesync (bottlenose) emails the export's owner when the run
+ * reached a terminal state, as Scratch recorded it. Whalesync (bottlenose) emails the export's team when the run
  * failed. This schema is the canonical contract: bottlenose hand-mirrors it (`live-export-run-finished.dto.ts`), and
  * Scratch validates every body against it before queuing it. `status` is on the wire even though Scratch only sends
  * failed runs today, so runs that complete with warnings can be added without a contract change.
  */
-export const liveExportRunFinishedNotificationSchema = z.object({
-  /** The Whalesync user id of the shadow user who owns the workbook. */
-  whalesyncUserId: z.uuid(),
-  /** The Scratch workbook that is the Live Export (`wkb_…`). */
-  workbookId: z.string().min(1),
-  /** The Live Export's name as Whalesync shows it: the workbook name, or "Untitled export" when it has none. */
-  workbookName: z.string(),
-  routineFilePath: z.string(),
-  /** The routine run (`rrn_…`). Whalesync's dedup key. */
-  runId: z.string().min(1),
-  status: z.enum(ROUTINE_RUN_STATUS_VALUES),
-  trigger: z.enum(ROUTINE_RUN_TRIGGER_VALUES),
-  /** When the run reached its terminal state, as a UTC ISO-8601 timestamp. */
-  finishedAt: z.string().datetime(),
-  /** The failing step's own message (or the last step's summary when the run completed). */
-  resultSummary: z.string().nullable(),
-  /** Set when the run completed but a step finished with a warning. */
-  resultWarning: z.string().nullable(),
-  /** The older, prefixed form of the failure ("Step N (action) failed: …"). */
-  error: z.string().nullable(),
-  liveExportEngine: z.enum(LiveExportEngine).nullable(),
-});
+export const liveExportRunFinishedNotificationSchema = z
+  .object({
+    /**
+     * The Whalesync team (`tm_…`) the Live Export belongs to: the team of the shadow user that owns the workbook
+     * (DEV-13019). Absent for a shadow user made before teams that hasn't been given its team yet.
+     */
+    whalesyncTeamId: z.string().min(1).optional(),
+    /**
+     * The Whalesync person the workbook's shadow user was made for, before teams. Whalesync works the team out from
+     * them when `whalesyncTeamId` is absent. Absent for a shadow user made for a team.
+     */
+    whalesyncUserId: z.uuid().optional(),
+    /** The Scratch workbook that is the Live Export (`wkb_…`). */
+    workbookId: z.string().min(1),
+    /** The Live Export's name as Whalesync shows it: the workbook name, or "Untitled export" when it has none. */
+    workbookName: z.string(),
+    routineFilePath: z.string(),
+    /** The routine run (`rrn_…`). Whalesync's dedup key. */
+    runId: z.string().min(1),
+    status: z.enum(ROUTINE_RUN_STATUS_VALUES),
+    trigger: z.enum(ROUTINE_RUN_TRIGGER_VALUES),
+    /** When the run reached its terminal state, as a UTC ISO-8601 timestamp. */
+    finishedAt: z.string().datetime(),
+    /** The failing step's own message (or the last step's summary when the run completed). */
+    resultSummary: z.string().nullable(),
+    /** Set when the run completed but a step finished with a warning. */
+    resultWarning: z.string().nullable(),
+    /** The older, prefixed form of the failure ("Step N (action) failed: …"). */
+    error: z.string().nullable(),
+    liveExportEngine: z.enum(LiveExportEngine).nullable(),
+  })
+  .refine((notification) => notification.whalesyncTeamId !== undefined || notification.whalesyncUserId !== undefined, {
+    message: 'whalesyncTeamId or whalesyncUserId is required',
+  });
 
 export type LiveExportRunFinishedNotificationDto = z.infer<typeof liveExportRunFinishedNotificationSchema>;
 

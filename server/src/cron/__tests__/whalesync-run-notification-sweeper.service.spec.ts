@@ -121,7 +121,11 @@ describe('WhalesyncRunNotificationSweeperService', () => {
       where: {
         status: 'failed',
         finishedAt: { gt: expect.any(Date) as unknown, lt: expect.any(Date) as unknown },
-        workbook: { managedBy: 'ws_export', isPendingDelete: false, user: { whalesyncUserId: { not: null } } },
+        workbook: {
+          managedBy: 'ws_export',
+          isPendingDelete: false,
+          user: { OR: [{ whalesyncTeamId: { not: null } }, { whalesyncUserId: { not: null } }] },
+        },
         whalesyncRunNotification: { is: null },
       },
       select: { id: true },

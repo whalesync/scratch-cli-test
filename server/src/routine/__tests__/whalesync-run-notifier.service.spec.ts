@@ -245,6 +245,41 @@ describe('WhalesyncRunNotifierService', () => {
       expect(notificationCreate).not.toHaveBeenCalled();
     });
 
+    it("names the team of a team's shadow user, which has no person of its own", async () => {
+      const { notifier, notificationCreate } = makeNotifier({
+        run: failedLiveExportRun({}, { user: { whalesyncUserId: null, whalesyncTeamId: 'tm_abc123def456' } }),
+      });
+
+      await expect(notifier.enqueueNotificationIfRunIsEligible(RUN_ID)).resolves.toBe(true);
+
+      const [[{ data }]] = notificationCreate.mock.calls as [[{ data: { payload: Record<string, unknown> } }]];
+      expect(data.payload).toEqual({
+        ...EXPECTED_PAYLOAD,
+        whalesyncUserId: undefined,
+        whalesyncTeamId: 'tm_abc123def456',
+      });
+      expect(data.payload).not.toHaveProperty('whalesyncUserId');
+    });
+
+    it('names both the team and the person for a shadow user from before teams that has its team', async () => {
+      const { notifier, notificationCreate } = makeNotifier({
+        run: failedLiveExportRun(
+          {},
+          { user: { whalesyncUserId: WHALESYNC_USER_ID, whalesyncTeamId: 'tm_abc123def456' } },
+        ),
+      });
+
+      await notifier.enqueueNotificationIfRunIsEligible(RUN_ID);
+
+      expect(notificationCreate).toHaveBeenCalledWith({
+        data: {
+          routineRunId: RUN_ID,
+          workbookId: WORKBOOK_ID,
+          payload: { ...EXPECTED_PAYLOAD, whalesyncTeamId: 'tm_abc123def456' },
+        },
+      });
+    });
+
     it('names an unnamed workbook the way Whalesync does', async () => {
       const { notifier, notificationCreate } = makeNotifier({ run: failedLiveExportRun({}, { name: null }) });
       await notifier.enqueueNotificationIfRunIsEligible(RUN_ID);

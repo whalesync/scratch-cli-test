@@ -185,6 +185,55 @@ describe('Whalesync run notifications (DB-backed)', () => {
     expect(await findRecentlyFailedLiveExportRunIdsWithoutWhalesyncNotification(db, new Date())).not.toContain(runId);
   });
 
+  it("backfills and queues a run of a team's Live Export, naming the team (DEV-13019)", async () => {
+    // A shadow user made for a team carries the team's id and no person's.
+    const teamOrganizationId = createOrganizationId();
+    const teamShadowUserId = createUserId();
+    const teamLiveExportWorkbookId = createWorkbookId();
+    const whalesyncTeamId = `tm_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    await prisma.organization.create({
+      data: { id: teamOrganizationId, name: 'Whalesync Team Org', clerkId: `ws_${whalesyncTeamId}` },
+    });
+    await prisma.user.create({
+      data: {
+        id: teamShadowUserId,
+        organizationId: teamOrganizationId,
+        whalesyncTeamId,
+        clerkId: `ws_${whalesyncTeamId}`,
+      },
+    });
+    await prisma.workbook.create({
+      data: {
+        id: teamLiveExportWorkbookId,
+        name: 'Team export',
+        managedBy: WorkbookManager.ws_export,
+        userId: teamShadowUserId,
+        organizationId: teamOrganizationId,
+      },
+    });
+    try {
+      const runId = await createRoutineRun({
+        workbookId: teamLiveExportWorkbookId,
+        status: 'failed',
+        finishedMinutesAgo: 10,
+      });
+
+      expect(await findRecentlyFailedLiveExportRunIdsWithoutWhalesyncNotification(db, new Date())).toContain(runId);
+      await expect(notifier.enqueueNotificationIfRunIsEligible(runId)).resolves.toBe(true);
+
+      const notification = await prisma.whalesyncRunNotification.findUniqueOrThrow({ where: { routineRunId: runId } });
+      // Deliverable, not recorded as given up: the payload is valid with a team and no person.
+      expect(notification.attempts).toBe(0);
+      expect(notification.payload).toMatchObject({ whalesyncTeamId, runId });
+      expect(notification.payload).not.toHaveProperty('whalesyncUserId');
+    } finally {
+      // Deleting the workbook cascades to its runs and their notifications.
+      await prisma.workbook.deleteMany({ where: { id: teamLiveExportWorkbookId } });
+      await prisma.user.deleteMany({ where: { id: teamShadowUserId } });
+      await prisma.organization.deleteMany({ where: { id: teamOrganizationId } });
+    }
+  });
+
   it("deleting a workbook deletes its runs' notifications", async () => {
     const workbookToDeleteId = createWorkbookId();
     await prisma.workbook.create({

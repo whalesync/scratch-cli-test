@@ -127,7 +127,7 @@ export async function findRecentlyFailedLiveExportRunIdsWithoutWhalesyncNotifica
       workbook: {
         managedBy: WorkbookManager.ws_export,
         isPendingDelete: false,
-        user: { whalesyncUserId: { not: null } },
+        user: { OR: [{ whalesyncTeamId: { not: null } }, { whalesyncUserId: { not: null } }] },
       },
       whalesyncRunNotification: { is: null },
     },

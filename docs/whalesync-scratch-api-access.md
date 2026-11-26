@@ -194,6 +194,12 @@ answers each Whalesync user id with that person's team on `POST /internal/whales
 and reported, never forced, when the shadow user already holds another team's Live Exports or the team already has a
 different shadow user.
 
+**A failed Live Export run names its team.** The notification Scratch sends Whalesync carries `whalesyncTeamId`, the
+team of the shadow user that owns the workbook, and Whalesync emails that team. A shadow user from before teams that
+hasn't been given its team yet sends its `whalesyncUserId` instead, and Whalesync works the team out from the person.
+Scratch keeps no record of which person in a team created a Live Export or acted in a session: everything about a
+Live Export belongs to its team.
+
 **A real Scratch account can be a team's shadow user**: one adopted by email before teams, or a shadow user whose
 person signed in to Scratch before it got its team. A session for it reaches that person's own workbooks too, so Scratch mints one only
 for the person it is linked to (`whalesyncUserId`) and answers anyone else in the team with a 409. Before a second

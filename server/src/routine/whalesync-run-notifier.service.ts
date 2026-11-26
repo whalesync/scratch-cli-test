@@ -145,7 +145,7 @@ export class WhalesyncRunNotifierService implements OnModuleInit {
             name: true,
             managedBy: true,
             isPendingDelete: true,
-            user: { select: { whalesyncUserId: true } },
+            user: { select: { whalesyncUserId: true, whalesyncTeamId: true } },
           },
         },
       },
@@ -158,8 +158,11 @@ export class WhalesyncRunNotifierService implements OnModuleInit {
       // just deleted.
       return false;
     }
-    const whalesyncOwnerUserId = run.workbook.user?.whalesyncUserId;
-    if (!whalesyncOwnerUserId) {
+    // The workbook's shadow user holds the Live Exports of one Whalesync team (DEV-13019), which is who Whalesync
+    // tells. One made before teams that hasn't been given its team yet names the person it was made for instead.
+    const whalesyncTeamId = run.workbook.user?.whalesyncTeamId ?? undefined;
+    const whalesyncUserId = run.workbook.user?.whalesyncUserId ?? undefined;
+    if (!whalesyncTeamId && !whalesyncUserId) {
       WSLogger.info({
         source: LOG_SOURCE,
         message: `Not notifying Whalesync about failed Live Export run ${run.id}: its workbook has no Whalesync owner`,
@@ -170,7 +173,8 @@ export class WhalesyncRunNotifierService implements OnModuleInit {
     }
 
     const unvalidatedNotificationPayload = {
-      whalesyncUserId: whalesyncOwnerUserId,
+      ...(whalesyncTeamId ? { whalesyncTeamId } : {}),
+      ...(whalesyncUserId ? { whalesyncUserId } : {}),
       workbookId: run.workbookId,
       workbookName: run.workbook.name ?? UNNAMED_LIVE_EXPORT_DISPLAY_NAME,
       routineFilePath: run.routineFilePath,
