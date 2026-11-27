@@ -265,7 +265,7 @@ describe('Whalesync shadow user per team (DB-backed)', () => {
     const secondMemberSession = await whalesyncInternalService.ensureSessionForWhalesyncTeam(
       whalesyncTeamId,
       'Renamed Team',
-      { status: 'active', whalesyncProductType: 'growth' },
+      { paused: false, recordLimit: null, fastestCadence: 'hourly' },
     );
 
     expect(secondMemberSession.scratchUserId).toBe(firstMemberSession.scratchUserId);
@@ -294,18 +294,84 @@ describe('Whalesync shadow user per team (DB-backed)', () => {
     ).toBe(2);
   });
 
-  it("applies a subscription change to the team's shadow user, and is a no-op for a team with none", async () => {
+  /** The team's one `WHALESYNC_PLAN` row, as stored. */
+  async function storedWhalesyncPlanSubscriptionOfShadowUser(scratchUserId: string) {
+    const shadowUser = await prisma.user.findUniqueOrThrow({ where: { id: scratchUserId } });
+    const subscriptions = await prisma.subscription.findMany({
+      where: { organizationId: shadowUser.organizationId ?? '' },
+    });
+    expect(subscriptions).toHaveLength(1);
+    return subscriptions[0];
+  }
+
+  it("pauses and resumes a team's Live Exports, keeping its plan active, and creates nothing for a team with none", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Team');
+    expect((await storedWhalesyncPlanSubscriptionOfShadowUser(session.scratchUserId)).metadata).toEqual({
+      liveExportsPaused: false,
+    });
+
+    const pausedDailyLiveExportAccess = { paused: true, recordLimit: 1_000_000, fastestCadence: 'daily' as const };
+    await expect(
+      whalesyncInternalService.setLiveExportAccessForWhalesyncTeam(whalesyncTeamId, pausedDailyLiveExportAccess),
+    ).resolves.toEqual({ scratchUserId: session.scratchUserId, updated: true });
+    const pausedRow = await storedWhalesyncPlanSubscriptionOfShadowUser(session.scratchUserId);
+    expect(pausedRow).toMatchObject({
+      stripeStatus: 'active',
+      cancelAt: null,
+      metadata: { liveExportsPaused: true, liveExportRecordCountLimit: 1_000_000, liveExportCadence: 'daily' },
+    });
+    expect(pausedRow.expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
+
+    // A repeat writes nothing.
+    await expect(
+      whalesyncInternalService.setLiveExportAccessForWhalesyncTeam(whalesyncTeamId, pausedDailyLiveExportAccess),
+    ).resolves.toEqual({ scratchUserId: session.scratchUserId, updated: false });
+    expect((await storedWhalesyncPlanSubscriptionOfShadowUser(session.scratchUserId)).updatedAt).toEqual(
+      pausedRow.updatedAt,
+    );
+
+    await expect(
+      whalesyncInternalService.setLiveExportAccessForWhalesyncTeam(whalesyncTeamId, {
+        ...pausedDailyLiveExportAccess,
+        paused: false,
+      }),
+    ).resolves.toEqual({ scratchUserId: session.scratchUserId, updated: true });
+    expect((await storedWhalesyncPlanSubscriptionOfShadowUser(session.scratchUserId)).metadata).toEqual({
+      liveExportsPaused: false,
+      liveExportRecordCountLimit: 1_000_000,
+      liveExportCadence: 'daily',
+    });
+
+    const teamWithNoShadowUser = newWhalesyncTeamId();
+    await expect(
+      whalesyncInternalService.setLiveExportAccessForWhalesyncTeam(teamWithNoShadowUser, pausedDailyLiveExportAccess),
+    ).resolves.toEqual({ scratchUserId: null, updated: false });
+    expect(await prisma.user.count({ where: { whalesyncTeamId: teamWithNoShadowUser } })).toBe(0);
+  });
+
+  it('maps an old subscription change onto the access, never lapsing the plan, and is a no-op for a team with none', async () => {
     const whalesyncTeamId = newWhalesyncTeamId();
     const session = await whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Team');
 
     await expect(
-      whalesyncInternalService.updateWhalesyncSubscription(whalesyncTeamId, { status: 'cancelled' }),
-    ).resolves.toEqual({ scratchUserId: session.scratchUserId, updated: true, planType: null });
-    const shadowUser = await prisma.user.findUniqueOrThrow({ where: { id: session.scratchUserId } });
-    const subscriptions = await prisma.subscription.findMany({
-      where: { organizationId: shadowUser.organizationId ?? '' },
+      whalesyncInternalService.updateWhalesyncSubscription(whalesyncTeamId, {
+        status: 'cancelled',
+        liveExportCadence: 'hourly',
+        expiresAt: '2026-09-02T00:00:00.000Z',
+      }),
+    ).resolves.toEqual({
+      scratchUserId: session.scratchUserId,
+      updated: true,
+      planType: ScratchPlanType.WHALESYNC_PLAN,
     });
-    expect(subscriptions.map((subscription) => subscription.stripeStatus)).toEqual(['canceled']);
+    const pausedRow = await storedWhalesyncPlanSubscriptionOfShadowUser(session.scratchUserId);
+    expect(pausedRow).toMatchObject({
+      stripeStatus: 'active',
+      cancelAt: null,
+      metadata: { liveExportsPaused: true, liveExportCadence: 'hourly' },
+    });
+    expect(pausedRow.expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
 
     await expect(
       whalesyncInternalService.updateWhalesyncSubscription(newWhalesyncTeamId(), { status: 'expired' }),

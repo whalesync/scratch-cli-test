@@ -402,7 +402,7 @@ describe('StripePaymentService', () => {
   });
 
   describe('ensureWhalesyncPlanSubscription', () => {
-    it('creates a $0 Whalesync subscription when the organization has no active subscription', async () => {
+    it('creates a $0 Whalesync row with no Live Export limits when the organization has none and no access is sent', async () => {
       const user = createMockUser({
         id: 'usr_shadow',
         organizationId: 'org_shadow',
@@ -424,6 +424,7 @@ describe('StripePaymentService', () => {
             stripeStatus: 'active',
             cancelAt: null,
             lastInvoicePaid: true,
+            metadata: { liveExportsPaused: false },
           }),
         }),
       );
@@ -443,27 +444,56 @@ describe('StripePaymentService', () => {
       expect(mockAuditLogService.logEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           eventType: 'create',
-          message: expect.stringContaining('Whalesync'),
+          message: 'Subscribed to the Whalesync plan',
           entityId: 'sub_whalesync',
         }),
       );
     });
 
-    it('is a no-op when the organization already has an active subscription (never downgrades a paid plan)', async () => {
-      const futureDate = new Date(Date.now() + 86400000);
+    it('leaves an existing Whalesync row alone when no access is sent, even a lapsed one', async () => {
       const user = createMockUser({
-        id: 'usr_paid',
-        organizationId: 'org_paid',
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
         organization: {
-          id: 'org_paid',
-          subscriptions: [{ id: 'sub_pro', userId: 'usr_paid', expiration: futureDate, stripeStatus: 'active' }],
+          id: 'org_shadow',
+          subscriptions: [
+            {
+              id: 'sub_ws',
+              userId: 'usr_shadow',
+              planType: ScratchPlanType.WHALESYNC_PLAN,
+              expiration: new Date('2026-09-02T00:00:00.000Z'),
+              stripeStatus: 'expired',
+              cancelAt: new Date('2026-09-02T00:00:00.000Z'),
+              metadata: { whalesyncStatus: 'expired' },
+            },
+          ],
         },
       });
 
       await service.ensureWhalesyncPlanSubscription(user);
 
       expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
+      expect(mockDbService.client.subscription.update).not.toHaveBeenCalled();
       expect(mockAuditLogService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('applies the access when one is sent', async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [] },
+      });
+      (mockDbService.client.subscription.create as jest.Mock).mockResolvedValue({ id: 'sub_whalesync' });
+
+      await service.ensureWhalesyncPlanSubscription(user, { paused: true, recordLimit: 0, fastestCadence: 'daily' });
+
+      expect(mockDbService.client.subscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            metadata: { liveExportsPaused: true, liveExportRecordCountLimit: 0, liveExportCadence: 'daily' },
+          }),
+        }),
+      );
     });
 
     it('is a no-op when the user has no organization', async () => {
@@ -473,213 +503,216 @@ describe('StripePaymentService', () => {
 
       expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
     });
+
+    it('never throws, so a failed write can never block a session', async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [] },
+      });
+      (mockDbService.client.subscription.create as jest.Mock).mockRejectedValue(new Error('database down'));
+
+      await expect(service.ensureWhalesyncPlanSubscription(user)).resolves.toBeUndefined();
+    });
   });
 
-  describe('applyWhalesyncSubscriptionState', () => {
+  describe('applyWhalesyncLiveExportAccess', () => {
+    const NOMINAL_EXPIRATION = new Date(new Date().getFullYear() + 100, 0, 1);
+
     const whalesyncSub = (overrides: Record<string, unknown> = {}) => ({
       id: 'sub_ws',
       userId: 'usr_shadow',
       planType: ScratchPlanType.WHALESYNC_PLAN,
-      expiration: new Date(Date.now() + 86400000),
+      expiration: NOMINAL_EXPIRATION,
       stripeStatus: 'active',
+      cancelAt: null,
+      metadata: { liveExportsPaused: false, liveExportRecordCountLimit: 25_000, liveExportCadence: 'hourly' },
       ...overrides,
     });
 
-    it("creates a $0 Whalesync row with metadata when 'active' and none exists", async () => {
-      const user = createMockUser({
+    const shadowUserWith = (subscriptions: unknown[]) =>
+      createMockUser({
         id: 'usr_shadow',
         organizationId: 'org_shadow',
-        organization: { id: 'org_shadow', subscriptions: [] },
+        organization: { id: 'org_shadow', subscriptions },
       });
+
+    const updateCallData = () => {
+      const updateCalls = (mockDbService.client.subscription.update as jest.Mock).mock.calls as Array<
+        [{ where: { id: string }; data: Record<string, unknown> & { expiration: Date } }]
+      >;
+      return updateCalls[0][0];
+    };
+
+    it('creates the row with the access in its metadata when none exists', async () => {
       (mockDbService.client.subscription.create as jest.Mock).mockResolvedValue({ id: 'sub_new' });
 
-      const result = await service.applyWhalesyncSubscriptionState(user, {
-        status: 'active',
-        whalesyncProductType: 'growth',
-        liveExportRecordCountLimit: 5000,
-        liveExportCadence: 'hourly',
+      const result = await service.applyWhalesyncLiveExportAccess(shadowUserWith([]), {
+        paused: true,
+        recordLimit: 1_000_000,
+        fastestCadence: 'daily',
       });
 
-      expect(result).toEqual({ planType: ScratchPlanType.WHALESYNC_PLAN, updated: true });
+      expect(result).toEqual({ updated: true });
       expect(mockDbService.client.subscription.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            planType: ScratchPlanType.WHALESYNC_PLAN,
             stripeSubscriptionId: 'whalesync_org_shadow',
             stripeStatus: 'active',
-            metadata: {
-              whalesyncStatus: 'active',
-              whalesyncProductType: 'growth',
-              liveExportRecordCountLimit: 5000,
-              liveExportCadence: 'hourly',
-            },
+            metadata: { liveExportsPaused: true, liveExportRecordCountLimit: 1_000_000, liveExportCadence: 'daily' },
           }),
         }),
       );
-      expect(mockDbService.client.subscription.update).not.toHaveBeenCalled();
-      expect(mockPostHogService.trackSubscriptionChanged).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: 'usr_shadow' }),
-        ScratchPlanType.FREE_PLAN,
-        ScratchPlanType.WHALESYNC_PLAN,
-      );
-    });
-
-    it("applies the payload's UTC expiry to the Subscription row when provided", async () => {
-      const user = createMockUser({
-        id: 'usr_shadow',
-        organizationId: 'org_shadow',
-        organization: { id: 'org_shadow', subscriptions: [] },
-      });
-      (mockDbService.client.subscription.create as jest.Mock).mockResolvedValue({ id: 'sub_new' });
-      const expiresAt = '2027-01-15T00:00:00.000Z';
-
-      await service.applyWhalesyncSubscriptionState(user, { status: 'active', expiresAt });
-
-      const createCalls = (mockDbService.client.subscription.create as jest.Mock).mock.calls as Array<
-        [{ data: { expiration: Date } }]
-      >;
-      expect(createCalls[0][0].data.expiration.toISOString()).toBe(expiresAt);
-    });
-
-    it('falls back to the nominal ~100-year expiry when no expiry is provided', async () => {
-      const user = createMockUser({
-        id: 'usr_shadow',
-        organizationId: 'org_shadow',
-        organization: { id: 'org_shadow', subscriptions: [] },
-      });
-      (mockDbService.client.subscription.create as jest.Mock).mockResolvedValue({ id: 'sub_new' });
-
-      await service.applyWhalesyncSubscriptionState(user, { status: 'active' });
-
-      const createCalls = (mockDbService.client.subscription.create as jest.Mock).mock.calls as Array<
-        [{ data: { expiration: Date } }]
-      >;
-      expect(createCalls[0][0].data.expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
-    });
-
-    it("refreshes an existing Whalesync row in place (no create) when 'active'", async () => {
-      const user = createMockUser({
-        id: 'usr_shadow',
-        organizationId: 'org_shadow',
-        organization: { id: 'org_shadow', subscriptions: [whalesyncSub({ stripeStatus: 'expired' })] },
-      });
-
-      const result = await service.applyWhalesyncSubscriptionState(user, { status: 'active' });
-
-      expect(result).toEqual({ planType: ScratchPlanType.WHALESYNC_PLAN, updated: true });
-      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
-      expect(mockDbService.client.subscription.update).toHaveBeenCalledWith(
+      expect(mockAuditLogService.logEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'sub_ws' },
-          data: expect.objectContaining({ stripeStatus: 'active', cancelAt: null }),
+          eventType: 'create',
+          message: 'Subscribed to the Whalesync plan, with Live Exports paused',
         }),
       );
     });
 
-    it("soft-updates (keeps) an existing Whalesync row when 'cancelled', mapping to stripeStatus 'canceled'", async () => {
-      const user = createMockUser({
-        id: 'usr_shadow',
-        organizationId: 'org_shadow',
-        organization: { id: 'org_shadow', subscriptions: [whalesyncSub()] },
+    it('writes nothing when the row is active, lasting, and already holds the same access', async () => {
+      const result = await service.applyWhalesyncLiveExportAccess(shadowUserWith([whalesyncSub()]), {
+        paused: false,
+        recordLimit: 25_000,
+        fastestCadence: 'hourly',
       });
 
-      const result = await service.applyWhalesyncSubscriptionState(user, { status: 'cancelled' });
+      expect(result).toEqual({ updated: false });
+      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
+      expect(mockDbService.client.subscription.update).not.toHaveBeenCalled();
+      expect(mockAuditLogService.logEvent).not.toHaveBeenCalled();
+    });
 
-      expect(result).toEqual({ planType: null, updated: true });
-      expect(mockDbService.client.subscription.deleteMany).not.toHaveBeenCalled();
-      expect(mockDbService.client.subscription.update).toHaveBeenCalledWith(
+    it('reads a row written before Live Export access as the same access, so it writes nothing', async () => {
+      const rowFromBeforeLiveExportAccess = whalesyncSub({
+        metadata: {
+          whalesyncStatus: 'active',
+          whalesyncProductType: 'Rt7Nq2',
+          liveExportRecordCountLimit: 25_000,
+          liveExportCadence: 'hourly',
+        },
+      });
+
+      const result = await service.applyWhalesyncLiveExportAccess(shadowUserWith([rowFromBeforeLiveExportAccess]), {
+        paused: false,
+        recordLimit: 25_000,
+        fastestCadence: 'hourly',
+      });
+
+      expect(result).toEqual({ updated: false });
+      expect(mockDbService.client.subscription.update).not.toHaveBeenCalled();
+    });
+
+    it('pauses the team, keeps the row active, and records an audit entry', async () => {
+      const result = await service.applyWhalesyncLiveExportAccess(shadowUserWith([whalesyncSub()]), {
+        paused: true,
+        recordLimit: 25_000,
+        fastestCadence: 'hourly',
+      });
+
+      expect(result).toEqual({ updated: true });
+      const { where, data } = updateCallData();
+      expect(where).toEqual({ id: 'sub_ws' });
+      expect(data).toEqual(
         expect.objectContaining({
-          where: { id: 'sub_ws' },
-          data: expect.objectContaining({ stripeStatus: 'canceled' }),
+          stripeStatus: 'active',
+          cancelAt: null,
+          lastInvoicePaid: true,
+          metadata: { liveExportsPaused: true, liveExportRecordCountLimit: 25_000, liveExportCadence: 'hourly' },
         }),
       );
-      // The row is expired (not deleted) so plan resolution treats it as inactive.
-      const updateCalls = (mockDbService.client.subscription.update as jest.Mock).mock.calls as Array<
-        [{ data: { expiration: Date } }]
-      >;
-      expect(updateCalls[0][0].data.expiration.getTime()).toBeLessThanOrEqual(Date.now() + 1000);
-      expect(mockPostHogService.trackSubscriptionChanged).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: 'usr_shadow' }),
-        ScratchPlanType.WHALESYNC_PLAN,
-        ScratchPlanType.FREE_PLAN,
+      expect(data.expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
+      expect(mockAuditLogService.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'update',
+          message: "Whalesync paused this organization's Live Exports",
+          entityId: 'sub_ws',
+        }),
+      );
+      // A pause isn't a plan change.
+      expect(mockPostHogService.trackSubscriptionChanged).not.toHaveBeenCalled();
+    });
+
+    it('resumes a paused team and records an audit entry', async () => {
+      const pausedRow = whalesyncSub({ metadata: { liveExportsPaused: true, liveExportCadence: 'hourly' } });
+
+      await service.applyWhalesyncLiveExportAccess(shadowUserWith([pausedRow]), {
+        paused: false,
+        recordLimit: null,
+        fastestCadence: 'hourly',
+      });
+
+      expect(updateCallData().data.metadata).toEqual({ liveExportsPaused: false, liveExportCadence: 'hourly' });
+      expect(mockAuditLogService.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "Whalesync resumed this organization's Live Exports" }),
       );
     });
 
-    it("maps 'expired' status to stripeStatus 'expired'", async () => {
-      const user = createMockUser({
-        id: 'usr_shadow',
-        organizationId: 'org_shadow',
-        organization: { id: 'org_shadow', subscriptions: [whalesyncSub()] },
+    it('updates the limits without an audit entry when the pause is unchanged', async () => {
+      await service.applyWhalesyncLiveExportAccess(shadowUserWith([whalesyncSub()]), {
+        paused: false,
+        recordLimit: 1_000_000,
+        fastestCadence: 'daily',
       });
 
-      await service.applyWhalesyncSubscriptionState(user, { status: 'expired' });
+      expect(updateCallData().data.metadata).toEqual({
+        liveExportsPaused: false,
+        liveExportRecordCountLimit: 1_000_000,
+        liveExportCadence: 'daily',
+      });
+      expect(mockAuditLogService.logEvent).not.toHaveBeenCalled();
+    });
 
-      expect(mockDbService.client.subscription.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ stripeStatus: 'expired' }) }),
+    it('brings a row an older Scratch lapsed back to active with the ~100-year expiry', async () => {
+      const lapsedRow = whalesyncSub({
+        stripeStatus: 'expired',
+        expiration: new Date('2026-09-02T00:00:00.000Z'),
+        cancelAt: new Date('2026-09-02T00:00:00.000Z'),
+        metadata: { whalesyncStatus: 'expired', liveExportCadence: 'frequent', liveExportRecordCountLimit: 10_000 },
+      });
+
+      const result = await service.applyWhalesyncLiveExportAccess(shadowUserWith([lapsedRow]), {
+        paused: true,
+        recordLimit: 10_000,
+        fastestCadence: 'frequent',
+      });
+
+      expect(result).toEqual({ updated: true });
+      const { data } = updateCallData();
+      expect(data).toEqual(expect.objectContaining({ stripeStatus: 'active', cancelAt: null }));
+      expect(data.expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
+      expect(mockAuditLogService.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "Whalesync paused this organization's Live Exports" }),
       );
     });
 
-    it('is a no-op for a non-active status when no Whalesync row exists (never creates one)', async () => {
-      const user = createMockUser({
-        id: 'usr_shadow',
-        organizationId: 'org_shadow',
-        organization: { id: 'org_shadow', subscriptions: [] },
+    it("moves a row dated with Whalesync's own expiry out to the ~100-year expiry, even with the same access", async () => {
+      const rowWithWhalesyncExpiry = whalesyncSub({ expiration: new Date(Date.now() + 30 * 86400000) });
+
+      const result = await service.applyWhalesyncLiveExportAccess(shadowUserWith([rowWithWhalesyncExpiry]), {
+        paused: false,
+        recordLimit: 25_000,
+        fastestCadence: 'hourly',
       });
 
-      const result = await service.applyWhalesyncSubscriptionState(user, { status: 'expired' });
-
-      expect(result).toEqual({ planType: null, updated: false });
-      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
-      expect(mockDbService.client.subscription.update).not.toHaveBeenCalled();
+      expect(result).toEqual({ updated: true });
+      expect(updateCallData().data.expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
+      expect(mockAuditLogService.logEvent).not.toHaveBeenCalled();
     });
 
-    it('throws (409) when a real active Stripe subscription exists and throwOnRealSubscriptionConflict is set', async () => {
-      const user = createMockUser({
-        id: 'usr_paid',
-        organizationId: 'org_paid',
-        organization: {
-          id: 'org_paid',
-          subscriptions: [
-            {
-              id: 'sub_pro',
-              userId: 'usr_paid',
-              planType: ScratchPlanType.PRO_PLAN,
-              expiration: new Date(Date.now() + 86400000),
-              stripeStatus: 'active',
-            },
-          ],
-        },
+    it('writes nothing when the user has no organization', async () => {
+      const user = createMockUser({ id: 'usr_noorg', organizationId: null, organization: null });
+
+      const result = await service.applyWhalesyncLiveExportAccess(user, {
+        paused: true,
+        recordLimit: null,
+        fastestCadence: null,
       });
 
-      await expect(
-        service.applyWhalesyncSubscriptionState(user, { status: 'active' }, { throwOnRealSubscriptionConflict: true }),
-      ).rejects.toThrow('active Scratch subscription');
+      expect(result).toEqual({ updated: false });
       expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
       expect(mockDbService.client.subscription.update).not.toHaveBeenCalled();
-    });
-
-    it('is a best-effort no-op (no throw) when a real active Stripe subscription exists and the flag is unset', async () => {
-      const user = createMockUser({
-        id: 'usr_paid',
-        organizationId: 'org_paid',
-        organization: {
-          id: 'org_paid',
-          subscriptions: [
-            {
-              id: 'sub_pro',
-              userId: 'usr_paid',
-              planType: ScratchPlanType.PRO_PLAN,
-              expiration: new Date(Date.now() + 86400000),
-              stripeStatus: 'active',
-            },
-          ],
-        },
-      });
-
-      const result = await service.applyWhalesyncSubscriptionState(user, { status: 'active' });
-
-      expect(result).toEqual({ planType: null, updated: false });
-      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
     });
   });
 

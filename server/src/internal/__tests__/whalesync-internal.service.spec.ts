@@ -1,5 +1,5 @@
 import { ConflictException } from '@nestjs/common';
-import { WorkbookId, WorkbookManager } from '@spinner/shared-types';
+import { ScratchPlanType, WhalesyncLiveExportAccess, WorkbookId, WorkbookManager } from '@spinner/shared-types';
 import { UserCluster, WorkbookCluster } from 'src/db/cluster-types';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { UsersService } from 'src/users/users.service';
@@ -20,7 +20,7 @@ describe('WhalesyncInternalService', () => {
       | 'deleteShadowUserAndOrganization'
     >
   >;
-  let mockStripePaymentService: jest.Mocked<Pick<StripePaymentService, 'applyWhalesyncSubscriptionState'>>;
+  let mockStripePaymentService: jest.Mocked<Pick<StripePaymentService, 'applyWhalesyncLiveExportAccess'>>;
   let mockWorkbookService: jest.Mocked<
     Pick<WorkbookService, 'findAllForUser' | 'findIdsOfAllWorkbooksOwnedByOrganization' | 'executeHardDeleteWorkbook'>
   >;
@@ -41,7 +41,7 @@ describe('WhalesyncInternalService', () => {
       deleteShadowUserAndOrganization: jest.fn(),
     };
     mockStripePaymentService = {
-      applyWhalesyncSubscriptionState: jest.fn(),
+      applyWhalesyncLiveExportAccess: jest.fn(),
     };
     mockWorkbookService = {
       findAllForUser: jest.fn(),
@@ -55,19 +55,67 @@ describe('WhalesyncInternalService', () => {
     );
   });
 
+  const pausedDailyLiveExportAccess: WhalesyncLiveExportAccess = {
+    paused: true,
+    recordLimit: 1_000_000,
+    fastestCadence: 'daily',
+  };
+
   describe('ensureSessionForWhalesyncTeam', () => {
-    it("mints a session token for the team's shadow user", async () => {
+    it("applies the session's Live Export access and mints a session token for the team's shadow user", async () => {
       const expiresAt = new Date('2026-11-27T00:10:00.000Z');
       mockUsersService.getOrCreateShadowUserForWhalesyncTeam.mockResolvedValue(pureTeamShadowUser);
       mockUsersService.mintWhalesyncSessionToken.mockResolvedValue({ token: 'session-token', expiresAt });
 
-      const result = await service.ensureSessionForWhalesyncTeam(TEAM_ID, 'Acme', { status: 'active' });
+      const result = await service.ensureSessionForWhalesyncTeam(TEAM_ID, 'Acme', pausedDailyLiveExportAccess);
 
-      expect(mockUsersService.getOrCreateShadowUserForWhalesyncTeam).toHaveBeenCalledWith(TEAM_ID, 'Acme', {
-        status: 'active',
-      });
+      expect(mockUsersService.getOrCreateShadowUserForWhalesyncTeam).toHaveBeenCalledWith(
+        TEAM_ID,
+        'Acme',
+        pausedDailyLiveExportAccess,
+      );
       expect(mockUsersService.mintWhalesyncSessionToken).toHaveBeenCalledWith('usr_shadow');
       expect(result).toEqual({ scratchUserId: 'usr_shadow', apiToken: 'session-token', expiresAt });
+    });
+
+    it('maps the old subscription payload onto an access when the session carries no access', async () => {
+      mockUsersService.getOrCreateShadowUserForWhalesyncTeam.mockResolvedValue(pureTeamShadowUser);
+      mockUsersService.mintWhalesyncSessionToken.mockResolvedValue({ token: 'session-token', expiresAt: new Date() });
+
+      await service.ensureSessionForWhalesyncTeam(TEAM_ID, 'Acme', undefined, {
+        status: 'expired',
+        liveExportRecordCountLimit: 10_000,
+        liveExportCadence: 'frequent',
+        expiresAt: '2026-09-02T00:00:00.000Z',
+      });
+
+      expect(mockUsersService.getOrCreateShadowUserForWhalesyncTeam).toHaveBeenCalledWith(TEAM_ID, 'Acme', {
+        paused: true,
+        recordLimit: 10_000,
+        fastestCadence: 'frequent',
+      });
+    });
+
+    it('prefers the access to the old payload when the session carries both', async () => {
+      mockUsersService.getOrCreateShadowUserForWhalesyncTeam.mockResolvedValue(pureTeamShadowUser);
+      mockUsersService.mintWhalesyncSessionToken.mockResolvedValue({ token: 'session-token', expiresAt: new Date() });
+
+      await service.ensureSessionForWhalesyncTeam(TEAM_ID, 'Acme', pausedDailyLiveExportAccess, { status: 'active' });
+
+      expect(mockUsersService.getOrCreateShadowUserForWhalesyncTeam).toHaveBeenCalledWith(
+        TEAM_ID,
+        'Acme',
+        pausedDailyLiveExportAccess,
+      );
+    });
+
+    it('passes no access when the session carries neither', async () => {
+      mockUsersService.getOrCreateShadowUserForWhalesyncTeam.mockResolvedValue(pureTeamShadowUser);
+      mockUsersService.mintWhalesyncSessionToken.mockResolvedValue({ token: 'session-token', expiresAt: new Date() });
+
+      await service.ensureSessionForWhalesyncTeam(TEAM_ID, 'Acme');
+
+      expect(mockUsersService.getOrCreateShadowUserForWhalesyncTeam).toHaveBeenCalledWith(TEAM_ID, 'Acme', undefined);
     });
 
     it('mints nothing when the shadow user is refused', async () => {
@@ -75,6 +123,40 @@ describe('WhalesyncInternalService', () => {
 
       await expect(service.ensureSessionForWhalesyncTeam(TEAM_ID)).rejects.toBeInstanceOf(ConflictException);
       expect(mockUsersService.mintWhalesyncSessionToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setLiveExportAccessForWhalesyncTeam', () => {
+    it('is an idempotent no-op that creates nothing when the team has no shadow user', async () => {
+      mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(null);
+
+      const result = await service.setLiveExportAccessForWhalesyncTeam(TEAM_ID, pausedDailyLiveExportAccess);
+
+      expect(mockUsersService.findShadowUserForWhalesyncTeam).toHaveBeenCalledWith(TEAM_ID, 'live-export-access');
+      expect(result).toEqual({ scratchUserId: null, updated: false });
+      expect(mockStripePaymentService.applyWhalesyncLiveExportAccess).not.toHaveBeenCalled();
+    });
+
+    it("applies the access to the team's shadow user and reports whether anything changed", async () => {
+      mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(pureTeamShadowUser);
+      mockStripePaymentService.applyWhalesyncLiveExportAccess.mockResolvedValue({ updated: true });
+
+      const result = await service.setLiveExportAccessForWhalesyncTeam(TEAM_ID, pausedDailyLiveExportAccess);
+
+      expect(mockStripePaymentService.applyWhalesyncLiveExportAccess).toHaveBeenCalledWith(
+        pureTeamShadowUser,
+        pausedDailyLiveExportAccess,
+      );
+      expect(result).toEqual({ scratchUserId: 'usr_shadow', updated: true });
+    });
+
+    it('lets the refusal of a user that is not a pure shadow user through', async () => {
+      mockUsersService.findShadowUserForWhalesyncTeam.mockRejectedValue(new ConflictException('real account'));
+
+      await expect(
+        service.setLiveExportAccessForWhalesyncTeam(TEAM_ID, pausedDailyLiveExportAccess),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(mockStripePaymentService.applyWhalesyncLiveExportAccess).not.toHaveBeenCalled();
     });
   });
 
@@ -86,30 +168,45 @@ describe('WhalesyncInternalService', () => {
 
       expect(mockUsersService.findShadowUserForWhalesyncTeam).toHaveBeenCalledWith(TEAM_ID, 'subscription');
       expect(result).toEqual({ scratchUserId: null, updated: false, planType: null });
-      expect(mockStripePaymentService.applyWhalesyncSubscriptionState).not.toHaveBeenCalled();
+      expect(mockStripePaymentService.applyWhalesyncLiveExportAccess).not.toHaveBeenCalled();
     });
 
-    it('delegates to the payment service with the 409-on-real-sub flag and returns the result', async () => {
+    it.each([
+      ['active', false],
+      ['cancelled', true],
+      ['expired', true],
+      ['none', true],
+    ] as const)("maps status '%s' onto an access that is paused: %s", async (status, paused) => {
       mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(pureTeamShadowUser);
-      mockStripePaymentService.applyWhalesyncSubscriptionState.mockResolvedValue({ planType: null, updated: true });
+      mockStripePaymentService.applyWhalesyncLiveExportAccess.mockResolvedValue({ updated: true });
 
-      const result = await service.updateWhalesyncSubscription(TEAM_ID, { status: 'cancelled' });
+      const result = await service.updateWhalesyncSubscription(TEAM_ID, {
+        status,
+        whalesyncProductType: 'Hs4Kp9',
+        liveExportRecordCountLimit: 10_000,
+        liveExportCadence: 'daily',
+        expiresAt: '2026-12-25T00:00:00.000Z',
+      });
 
-      expect(mockStripePaymentService.applyWhalesyncSubscriptionState).toHaveBeenCalledWith(
-        pureTeamShadowUser,
-        { status: 'cancelled' },
-        { throwOnRealSubscriptionConflict: true },
-      );
-      expect(result).toEqual({ scratchUserId: 'usr_shadow', updated: true, planType: null });
+      expect(mockStripePaymentService.applyWhalesyncLiveExportAccess).toHaveBeenCalledWith(pureTeamShadowUser, {
+        paused,
+        recordLimit: 10_000,
+        fastestCadence: 'daily',
+      });
+      expect(result).toEqual({ scratchUserId: 'usr_shadow', updated: true, planType: ScratchPlanType.WHALESYNC_PLAN });
     });
 
-    it('propagates the ConflictException when the user has a real Scratch subscription', async () => {
+    it('maps a payload with no limits onto an access with none', async () => {
       mockUsersService.findShadowUserForWhalesyncTeam.mockResolvedValue(pureTeamShadowUser);
-      mockStripePaymentService.applyWhalesyncSubscriptionState.mockRejectedValue(new ConflictException('nope'));
+      mockStripePaymentService.applyWhalesyncLiveExportAccess.mockResolvedValue({ updated: false });
 
-      await expect(service.updateWhalesyncSubscription(TEAM_ID, { status: 'active' })).rejects.toBeInstanceOf(
-        ConflictException,
-      );
+      await service.updateWhalesyncSubscription(TEAM_ID, { status: 'active' });
+
+      expect(mockStripePaymentService.applyWhalesyncLiveExportAccess).toHaveBeenCalledWith(pureTeamShadowUser, {
+        paused: false,
+        recordLimit: null,
+        fastestCadence: null,
+      });
     });
   });
 

@@ -8,7 +8,7 @@ import {
   ScratchPlanType,
   TokenType,
   UpdateSettingsDto,
-  WhalesyncSubscriptionPayload,
+  WhalesyncLiveExportAccess,
   WorkbookId,
 } from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -311,12 +311,12 @@ export class UsersService {
   /**
    * Ensures the shadow user that holds a Whalesync team's Live Exports exists (DEV-13019), AND that its organization
    * is on the internal Whalesync plan. Idempotent on `whalesyncTeamId`. The plan is applied via
-   * `StripePaymentService.ensureWhalesyncPlanSubscription` (itself idempotent and best-effort: existing Free shadow
-   * users are self-healed onto the plan, and existing paid subscribers are left untouched).
+   * `StripePaymentService.ensureWhalesyncPlanSubscription` (itself idempotent and best-effort: a shadow user without the
+   * plan is self-healed onto it).
    *
-   * The optional `subscription` payload drives whether the plan is granted or revoked and records the
-   * Whalesync-side subscription shape; when omitted it defaults to `{ status: 'active' }`, preserving the
-   * historical auto-subscribe behavior.
+   * The optional `liveExportAccess` is the team's Live Export access, which Whalesync works out from the team's plan
+   * (DEV-12983). When it is omitted, an existing plan is left alone, and a new one lets the team's Live Exports run with
+   * no limits.
    *
    * The shadow user is found by team, or created fresh: a pure shadow user with a synthetic `ws_<whalesyncTeamId>`
    * clerkId, `name` as its label, and no email. A team has no email of its own, so its shadow user is never matched to
@@ -326,10 +326,10 @@ export class UsersService {
   public async getOrCreateShadowUserForWhalesyncTeam(
     whalesyncTeamId: string,
     name?: string,
-    subscription?: WhalesyncSubscriptionPayload,
+    liveExportAccess?: WhalesyncLiveExportAccess,
   ): Promise<UserCluster.User> {
     const shadowUser = await this.resolveShadowUserForWhalesyncTeam(whalesyncTeamId, name);
-    await this.stripePaymentService.ensureWhalesyncPlanSubscription(shadowUser, subscription);
+    await this.stripePaymentService.ensureWhalesyncPlanSubscription(shadowUser, liveExportAccess);
     return shadowUser;
   }
 

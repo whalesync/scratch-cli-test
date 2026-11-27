@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Prisma, User } from '@prisma/client';
 import {
   BillingInterval,
@@ -8,9 +8,7 @@ import {
   isBillingInterval,
   ScratchPlanType,
   SubscriptionId,
-  WhalesyncSubscriptionMetadata,
-  WhalesyncSubscriptionPayload,
-  WhalesyncSubscriptionStatus,
+  WhalesyncLiveExportAccess,
 } from '@spinner/shared-types';
 import _ from 'lodash';
 import { AuditLogService } from 'src/audit/audit-log.service';
@@ -20,6 +18,12 @@ import { DbService } from 'src/db/db.service';
 import { EmailService } from 'src/email/email.service';
 import { ExperimentsService } from 'src/experiments/experiments.service';
 import { SystemFeatureFlag } from 'src/experiments/flags';
+import {
+  buildWhalesyncPlanMetadataForLiveExportAccess,
+  isSameLiveExportAccess,
+  LIVE_EXPORT_ACCESS_WITH_NO_LIMITS,
+  readLiveExportAccessFromWhalesyncPlanMetadata,
+} from 'src/live-export-access/live-export-access-rules';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { SlackFormatters } from 'src/slack/slack-formatters';
@@ -53,48 +57,27 @@ import {
 const STRIPE_API_VERSION = '2025-08-27.basil';
 // Length, in days, of trials created by `createTrialSubscription` (and the dead checkout-trial branch).
 const TRIAL_PERIOD_DAYS = 14;
-// Expiry, in years, of the internal Whalesync plan. Effectively permanent — the subscription is torn
-// down when the shadow user is deprovisioned, not when it "expires".
+// Expiry, in years, of the internal Whalesync plan. Effectively permanent: Whalesync pauses a team's Live Exports
+// instead of letting the plan lapse (DEV-12983), and the row goes when the shadow user is deprovisioned.
 const WHALESYNC_PLAN_EXPIRATION_YEARS = 100;
+// A Whalesync plan row that expires sooner than this was lapsed, or given Whalesync's own expiry, by a Scratch from
+// before DEV-12983 MR 3.1. Applying a Live Export access moves its expiry back out.
+const WHALESYNC_PLAN_LEAST_REMAINING_YEARS = 10;
 
-// Maps the Whalesync-side subscription status onto the value stored in `Subscription.stripeStatus`. The
-// British `cancelled` becomes Stripe's American `canceled`, and `none` (no entitlement) is likewise treated
-// as canceled — so both land in the set the enforcement cron and `getActiveSubscriptions` recognize.
-const WHALESYNC_STATUS_TO_STRIPE_STATUS: Record<WhalesyncSubscriptionStatus, string> = {
-  active: 'active',
-  cancelled: 'canceled',
-  expired: 'expired',
-  none: 'canceled',
-};
-
-/**
- * Resolve the `expiration` for an active Whalesync-plan row: Whalesync's own UTC expiry when it supplied
- * one (so the plan genuinely lapses on their schedule), otherwise the nominal far-future expiry that keeps
- * the internal plan effectively permanent until the shadow user is deprovisioned.
- */
-function resolveWhalesyncPlanExpiration(subscription: WhalesyncSubscriptionPayload): Date {
-  if (subscription.expiresAt) {
-    return new Date(subscription.expiresAt);
-  }
-  const expiration = new Date();
-  expiration.setFullYear(expiration.getFullYear() + WHALESYNC_PLAN_EXPIRATION_YEARS);
-  return expiration;
+function addYearsToDate(date: Date, years: number): Date {
+  const laterDate = new Date(date);
+  laterDate.setFullYear(laterDate.getFullYear() + years);
+  return laterDate;
 }
 
-/**
- * Build the typed {@link WhalesyncSubscriptionMetadata} JSON blob stored in `Subscription.metadata` from a
- * Whalesync payload, dropping `undefined` keys so the persisted JSON stays clean.
- */
-function buildWhalesyncSubscriptionMetadata(subscription: WhalesyncSubscriptionPayload): Prisma.InputJsonValue {
-  const metadata: WhalesyncSubscriptionMetadata = {
-    whalesyncStatus: subscription.status,
-    whalesyncProductType: subscription.whalesyncProductType,
-    liveExportRecordCountLimit: subscription.liveExportRecordCountLimit,
-    liveExportCadence: subscription.liveExportCadence,
-  };
-  return Object.fromEntries(
-    Object.entries(metadata).filter(([, value]) => value !== undefined),
-  ) as Prisma.InputJsonValue;
+/** An organization's one `WHALESYNC_PLAN` row (`whalesync_<organizationId>`), if it has one. */
+function findWhalesyncPlanSubscription<TSubscription extends { planType: string }>(
+  organizationSubscriptions: TSubscription[],
+): TSubscription | undefined {
+  return organizationSubscriptions.find(
+    (organizationSubscription) =>
+      getPlanTypeFromString(organizationSubscription.planType) === ScratchPlanType.WHALESYNC_PLAN,
+  );
 }
 
 // DEV-10573 trial reminder emails.
@@ -279,27 +262,28 @@ export class StripePaymentService {
   }
 
   /**
-   * Ensures a Whalesync shadow user's organization is on the internal Whalesync plan. Idempotent and
-   * non-destructive: if the organization already has any active subscription it returns untouched — this
-   * both makes re-provisioning a no-op (the shadow user reappears on each ~10-minute session) and avoids
-   * ever downgrading a real paid (Pro/Max) subscriber to the $0 plan. Existing Free shadow users are
-   * "self-healed" onto the plan the next time they appear, so no data migration is needed.
+   * Ensures a Whalesync team's shadow user's organization is on the internal Whalesync plan, and applies the team's
+   * Live Export access when one is given. Called on every session (DEV-13019, DEV-12983).
    *
-   * Unlike `createTrialSubscription`, this never talks to Stripe: the Whalesync plan has no Stripe
-   * product/price and shadow users never go through checkout, so the row carries a deterministic
-   * synthetic `stripeSubscriptionId` (`whalesync_<organizationId>`). The deterministic id means a
-   * concurrent or repeated insert collides on the `@unique` constraint instead of creating a duplicate,
-   * so there is at most one Whalesync subscription per organization.
+   * - With `liveExportAccess`, applies it (see {@link applyWhalesyncLiveExportAccess}).
+   * - Without, leaves an existing Whalesync plan row alone, and gives an organization that has none the plan with no
+   *   Live Export limits. A team is paused only once Whalesync says so.
    *
-   * Best-effort: any failure is logged and swallowed so it can never block shadow-user provisioning —
-   * the same stance `UsersService.maybeStartProTrialForNewUser` takes for the native Pro trial.
+   * Best-effort: any failure is logged and swallowed so it can never block a session, the same stance
+   * `UsersService.maybeStartProTrialForNewUser` takes for the native Pro trial.
    */
   async ensureWhalesyncPlanSubscription(
     user: UserCluster.User,
-    subscription: WhalesyncSubscriptionPayload = { status: 'active' },
+    liveExportAccess?: WhalesyncLiveExportAccess,
   ): Promise<void> {
     try {
-      await this.applyWhalesyncSubscriptionState(user, subscription);
+      if (liveExportAccess !== undefined) {
+        await this.applyWhalesyncLiveExportAccess(user, liveExportAccess);
+        return;
+      }
+      if (!findWhalesyncPlanSubscription(user.organization?.subscriptions ?? [])) {
+        await this.applyWhalesyncLiveExportAccess(user, LIVE_EXPORT_ACCESS_WITH_NO_LIMITS);
+      }
     } catch (err) {
       WSLogger.error({
         source: StripePaymentService.name,
@@ -310,68 +294,39 @@ export class StripePaymentService {
   }
 
   /**
-   * Apply a Whalesync subscription state to a shadow user's organization — the single core operation both
-   * the sessions endpoint (through {@link ensureWhalesyncPlanSubscription}) and the
-   * `PATCH /internal/whalesync/subscription` endpoint funnel through. Never talks to Stripe.
+   * Applies a Whalesync team's Live Export access to its shadow user's organization (DEV-12983). Whalesync decides
+   * whether the team's Live Exports are paused, how many records they may hold, and how fast they may run on a
+   * schedule, and Scratch keeps that in the metadata of the organization's one `WHALESYNC_PLAN` row, where
+   * `LiveExportAccessService` reads it. Never talks to Stripe.
    *
-   * - `status: 'active'` grants the plan: creates the deterministic `whalesync_<orgId>` row if it is missing
-   *   (idempotent — a repeated/concurrent insert collides on the `@unique` id), or refreshes an existing one
-   *   (status / metadata / expiration). The expiration is Whalesync's own UTC `expiresAt` when it supplied
-   *   one, else the nominal far-future date — see {@link resolveWhalesyncPlanExpiration}.
-   * - any other status (`cancelled` / `expired` / `none`) revokes it. An existing Whalesync row is
-   *   **soft-updated, not deleted**, so re-subscribe simply flips it back to active and the enforcement cron
-   *   can still find it via `stripeStatus` + `updatedAt`. Its `expiration` is moved to now because the plan
-   *   is $0 / 100-year and {@link getActiveSubscriptions} only excludes `'canceled'` — without expiring the
-   *   row an `expired` (or `past_due`) status would still read as active in plan resolution. If no Whalesync
-   *   row exists, revoking is a no-op (a row is never created for a non-active status).
+   * - With no row, creates one: active, with the nominal ~100-year expiry and the deterministic
+   *   `whalesync_<organizationId>` id, so a repeated or concurrent create collides on the `@unique` id instead of
+   *   adding a second row.
+   * - Otherwise keeps the row active with that expiry, whatever an older Scratch wrote. So Scratch's own subscription
+   *   rules (the enforcement cron, the data source limit) never act on a shadow organization, and building a Live
+   *   Export is never refused.
+   * - Writes nothing when the row is already active and holds the same access, so a repeat changes nothing.
+   * - Records an audit entry when the pause changes.
    *
-   * A real, active Scratch Stripe subscription (paid Pro/Max) is never downgraded: when one exists this
-   * throws {@link ConflictException} (→ 409) if `opts.throwOnRealSubscriptionConflict` — the PATCH contract —
-   * and otherwise returns without changes (the best-effort provisioning path via `ensure…`).
+   * Only a pure shadow user reaches this (`assertIsPureWhalesyncShadowUser`), and one can't buy a Scratch plan, so
+   * there is no paid Scratch subscription to protect.
    */
-  async applyWhalesyncSubscriptionState(
+  async applyWhalesyncLiveExportAccess(
     user: UserCluster.User,
-    subscription: WhalesyncSubscriptionPayload,
-    opts: { throwOnRealSubscriptionConflict?: boolean } = {},
-  ): Promise<{ planType: ScratchPlanType | null; updated: boolean }> {
+    liveExportAccess: WhalesyncLiveExportAccess,
+  ): Promise<{ updated: boolean }> {
     if (!user.organizationId) {
-      return { planType: null, updated: false };
+      return { updated: false };
     }
 
-    const subscriptions = user.organization?.subscriptions ?? [];
+    const now = new Date();
+    const nominalWhalesyncPlanExpiration = addYearsToDate(now, WHALESYNC_PLAN_EXPIRATION_YEARS);
+    const metadataForLiveExportAccess = buildWhalesyncPlanMetadataForLiveExportAccess(
+      liveExportAccess,
+    ) as Prisma.InputJsonValue;
+    const existingWhalesyncSubscription = findWhalesyncPlanSubscription(user.organization?.subscriptions ?? []);
 
-    // A real, active Scratch Stripe subscription (paid Pro/Max) must never be touched.
-    const activeRealStripeSubscriptions = getActiveSubscriptions(subscriptions).filter(
-      (existingSubscription) => getPlanTypeFromString(existingSubscription.planType) !== ScratchPlanType.WHALESYNC_PLAN,
-    );
-    if (activeRealStripeSubscriptions.length > 0) {
-      if (opts.throwOnRealSubscriptionConflict) {
-        throw new ConflictException('User has an active Scratch subscription; refusing to change the Whalesync plan.');
-      }
-      return { planType: null, updated: false };
-    }
-
-    const existingWhalesyncSubscription = subscriptions.find(
-      (existingSubscription) => getPlanTypeFromString(existingSubscription.planType) === ScratchPlanType.WHALESYNC_PLAN,
-    );
-    const metadata = buildWhalesyncSubscriptionMetadata(subscription);
-
-    if (subscription.status === 'active') {
-      const expiration = resolveWhalesyncPlanExpiration(subscription);
-
-      if (existingWhalesyncSubscription) {
-        // Refresh an existing (possibly lapsed) Whalesync row back to active in place.
-        await this.dbService.client.subscription.update({
-          where: { id: existingWhalesyncSubscription.id },
-          data: { stripeStatus: 'active', metadata, expiration, cancelAt: null, lastInvoicePaid: true },
-        });
-        WSLogger.info({
-          source: StripePaymentService.name,
-          message: `Refreshed active Whalesync plan for user ${user.id}`,
-        });
-        return { planType: ScratchPlanType.WHALESYNC_PLAN, updated: true };
-      }
-
+    if (!existingWhalesyncSubscription) {
       const createdSubscription = await this.dbService.client.subscription.create({
         data: {
           id: createSubscriptionId(),
@@ -381,14 +336,14 @@ export class StripePaymentService {
           // The Whalesync plan never touches Stripe; this id is synthetic and deterministic so a repeated
           // or concurrent create collides on the @unique constraint rather than inserting a duplicate.
           stripeSubscriptionId: `whalesync_${user.organizationId}`,
-          expiration,
+          expiration: nominalWhalesyncPlanExpiration,
           priceInDollars: 0,
           // Never billed, so the interval is nominal — it only keeps the column honest for the UI.
           billingInterval: DEFAULT_BILLING_INTERVAL,
           stripeStatus: 'active',
           cancelAt: null,
           lastInvoicePaid: true,
-          metadata,
+          metadata: metadataForLiveExportAccess,
         },
       });
 
@@ -400,51 +355,60 @@ export class StripePaymentService {
       await this.auditLogService.logEvent({
         actor: userToActor(user),
         eventType: 'create',
-        message: 'Subscribed to the Whalesync plan',
+        message: liveExportAccess.paused
+          ? 'Subscribed to the Whalesync plan, with Live Exports paused'
+          : 'Subscribed to the Whalesync plan',
         entityId: createdSubscription.id as SubscriptionId,
       });
 
       WSLogger.info({
         source: StripePaymentService.name,
         message: `Assigned Whalesync plan to user ${user.id}`,
+        liveExportAccess,
       });
-      return { planType: ScratchPlanType.WHALESYNC_PLAN, updated: true };
+      return { updated: true };
     }
 
-    // Non-active status: revoke. Keep an existing row (soft-update); never create one.
-    if (!existingWhalesyncSubscription) {
-      return { planType: null, updated: false };
+    const storedLiveExportAccess = readLiveExportAccessFromWhalesyncPlanMetadata(
+      existingWhalesyncSubscription.metadata,
+    );
+    const whalesyncPlanRowIsLastingAndActive =
+      existingWhalesyncSubscription.stripeStatus === 'active' &&
+      existingWhalesyncSubscription.cancelAt === null &&
+      existingWhalesyncSubscription.expiration > addYearsToDate(now, WHALESYNC_PLAN_LEAST_REMAINING_YEARS);
+    if (whalesyncPlanRowIsLastingAndActive && isSameLiveExportAccess(storedLiveExportAccess, liveExportAccess)) {
+      return { updated: false };
     }
 
     await this.dbService.client.subscription.update({
       where: { id: existingWhalesyncSubscription.id },
       data: {
-        stripeStatus: WHALESYNC_STATUS_TO_STRIPE_STATUS[subscription.status],
-        metadata,
-        // Expire the row so plan resolution treats it as inactive (getActiveSubscriptions only excludes
-        // 'canceled'); the row itself is kept for re-subscribe + enforcement-cron detection.
-        expiration: new Date(),
-        cancelAt: new Date(),
+        stripeStatus: 'active',
+        metadata: metadataForLiveExportAccess,
+        expiration: nominalWhalesyncPlanExpiration,
+        cancelAt: null,
+        lastInvoicePaid: true,
       },
     });
 
-    this.postHogService.trackSubscriptionChanged(
-      userToActor(user),
-      ScratchPlanType.WHALESYNC_PLAN,
-      ScratchPlanType.FREE_PLAN,
-    );
-    await this.auditLogService.logEvent({
-      actor: userToActor(user),
-      eventType: 'update',
-      message: 'Whalesync plan subscription marked inactive',
-      entityId: existingWhalesyncSubscription.id as SubscriptionId,
-    });
+    if (storedLiveExportAccess.paused !== liveExportAccess.paused) {
+      await this.auditLogService.logEvent({
+        actor: userToActor(user),
+        eventType: 'update',
+        message: liveExportAccess.paused
+          ? "Whalesync paused this organization's Live Exports"
+          : "Whalesync resumed this organization's Live Exports",
+        entityId: existingWhalesyncSubscription.id as SubscriptionId,
+      });
+    }
 
     WSLogger.info({
       source: StripePaymentService.name,
-      message: `Marked Whalesync plan inactive (${subscription.status}) for user ${user.id}`,
+      message: `Applied the Whalesync Live Export access for user ${user.id}`,
+      storedLiveExportAccess,
+      liveExportAccess,
     });
-    return { planType: null, updated: true };
+    return { updated: true };
   }
 
   async createCustomerPortalUrl(user: UserCluster.User, dto: CreatePortalDto): AsyncResult<string> {

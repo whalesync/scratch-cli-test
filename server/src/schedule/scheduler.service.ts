@@ -3,6 +3,10 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { Schedule } from '@prisma/client';
 import { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
+import {
+  LiveExportPausedException,
+  LiveExportScheduledRunSoonerThanFastestCadenceError,
+} from 'src/live-export-access/live-export-access.errors';
 import { WSLogger } from 'src/logger';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { RoutineExecutorService } from 'src/routine/routine-executor.service';
@@ -326,6 +330,7 @@ export class SchedulerService {
    * Handle a due ROUTINE schedule: claim it (advancing `nextRunAt` so a failed trigger doesn't
    * retry every 10s), then trigger a schedule-driven run. Returns whether a run was triggered. A
    * 409 (routine already running) or 404 (file deleted) is logged and treated as "not triggered".
+   * So is a Live Export the team's access holds back, logged at info since nothing went wrong.
    */
   private async evaluateRoutineSchedule(schedule: Schedule): Promise<boolean> {
     const nextRunAt = this.scheduleService.computeNextRunAt(schedule.cronExpression, schedule.timezone);
@@ -335,9 +340,29 @@ export class SchedulerService {
     }
 
     try {
-      await this.routineExecutorService.triggerRun(schedule.workbookId as WorkbookId, schedule.entityId, 'schedule');
+      await this.routineExecutorService.triggerRun(
+        schedule.workbookId as WorkbookId,
+        schedule.entityId,
+        'schedule',
+        undefined,
+        { schedule },
+      );
       return true;
     } catch (error) {
+      // A Live Export the team's access holds back is expected, not a fault: the schedule stays on, and its runs
+      // resume once Whalesync unpauses the team, or once enough time has passed for its speed (DEV-12983).
+      if (
+        error instanceof LiveExportPausedException ||
+        error instanceof LiveExportScheduledRunSoonerThanFastestCadenceError
+      ) {
+        WSLogger.info({
+          source: 'SchedulerService.evaluateRoutineSchedule',
+          message: `Skipped ROUTINE schedule ${schedule.id} (${schedule.entityId}): ${error.message}`,
+          organizationId: schedule.organizationId,
+          workbookId: schedule.workbookId,
+        });
+        return false;
+      }
       WSLogger.warn({
         source: 'SchedulerService.evaluateRoutineSchedule',
         message: `Did not trigger ROUTINE schedule ${schedule.id} (${schedule.entityId}): ${

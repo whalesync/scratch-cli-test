@@ -1,0 +1,33 @@
+meta {
+  name: Set Live Export Access
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/internal/whalesync/teams/tm_abc123def456/live-export-access
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "paused": false,
+    "recordLimit": 1000000,
+    "fastestCadence": "daily"
+  }
+}
+
+docs {
+  Set the team's Live Export access (DEV-12983): whether its Live Exports are paused, how
+  many records they may hold, and how fast they may run on a schedule. `null` means no
+  limit. Pausing refuses every run and leaves schedules as they are; sending
+  `paused: false` resumes them. Returns { scratchUserId, updated }: `updated` is false for
+  a repeat, and { scratchUserId: null, updated: false } when the team has no shadow user
+  (nothing is created). Returns 409 when the user holding the team id is a real Scratch
+  account.
+}

@@ -1,7 +1,7 @@
 meta {
   name: Update Subscription
   type: http
-  seq: 2
+  seq: 3
 }
 
 patch {
@@ -25,9 +25,10 @@ body:json {
 }
 
 docs {
-  Apply a Whalesync plan change to the team's shadow user. Returns
+  The old way to set the team's Live Export access, until every Whalesync environment
+  sends Set Live Export Access: the payload is mapped onto an access (paused unless
+  `status` is `active`), and the plan never lapses. Returns
   { scratchUserId, updated, planType }, or { scratchUserId: null, updated: false,
-  planType: null } when the team has no shadow user. Returns 409 when the organization
-  pays for Scratch directly (a real Stripe subscription), or when the user holding the
+  planType: null } when the team has no shadow user. Returns 409 when the user holding the
   team id is a real Scratch account.
 }

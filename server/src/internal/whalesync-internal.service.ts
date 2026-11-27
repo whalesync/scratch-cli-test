@@ -1,12 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import {
+  ScratchPlanType,
   WhalesyncListLiveExportsResponse,
+  WhalesyncLiveExportAccess,
+  WhalesyncSetLiveExportAccessResponse,
   WhalesyncSubscriptionPayload,
   WhalesyncUpdateSubscriptionResponse,
   WorkbookId,
   WorkbookManager,
 } from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
+import { liveExportAccessFromWhalesyncSubscriptionPayload } from 'src/live-export-access/live-export-access-rules';
 import { WSLogger } from 'src/logger';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { assertIsPureWhalesyncShadowUser, userToActor } from 'src/users/types';
@@ -18,7 +22,7 @@ const LOG_SOURCE = 'WhalesyncInternalService';
 /**
  * Orchestrates the server-to-server operations Bottlenose drives over the admin channel, each for one Whalesync
  * team's shadow user (DEV-13019): provisioning it and minting its short-lived browser session tokens, applying the
- * team's plan, listing its Live Exports, and deprovisioning it.
+ * team's Live Export access (DEV-12983), listing its Live Exports, and deprovisioning it.
  *
  * Every one of them reaches a pure shadow user only (see {@link assertIsPureWhalesyncShadowUser}): a user with a real
  * Clerk login is refused with a 409, never handed out or deleted through this channel.
@@ -37,30 +41,50 @@ export class WhalesyncInternalService {
   ) {}
 
   /**
-   * Ensure the team's shadow user exists, then mint a fresh 10-minute session token for it. Idempotent on
-   * `whalesyncTeamId`. Any member of the team gets the same shadow user.
+   * Ensure the team's shadow user exists, apply the team's Live Export access when the session carries one, then mint
+   * a fresh 10-minute session token for it. Idempotent on `whalesyncTeamId`. Any member of the team gets the same
+   * shadow user. `liveExportAccess` wins over `subscription`, the old payload, which is mapped onto an access.
    */
   public async ensureSessionForWhalesyncTeam(
     whalesyncTeamId: string,
     name?: string,
+    liveExportAccess?: WhalesyncLiveExportAccess,
     subscription?: WhalesyncSubscriptionPayload,
   ): Promise<{ scratchUserId: string; apiToken: string; expiresAt: Date }> {
+    const liveExportAccessToApply =
+      liveExportAccess ?? (subscription ? liveExportAccessFromWhalesyncSubscriptionPayload(subscription) : undefined);
     const shadowUser = await this.usersService.getOrCreateShadowUserForWhalesyncTeam(
       whalesyncTeamId,
       name,
-      subscription,
+      liveExportAccessToApply,
     );
     const { token, expiresAt } = await this.usersService.mintWhalesyncSessionToken(shadowUser.id);
     return { scratchUserId: shadowUser.id, apiToken: token, expiresAt };
   }
 
   /**
-   * Apply a Whalesync subscription status change to the team's shadow user's Whalesync plan — driven by Bottlenose
-   * whenever a subscription expires, is cancelled, or is upgraded on the Whalesync side. Only a
-   * `WHALESYNC_PLAN` subscription is mutated: if the user holds a real active Scratch Stripe subscription
-   * (paid Pro/Max) this throws `ConflictException` (→ 409), matching the contract. Idempotent: a team with no shadow
-   * user returns `{ scratchUserId: null, updated: false, planType: null }` so retried Bottlenose lifecycle hooks are
-   * safe.
+   * Set the team's Live Export access (DEV-12983): whether its Live Exports are paused, how many records they may hold,
+   * and how fast they may run on a schedule. Whalesync works it out from the team's plan and sends the whole of it
+   * whenever it changes. Idempotent: a repeat changes nothing, and a team with no shadow user gets
+   * `{ scratchUserId: null, updated: false }` with nothing created.
+   */
+  public async setLiveExportAccessForWhalesyncTeam(
+    whalesyncTeamId: string,
+    liveExportAccess: WhalesyncLiveExportAccess,
+  ): Promise<WhalesyncSetLiveExportAccessResponse> {
+    const shadowUser = await this.usersService.findShadowUserForWhalesyncTeam(whalesyncTeamId, 'live-export-access');
+    if (!shadowUser) {
+      return { scratchUserId: null, updated: false };
+    }
+    const { updated } = await this.stripePaymentService.applyWhalesyncLiveExportAccess(shadowUser, liveExportAccess);
+    return { scratchUserId: shadowUser.id, updated };
+  }
+
+  /**
+   * The old way to set the team's Live Export access, from a Whalesync backend before DEV-12983 MR 3.2: the payload is
+   * mapped onto an access (paused unless its status is `active`) and applied as
+   * {@link setLiveExportAccessForWhalesyncTeam} applies it, so the plan never lapses. Idempotent: a team with no shadow
+   * user returns `{ scratchUserId: null, updated: false, planType: null }`.
    */
   public async updateWhalesyncSubscription(
     whalesyncTeamId: string,
@@ -70,12 +94,15 @@ export class WhalesyncInternalService {
     if (!shadowUser) {
       return { scratchUserId: null, updated: false, planType: null };
     }
-    const { planType, updated } = await this.stripePaymentService.applyWhalesyncSubscriptionState(
+    const { updated } = await this.stripePaymentService.applyWhalesyncLiveExportAccess(
       shadowUser,
-      subscription,
-      { throwOnRealSubscriptionConflict: true },
+      liveExportAccessFromWhalesyncSubscriptionPayload(subscription),
     );
-    return { scratchUserId: shadowUser.id, updated, planType };
+    return {
+      scratchUserId: shadowUser.id,
+      updated,
+      planType: shadowUser.organizationId ? ScratchPlanType.WHALESYNC_PLAN : null,
+    };
   }
 
   /**

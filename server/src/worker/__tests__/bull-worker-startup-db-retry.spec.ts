@@ -55,7 +55,7 @@ function createServiceUnderTest() {
     metricsService,
     {} as unknown as RunCountService,
     {
-      assertWithinLiveExportRecordLimitOrThrow: jest.fn().mockResolvedValue(undefined),
+      assertLiveExportJobAllowedOrThrow: jest.fn().mockResolvedValue(undefined),
     } as unknown as LiveExportRecordLimitEnforcer,
   );
 

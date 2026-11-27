@@ -10,6 +10,7 @@ export * from './enums';
 
 // Database entity types
 export * from './db';
+export * from './live-export/live-export-access-errors';
 export * from './live-export/live-export-engine';
 
 export * from './connector';

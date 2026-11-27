@@ -4,6 +4,7 @@ import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
 import { ExperimentsModule } from 'src/experiments/experiments.module';
 import { JobModule } from 'src/job/job.module';
+import { LiveExportAccessModule } from 'src/live-export-access/live-export-access.module';
 import { LiveExportRunStoreModule } from 'src/live-export-run-store/live-export-run-store.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { RunCountModule } from 'src/run-count/run-count.module';
@@ -31,6 +32,7 @@ import { WhalesyncRunNotifierService } from './whalesync-run-notifier.service';
     AuditLogModule,
     RunCountModule,
     LiveExportRunStoreModule,
+    LiveExportAccessModule,
     ScratchConfigModule,
     ExperimentsModule,
     MetricsModule,

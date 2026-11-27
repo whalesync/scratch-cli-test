@@ -17,7 +17,12 @@ headers {
 body:json {
   {
     "whalesyncTeamId": "tm_abc123def456",
-    "name": "Example Team"
+    "name": "Example Team",
+    "liveExportAccess": {
+      "paused": false,
+      "recordLimit": 1000000,
+      "fastestCadence": "daily"
+    }
   }
 }
 
@@ -28,7 +33,9 @@ docs {
 
   A missing shadow user is created as a pure one (clerkId `ws_<whalesyncTeamId>`, `name`
   as its label, no email); an existing one's name is left alone. `name` and
-  `subscription` are optional; without `subscription` the Whalesync plan is granted.
-  Unknown body keys are stripped, not rejected. Returns 409 when the user holding the
-  team id is a real Scratch account.
+  `liveExportAccess` are optional: the session applies the team's Live Export access as
+  Set Live Export Access does, and without one an existing plan is left alone and a new
+  one runs with no limits. The old `subscription` payload is still accepted and mapped
+  onto an access. Unknown body keys are stripped, not rejected. Returns 409 when the user
+  holding the team id is a real Scratch account.
 }

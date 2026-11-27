@@ -13,9 +13,10 @@ const LOG_SOURCE = 'SubscriptionEnforcementService';
 // @nestjs/schedule has no EVERY_15_MINUTES member, so spell the 6-field (seconds-first) expression out.
 const EVERY_15_MINUTES_CRON = '0 */15 * * * *';
 
-// A subscription counts as "lapsed" when its Stripe status is one of these. For real Stripe subscriptions
-// these are written verbatim from Stripe webhooks; for the internal WHALESYNC plan they are written by the
-// /internal/whalesync/* endpoints when Whalesync reports a cancel / expire.
+// A subscription counts as "lapsed" when its Stripe status is one of these, written verbatim from Stripe webhooks.
+// The internal WHALESYNC plan never lapses (DEV-12983): Whalesync pauses a team's Live Exports instead, which keeps
+// their schedules, so this cron never acts on a Whalesync shadow organization. A row an older Scratch lapsed comes
+// back active on its team's next session or Live Export access change.
 const LAPSED_STRIPE_STATUSES = ['expired', 'past_due', 'canceled'];
 
 // An organization is spared enforcement if ANY of its subscriptions is still healthy. This is a stricter
@@ -82,8 +83,8 @@ export class SubscriptionEnforcementService {
       let totalSchedulesDisabled = 0;
 
       for (const { organizationId } of organizationsWithRecentlyLapsedSubscriptions) {
-        // Spare an org that still holds a healthy subscription (e.g. a lapsed WHALESYNC row alongside a
-        // genuinely active paid plan) — its scheduled work must keep running.
+        // Spare an org that still holds a healthy subscription (e.g. a lapsed trial alongside a genuinely
+        // active paid plan) — its scheduled work must keep running.
         const organizationSubscriptions = await this.db.client.subscription.findMany({
           where: { organizationId },
           select: { stripeStatus: true, expiration: true },

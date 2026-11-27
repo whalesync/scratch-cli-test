@@ -82,7 +82,7 @@ export function isPureWhalesyncShadowUser(user: Pick<UserCluster.User, 'clerkId'
  */
 export function assertIsPureWhalesyncShadowUser(
   user: Pick<UserCluster.User, 'id' | 'clerkId' | 'whalesyncTeamId'>,
-  attemptedOperation: 'session' | 'subscription' | 'list' | 'delete',
+  attemptedOperation: 'session' | 'subscription' | 'live-export-access' | 'list' | 'delete',
 ): void {
   if (isPureWhalesyncShadowUser(user)) {
     return;

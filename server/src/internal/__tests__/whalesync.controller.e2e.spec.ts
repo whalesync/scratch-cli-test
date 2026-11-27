@@ -25,6 +25,7 @@ describe('WhalesyncController (controller-level e2e)', () => {
     Pick<
       WhalesyncInternalService,
       | 'ensureSessionForWhalesyncTeam'
+      | 'setLiveExportAccessForWhalesyncTeam'
       | 'updateWhalesyncSubscription'
       | 'listLiveExportsForWhalesyncTeam'
       | 'deprovisionWhalesyncTeam'
@@ -42,6 +43,7 @@ describe('WhalesyncController (controller-level e2e)', () => {
         apiToken: 'token',
         expiresAt: new Date('2026-11-25T12:10:00.000Z'),
       }),
+      setLiveExportAccessForWhalesyncTeam: jest.fn().mockResolvedValue({ scratchUserId: 'usr_shadow', updated: true }),
       updateWhalesyncSubscription: jest.fn().mockResolvedValue({ scratchUserId: 'usr_shadow', updated: true }),
       listLiveExportsForWhalesyncTeam: jest.fn().mockResolvedValue({ liveExports: [] }),
       deprovisionWhalesyncTeam: jest.fn().mockResolvedValue(undefined),
@@ -76,14 +78,21 @@ describe('WhalesyncController (controller-level e2e)', () => {
     expect(service.ensureSessionForWhalesyncTeam).not.toHaveBeenCalled();
   });
 
-  it('mints a session for a team', async () => {
+  const pausedDailyLiveExportAccess = { paused: true, recordLimit: 1_000_000, fastestCadence: 'daily' };
+
+  it("mints a session for a team, with the team's Live Export access", async () => {
     const response = await request(app.getHttpServer())
       .post('/internal/whalesync/sessions')
       .set(asBottlenose)
-      .send({ whalesyncTeamId: TEAM_ID, name: 'Acme', subscription: { status: 'active' } })
+      .send({ whalesyncTeamId: TEAM_ID, name: 'Acme', liveExportAccess: pausedDailyLiveExportAccess })
       .expect(201);
 
-    expect(service.ensureSessionForWhalesyncTeam).toHaveBeenCalledWith(TEAM_ID, 'Acme', { status: 'active' });
+    expect(service.ensureSessionForWhalesyncTeam).toHaveBeenCalledWith(
+      TEAM_ID,
+      'Acme',
+      pausedDailyLiveExportAccess,
+      undefined,
+    );
     expect(response.body).toEqual({
       scratchUserId: 'usr_shadow',
       apiToken: 'token',
@@ -107,8 +116,65 @@ describe('WhalesyncController (controller-level e2e)', () => {
     }
 
     expect(service.ensureSessionForWhalesyncTeam).toHaveBeenCalledTimes(2);
-    expect(service.ensureSessionForWhalesyncTeam).toHaveBeenNthCalledWith(1, TEAM_ID, 'Acme', undefined);
-    expect(service.ensureSessionForWhalesyncTeam).toHaveBeenNthCalledWith(2, TEAM_ID, 'Acme', undefined);
+    expect(service.ensureSessionForWhalesyncTeam).toHaveBeenNthCalledWith(1, TEAM_ID, 'Acme', undefined, undefined);
+    expect(service.ensureSessionForWhalesyncTeam).toHaveBeenNthCalledWith(2, TEAM_ID, 'Acme', undefined, undefined);
+  });
+
+  it('still accepts the old subscription payload on a session', async () => {
+    await request(app.getHttpServer())
+      .post('/internal/whalesync/sessions')
+      .set(asBottlenose)
+      .send({ whalesyncTeamId: TEAM_ID, name: 'Acme', subscription: { status: 'expired' } })
+      .expect(201);
+
+    expect(service.ensureSessionForWhalesyncTeam).toHaveBeenCalledWith(TEAM_ID, 'Acme', undefined, {
+      status: 'expired',
+    });
+  });
+
+  it('refuses a session whose Live Export access is incomplete', async () => {
+    await request(app.getHttpServer())
+      .post('/internal/whalesync/sessions')
+      .set(asBottlenose)
+      .send({ whalesyncTeamId: TEAM_ID, liveExportAccess: { paused: true } })
+      .expect(400);
+
+    expect(service.ensureSessionForWhalesyncTeam).not.toHaveBeenCalled();
+  });
+
+  it("sets a team's Live Export access by team (DEV-12983)", async () => {
+    const response = await request(app.getHttpServer())
+      .put(`/internal/whalesync/teams/${TEAM_ID}/live-export-access`)
+      .set(asBottlenose)
+      .send({ ...pausedDailyLiveExportAccess, whalesyncUserId: FIRST_TEAM_MEMBER_WHALESYNC_USER_ID })
+      .expect(200);
+
+    expect(service.setLiveExportAccessForWhalesyncTeam).toHaveBeenCalledWith(TEAM_ID, pausedDailyLiveExportAccess);
+    expect(response.body).toEqual({ scratchUserId: 'usr_shadow', updated: true });
+  });
+
+  it.each([
+    ['an access with no pause', { recordLimit: null, fastestCadence: null }],
+    ['a speed Scratch does not know', { paused: false, recordLimit: null, fastestCadence: 'realtime' }],
+    ['a negative record limit', { paused: false, recordLimit: -1, fastestCadence: null }],
+    ['a record limit left out', { paused: false, fastestCadence: null }],
+  ])('refuses %s', async (_description, body) => {
+    await request(app.getHttpServer())
+      .put(`/internal/whalesync/teams/${TEAM_ID}/live-export-access`)
+      .set(asBottlenose)
+      .send(body)
+      .expect(400);
+
+    expect(service.setLiveExportAccessForWhalesyncTeam).not.toHaveBeenCalled();
+  });
+
+  it("refuses to set a team's Live Export access without the admin token", async () => {
+    await request(app.getHttpServer())
+      .put(`/internal/whalesync/teams/${TEAM_ID}/live-export-access`)
+      .send(pausedDailyLiveExportAccess)
+      .expect(401);
+
+    expect(service.setLiveExportAccessForWhalesyncTeam).not.toHaveBeenCalled();
   });
 
   it('refuses a session that names no team, even when it names a person', async () => {

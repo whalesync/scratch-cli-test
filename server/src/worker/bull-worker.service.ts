@@ -303,13 +303,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicatio
     };
 
     try {
-      // Enforce the organization's Live Export record limit before doing any work (DEV-11157). For a
-      // ws_export workbook whose org is over its plan's record limit this throws, and the catch below records
-      // the job 'failed' with the count-vs-limit message. Flag-gated and OFF by default, so it is a no-op for
-      // every non-Live-Export job and whenever enforcement is disabled.
-      await this.liveExportRecordLimitEnforcer.assertWithinLiveExportRecordLimitOrThrow(jobData);
-
       const runContext = dbJob.runContext as RunContext | null;
+      // Hold a Live Export's sync and publish jobs to the team's Live Export access before doing any work: refused
+      // while Whalesync has paused the team (DEV-12983), unless the job belongs to a run that was already going, and
+      // failed while the team is over its record limit (DEV-11157, flag-gated). For a ws_export workbook this throws,
+      // and the catch below records the job 'failed' with the message. A no-op for every non-Live-Export job.
+      await this.liveExportRecordLimitEnforcer.assertLiveExportJobAllowedOrThrow(jobData, runContext?.routineRunId);
+
       const result = await handler.run({
         jobId: dbJob.id,
         runId: dbJob.runId ?? undefined,

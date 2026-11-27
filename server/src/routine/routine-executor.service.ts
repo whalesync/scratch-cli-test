@@ -20,6 +20,7 @@ import { Job } from 'bullmq';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
+import { LiveExportAccessService, ScheduleTiming } from 'src/live-export-access/live-export-access.service';
 import { LiveExportRunLifecycleService } from 'src/live-export-run-store/live-export-run-lifecycle.service';
 import { WSLogger } from 'src/logger';
 import { CustomMetric } from 'src/metrics/custom-metrics';
@@ -82,6 +83,11 @@ export interface TriggerRunOptions {
    * The wire-level meaning is documented on `triggerRoutineSchema.forceFullPull` (shared-types).
    */
   forceFullPull?: boolean;
+  /**
+   * The schedule that started a `schedule` run. The Live Export speed check reads its cron and timezone to tell whether
+   * the schedule already fits the team's fastest speed (DEV-12983).
+   */
+  schedule?: ScheduleTiming;
 }
 
 /**
@@ -122,6 +128,7 @@ export class RoutineExecutorService {
     private readonly liveExportRunLifecycle: LiveExportRunLifecycleService,
     private readonly whalesyncRunNotifier: WhalesyncRunNotifierService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
+    private readonly liveExportAccessService: LiveExportAccessService,
   ) {}
 
   /**
@@ -135,6 +142,10 @@ export class RoutineExecutorService {
    * snapshot (never the YAML), so the override needs no executor change and the run's own step rows
    * record that a full pull was requested. This is the "full sync" of a Live Export whose
    * destination pull is otherwise incremental (DEV-11407).
+   *
+   * A Live Export run is refused (403) while Whalesync has paused the team's Live Exports, and a scheduled one is
+   * skipped when it comes too soon for the team's fastest speed. See
+   * `LiveExportAccessService.assertLiveExportRunAllowedOrThrow`.
    */
   async triggerRun(
     workbookId: WorkbookId,
@@ -160,6 +171,16 @@ export class RoutineExecutorService {
     if (referenceErrors.length > 0) {
       throw new BadRequestException(referenceErrors.join('; '));
     }
+
+    // A Live Export runs only while the team's Live Export access allows it (DEV-12983). Checked before the run row
+    // exists, so a refused run leaves nothing behind and a skipped scheduled run isn't counted as the last one.
+    await this.liveExportAccessService.assertLiveExportRunAllowedOrThrow({
+      workbookId,
+      routineFilePath,
+      trigger,
+      schedule: options.schedule,
+      now: new Date(),
+    });
 
     const forceFullPull = options.forceFullPull === true;
 

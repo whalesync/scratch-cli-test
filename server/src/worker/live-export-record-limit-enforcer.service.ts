@@ -1,9 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Prisma, WorkbookManager } from '@prisma/client';
-import { JobType, ScratchPlanType } from '@spinner/shared-types';
-import { DbService } from 'src/db/db.service';
+import { JobType, RoutineRunId } from '@spinner/shared-types';
 import { ExperimentsService } from 'src/experiments/experiments.service';
 import { SystemFeatureFlag } from 'src/experiments/flags';
+import { LIVE_EXPORT_PAUSED_MESSAGE } from 'src/live-export-access/live-export-access.errors';
+import { LiveExportAccessService } from 'src/live-export-access/live-export-access.service';
 import { WSLogger } from 'src/logger';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
@@ -13,85 +13,100 @@ import { JobData } from './jobs/union-types';
 const LOG_SOURCE = 'LiveExportRecordLimitEnforcer';
 
 /**
- * The record-moving job types gated on the Live Export record limit. `Publish` ships approved edits to the
- * destination service; `SyncDataFolders` copies records folder→folder. The draft-save job (`ApplySyncDraft`)
- * sets a Live Export *up* rather than moving records, so it is deliberately not gated — a user must be able to
- * configure their export even while over the limit.
+ * The record-moving job types held to a team's Live Export access. `Publish` ships approved edits to the destination
+ * service; `SyncDataFolders` copies records folder→folder. The draft-save job (`ApplySyncDraft`) sets a Live Export
+ * *up* rather than moving records, so it is deliberately not checked — a user must be able to build an export while
+ * paused or over the limit.
  */
-const RECORD_LIMIT_ENFORCED_JOB_TYPES: ReadonlySet<JobType> = new Set<JobType>([
+const LIVE_EXPORT_ACCESS_CHECKED_JOB_TYPES: ReadonlySet<JobType> = new Set<JobType>([
   JobType.Publish,
   JobType.SyncDataFolders,
 ]);
 
 /**
- * Enforces each organization's Live Export record limit (DEV-11157) at the start of a sync or publish job.
+ * Holds a Live Export's sync and publish jobs to the team's Live Export access at the start of the job (DEV-12983):
+ * refused while Whalesync has paused the team's Live Exports, and failed while the team is over its record limit
+ * (DEV-11157). Called from `QueueService.processJob` — the single point every job passes through — so one check
+ * covers publish, the sync job, and the publish job a sync re-enqueues, however they were started.
  *
- * Whalesync computes a plan's Live Export record limit and pushes it onto the organization's internal
- * `WHALESYNC_PLAN` subscription (`Subscription.metadata.liveExportRecordCountLimit`, written by the
- * `/internal/whalesync/*` endpoints — see DEV-11400). When a sync/publish job runs for a Live Export workbook
- * (`Workbook.managedBy === ws_export`) whose organization's eligible record count is over that limit, the job
- * is failed with a message naming the current count and the limit, so nothing further is exported until the
- * user reduces records or upgrades.
+ * Whalesync works out the access from the team's plan and sends it to the team's shadow user, where it lives on the
+ * organization's internal `WHALESYNC_PLAN` row (read through `LiveExportAccessService`). Scratch never reads a
+ * Whalesync subscription.
  *
- * Gated behind the same fail-closed `SUBSCRIPTION_ENFORCEMENT_ENABLED` flag as
- * `SubscriptionEnforcementService`: OFF by default, and an absent flag or a PostHog outage leaves enforcement
- * off (it never blocks a job blindly). Called from `QueueService.processJob` — the single point every job
- * passes through — so one check covers publish, the sync job, and the publish job a sync re-enqueues.
+ * The record limit is behind the same fail-closed `SUBSCRIPTION_ENFORCEMENT_ENABLED` flag as
+ * `SubscriptionEnforcementService`: OFF by default, and an absent flag or a PostHog outage leaves it off (it never
+ * blocks a job blindly). The pause is not behind any flag: Whalesync decides when a team is paused.
  */
 @Injectable()
 export class LiveExportRecordLimitEnforcer {
   constructor(
-    private readonly db: DbService,
+    private readonly liveExportAccessService: LiveExportAccessService,
     private readonly dataFolderService: DataFolderService,
     private readonly experimentsService: ExperimentsService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {}
 
   /**
-   * Throws (failing the calling job) when `jobData` is a sync/publish job for a Live Export workbook whose
-   * organization is over its Live Export record limit. A no-op for every other job type, for non-Live-Export
-   * workbooks, when the flag is off, and when no limit is configured. Cheapest checks run first so the
-   * OFF-by-default path does no database work.
+   * Throws (failing the calling job) when `jobData` is a sync or publish job for a Live Export workbook whose team the
+   * access holds back. A no-op for every other job type and for workbooks that aren't Live Exports.
+   *
+   * - **Paused:** refuses the job, unless it belongs to a routine run (`routineRunIdOfJob`). A run's own jobs were
+   *   allowed when the run started, since `RoutineExecutorService.triggerRun` refuses a paused team's runs, so a run
+   *   that was going when the pause arrived finishes instead of failing partway and emailing the team.
+   * - **Over the record limit:** fails the job with a message naming the current count and the limit, while the
+   *   enforcement flag is on and the team has a limit.
    */
-  async assertWithinLiveExportRecordLimitOrThrow(jobData: JobData): Promise<void> {
-    if (!RECORD_LIMIT_ENFORCED_JOB_TYPES.has(jobData.type)) {
+  async assertLiveExportJobAllowedOrThrow(
+    jobData: JobData,
+    routineRunIdOfJob: RoutineRunId | undefined,
+  ): Promise<void> {
+    if (!LIVE_EXPORT_ACCESS_CHECKED_JOB_TYPES.has(jobData.type)) {
       return;
     }
-    // Every gated job type carries `workbookId`; read it structurally (mirrors the generic job.data reads in
+    // Every checked job type carries `workbookId`; read it structurally (mirrors the generic job.data reads in
     // QueueService) rather than narrowing the whole discriminated union.
     const workbookId = (jobData as { workbookId?: string }).workbookId;
     if (!workbookId) {
       return;
     }
 
-    // Fail-closed opt-in gate / kill switch — the same master switch as SubscriptionEnforcementService.
-    // Evaluated before any DB work so the OFF-by-default path is free; flip the flag off to halt enforcement
-    // without a redeploy.
-    const enforcementEnabled = await this.experimentsService.getBooleanFlag(
+    const organizationIdOfLiveExport =
+      await this.liveExportAccessService.findOrganizationIdOfLiveExportWorkbook(workbookId);
+    // Only Live Export (Whalesync-managed) workbooks carry an access; a standalone workbook is never checked.
+    if (organizationIdOfLiveExport === null) {
+      return;
+    }
+    const liveExportAccess =
+      await this.liveExportAccessService.readLiveExportAccessOfOrganization(organizationIdOfLiveExport);
+
+    if (liveExportAccess.paused && routineRunIdOfJob === undefined) {
+      WSLogger.info({
+        source: LOG_SOURCE,
+        message: "Refused a Live Export job: Whalesync paused the team's Live Exports",
+        organizationId: organizationIdOfLiveExport,
+        workbookId,
+        jobType: jobData.type,
+      });
+      // This message becomes DbJob.error → JobEntity.failedReason, shown to the user verbatim.
+      throw new Error(LIVE_EXPORT_PAUSED_MESSAGE);
+    }
+
+    const recordCountLimit = liveExportAccess.recordLimit;
+    if (recordCountLimit === null) {
+      return;
+    }
+    // Fail-closed opt-in gate / kill switch for the record limit — the same master switch as
+    // SubscriptionEnforcementService. Flip the flag off to halt enforcement without a redeploy.
+    const recordLimitEnforcementEnabled = await this.experimentsService.getBooleanFlag(
       SystemFeatureFlag.SUBSCRIPTION_ENFORCEMENT_ENABLED,
       false,
     );
-    if (!enforcementEnabled) {
+    if (!recordLimitEnforcementEnabled) {
       return;
     }
 
-    const workbook = await this.db.client.workbook.findUnique({
-      where: { id: workbookId },
-      select: { managedBy: true, organizationId: true },
-    });
-    // Only Live Export (Whalesync-managed) workbooks carry a record limit; a standalone workbook is never gated.
-    if (!workbook || workbook.managedBy !== WorkbookManager.ws_export) {
-      return;
-    }
-
-    const recordCountLimit = await this.readLiveExportRecordCountLimit(workbook.organizationId);
-    if (recordCountLimit === undefined) {
-      return;
-    }
-
-    const currentRecordCount = await this.dataFolderService.sumWhalesyncEligibleRecordCountForOrganization(
-      workbook.organizationId,
-    );
+    const currentRecordCount =
+      await this.dataFolderService.sumWhalesyncEligibleRecordCountForOrganization(organizationIdOfLiveExport);
     if (currentRecordCount <= recordCountLimit) {
       return;
     }
@@ -100,7 +115,7 @@ export class LiveExportRecordLimitEnforcer {
     WSLogger.warn({
       source: LOG_SOURCE,
       message: 'Blocked a Live Export job: organization is over its Live Export record limit',
-      organizationId: workbook.organizationId,
+      organizationId: organizationIdOfLiveExport,
       workbookId,
       jobType: jobData.type,
       currentRecordCount,
@@ -113,31 +128,4 @@ export class LiveExportRecordLimitEnforcer {
         `upgrade your plan to resume syncing and publishing.`,
     );
   }
-
-  /**
-   * The Live Export record limit on the organization's internal `WHALESYNC_PLAN` subscription
-   * (`Subscription.metadata.liveExportRecordCountLimit`, shape `WhalesyncSubscriptionMetadata`), or `undefined`
-   * when there is no such subscription or the limit was never set. A configured numeric limit — including `0`
-   * — is returned as-is and enforced literally.
-   */
-  private async readLiveExportRecordCountLimit(organizationId: string): Promise<number | undefined> {
-    const subscription = await this.db.client.subscription.findFirst({
-      where: { organizationId, planType: ScratchPlanType.WHALESYNC_PLAN },
-      select: { metadata: true },
-      orderBy: { updatedAt: 'desc' },
-    });
-    return extractLiveExportRecordCountLimit(subscription?.metadata ?? null);
-  }
-}
-
-/**
- * Reads `liveExportRecordCountLimit` out of the untyped `Subscription.metadata` JSON blob defensively,
- * returning it only when the blob is an object carrying that key as a number.
- */
-function extractLiveExportRecordCountLimit(metadata: Prisma.JsonValue | null): number | undefined {
-  if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) {
-    return undefined;
-  }
-  const rawLimit = (metadata as Record<string, unknown>).liveExportRecordCountLimit;
-  return typeof rawLimit === 'number' ? rawLimit : undefined;
 }

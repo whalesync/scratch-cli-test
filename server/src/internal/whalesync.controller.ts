@@ -1,10 +1,12 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
 import { ScratchAdminGuard } from 'src/auth/scratch-admin.guard';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
 import {
   WhalesyncListLiveExportsResponse,
+  WhalesyncLiveExportAccessDto,
   WhalesyncSessionResponse,
+  WhalesyncSetLiveExportAccessResponse,
   WhalesyncShadowUserDto,
   WhalesyncUpdateSubscriptionDto,
   WhalesyncUpdateSubscriptionResponse,
@@ -21,14 +23,18 @@ const LOG_SOURCE = 'WhalesyncController';
  * bodies and strips keys the schemas don't name.
  *
  * A shadow user holds the Live Exports of one Whalesync team (DEV-13019), and every route names it by team. Scratch
- * knows nothing about the people in a team.
+ * knows nothing about the people in a team. Whalesync decides what the team's Live Exports may do and sends it as the
+ * team's Live Export access (DEV-12983); Scratch never reads a Whalesync subscription.
  */
 @Controller('internal/whalesync')
 @UseGuards(ScratchAdminGuard)
 export class WhalesyncController {
   constructor(private readonly whalesyncInternalService: WhalesyncInternalService) {}
 
-  /** Ensure the team's shadow user exists and mint a 10-minute session token for it. Idempotent on `whalesyncTeamId`. */
+  /**
+   * Ensure the team's shadow user exists, apply the Live Export access the session carries, and mint a 10-minute
+   * session token for it. Idempotent on `whalesyncTeamId`.
+   */
   @Post('sessions')
   async createSession(@Body() body: WhalesyncShadowUserDto): Promise<WhalesyncSessionResponse> {
     // Local-dev only: keep request bodies out of cloud logs.
@@ -42,6 +48,7 @@ export class WhalesyncController {
     const result = await this.whalesyncInternalService.ensureSessionForWhalesyncTeam(
       body.whalesyncTeamId,
       body.name,
+      body.liveExportAccess,
       body.subscription,
     );
     return {
@@ -52,9 +59,31 @@ export class WhalesyncController {
   }
 
   /**
-   * Apply a Whalesync subscription status change (expire / cancel / upgrade) to the team's shadow user's Whalesync
-   * plan. Returns 409 if the user holds a real Scratch Stripe subscription (only a `WHALESYNC_PLAN` row is mutated).
-   * Idempotent if the team has no shadow user.
+   * Set the team's Live Export access: whether its Live Exports are paused, how many records they may hold, and how
+   * fast they may run on a schedule (DEV-12983). Pausing refuses every run and leaves schedules as they are, so the
+   * same call with `paused: false` resumes them. Idempotent; a team with no shadow user gets `updated: false`, and
+   * nothing is created.
+   */
+  @Put('teams/:whalesyncTeamId/live-export-access')
+  async setTeamLiveExportAccess(
+    @Param('whalesyncTeamId') whalesyncTeamId: string,
+    @Body() body: WhalesyncLiveExportAccessDto,
+  ): Promise<WhalesyncSetLiveExportAccessResponse> {
+    // Local-dev only, same as `createSession` above — keep request bodies out of cloud logs.
+    if (ScratchConfigService.getScratchEnvironment() === 'development') {
+      WSLogger.info({
+        source: LOG_SOURCE,
+        message: `PUT /internal/whalesync/teams/${whalesyncTeamId}/live-export-access`,
+        requestBody: body,
+      });
+    }
+    return this.whalesyncInternalService.setLiveExportAccessForWhalesyncTeam(whalesyncTeamId, body);
+  }
+
+  /**
+   * The old way to set the team's Live Export access, from a Whalesync backend before DEV-12983 MR 3.2: the
+   * subscription payload is mapped onto an access (paused unless its status is `active`). Idempotent if the team has
+   * no shadow user.
    */
   @Patch('subscription')
   async updateSubscription(@Body() body: WhalesyncUpdateSubscriptionDto): Promise<WhalesyncUpdateSubscriptionResponse> {

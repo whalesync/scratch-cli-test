@@ -7,36 +7,53 @@ import { z } from 'zod';
 import type { RoutineRunStatus, RoutineRunTrigger } from '../../db/routine-run';
 import { LiveExportEngine } from '../../live-export/live-export-engine';
 
-// ── Subscription payload (shared by the sessions and subscription endpoints) ────
+// ── Live Export access (the sessions and live-export-access endpoints) ─────────
 
-/** The Live Export sync cadence a Whalesync subscription grants. */
+/**
+ * How often a Whalesync plan lets a Live Export run on a schedule, at most: every 10 minutes (`frequent`), once an
+ * hour (`hourly`), or once a day (`daily`).
+ */
 export const liveExportCadenceSchema = z.enum(['daily', 'hourly', 'frequent']);
 export type LiveExportCadence = z.infer<typeof liveExportCadenceSchema>;
 
 /**
- * The Whalesync-side subscription status. `cancelled`/`expired`/`none` all mean "no longer entitled";
- * only `active` grants (or keeps) the Whalesync plan. Note the British `cancelled` spelling here maps to
- * Stripe's American `canceled` on the Scratch `Subscription.stripeStatus` column.
+ * What a Whalesync team's Live Exports may do (DEV-12983). Whalesync works it out from the team's plan and sends the
+ * whole of it, on every session (`POST /sessions`) and whenever it changes
+ * (`PUT /teams/:whalesyncTeamId/live-export-access`). Scratch carries it out and never reads a Whalesync
+ * subscription. A value Whalesync adds here, such as another speed, is never sent until Scratch accepts it in every
+ * environment.
  */
+export const whalesyncLiveExportAccessSchema = z.object({
+  /**
+   * While true, Scratch refuses every run of the team's Live Exports, scheduled or manual, and leaves their schedules
+   * as they are, so sending `false` again resumes them with nothing else to do.
+   */
+  paused: z.boolean(),
+  /** The most records the team's Live Exports may hold together, or null for no limit. */
+  recordLimit: z.number().int().nonnegative().nullable(),
+  /** The fastest a Live Export of the team may run on a schedule, or null for no limit. */
+  fastestCadence: liveExportCadenceSchema.nullable(),
+});
+export type WhalesyncLiveExportAccess = z.infer<typeof whalesyncLiveExportAccessSchema>;
+
+// ── Subscription payload (the old way to send Live Export access, until DEV-12983 MR 3.2) ────
+
+/** The Whalesync-side subscription status, in the old payload. Only `active` leaves the team's Live Exports running. */
 export const whalesyncSubscriptionStatusSchema = z.enum(['none', 'active', 'cancelled', 'expired']);
 export type WhalesyncSubscriptionStatus = z.infer<typeof whalesyncSubscriptionStatusSchema>;
 
 /**
- * The subscription state Whalesync sends to Scratch — on session creation (`POST /sessions`) and on any
- * later status change (`PATCH /subscription`). `status` drives whether the Whalesync plan is granted or
- * revoked; the remaining fields are stored verbatim in `Subscription.metadata` and (for now) only recorded
- * — enforcing the Live Export limits against them is a follow-up.
+ * The subscription state a Whalesync backend from before DEV-12983 MR 3.2 sends, on a session and on
+ * `PATCH /subscription`. Scratch maps it onto the team's {@link WhalesyncLiveExportAccess}: paused unless `status` is
+ * `active`, with this payload's record limit and cadence. `whalesyncProductType` and `expiresAt` are ignored, and the
+ * plan never lapses. Removed once every Whalesync environment sends `liveExportAccess`.
  */
 export const whalesyncSubscriptionPayloadSchema = z.object({
   status: whalesyncSubscriptionStatusSchema,
   whalesyncProductType: z.string().optional(),
   liveExportRecordCountLimit: z.number().int().nonnegative().optional(),
   liveExportCadence: liveExportCadenceSchema.optional(),
-  /**
-   * When the Whalesync subscription expires, as a UTC ISO-8601 timestamp. When present it replaces the
-   * internal plan's nominal ~100-year expiry on the Scratch `Subscription.expiration` column, so the plan
-   * genuinely lapses on Whalesync's schedule. When omitted the nominal far-future expiry is used.
-   */
+  /** When the Whalesync subscription expires, as a UTC ISO-8601 timestamp. Ignored: Whalesync pauses a team instead. */
   expiresAt: z.string().datetime().optional(),
 });
 export type WhalesyncSubscriptionPayload = z.infer<typeof whalesyncSubscriptionPayloadSchema>;
@@ -55,18 +72,21 @@ export const whalesyncShadowUserSchema = z.object({
   /** A label for a shadow user created for the team: the team's name. Not applied to an existing one. */
   name: z.string().optional(),
   /**
-   * Optional Whalesync subscription state to apply while provisioning. When omitted the shadow user is granted the
-   * Whalesync plan (the historical auto-subscribe behavior).
+   * The team's Live Export access, applied as `PUT /teams/:whalesyncTeamId/live-export-access` applies it. Wins over
+   * `subscription` when both are sent. When both are left out, an existing shadow user's access is left alone, and a
+   * new one's Live Exports run with no limits.
    */
+  liveExportAccess: whalesyncLiveExportAccessSchema.optional(),
+  /** The old way to send the access, from a Whalesync backend before DEV-12983 MR 3.2. */
   subscription: whalesyncSubscriptionPayloadSchema.optional(),
 });
 
 export type WhalesyncShadowUserDto = z.infer<typeof whalesyncShadowUserSchema>;
 
 /**
- * Body for `PATCH /internal/whalesync/subscription`. Whalesync calls this whenever a team's subscription changes on
- * its side (expire / cancel / upgrade). Only a `WHALESYNC_PLAN` subscription is mutated: a real Scratch Stripe
- * subscription yields a 409.
+ * Body for `PATCH /internal/whalesync/subscription`, the old way to change a team's Live Export access. Scratch maps
+ * `subscription` onto the access (see {@link whalesyncSubscriptionPayloadSchema}). Replaced by
+ * `PUT /teams/:whalesyncTeamId/live-export-access`.
  */
 export const whalesyncUpdateSubscriptionSchema = z.object({
   /** The team whose plan changed. */
@@ -83,6 +103,13 @@ export interface WhalesyncSessionResponse {
   apiToken: string;
   /** UTC ISO-8601 timestamp; the token expires 10 minutes after it is minted. */
   expiresAt: string;
+}
+
+export interface WhalesyncSetLiveExportAccessResponse {
+  /** The team's shadow user, or `null` when the team has none (nothing is created). */
+  scratchUserId: string | null;
+  /** True when Scratch changed anything; false when the access was already as sent, or the team has no shadow user. */
+  updated: boolean;
 }
 
 export interface WhalesyncUpdateSubscriptionResponse {
@@ -112,15 +139,19 @@ export interface WhalesyncListLiveExportsResponse {
 }
 
 /**
- * The typed shape stored in `Subscription.metadata` for Whalesync-plan subscriptions. All fields optional
- * — Whalesync may send a partial payload. Persisted as JSON; read back to drive Live Export gating (future).
+ * The typed shape stored in `Subscription.metadata` on an organization's `WHALESYNC_PLAN` row: the team's Live Export
+ * access. Every field is optional, since rows written before DEV-12983 MR 3.1 carry only some of them. A missing
+ * value means no limit, and a team is paused only when `liveExportsPaused` is `true`.
  */
 export interface WhalesyncSubscriptionMetadata {
-  /** The last Whalesync-side status we were told about (before mapping to `stripeStatus`). */
-  whalesyncStatus?: WhalesyncSubscriptionStatus;
-  whalesyncProductType?: string;
+  /** Whether Whalesync has paused the team's Live Exports. */
+  liveExportsPaused?: boolean;
   liveExportRecordCountLimit?: number;
   liveExportCadence?: LiveExportCadence;
+  /** The Whalesync-side status, on rows written before DEV-12983 MR 3.1. No longer written or read. */
+  whalesyncStatus?: WhalesyncSubscriptionStatus;
+  /** The Whalesync plan, on rows written before DEV-12983 MR 3.1. No longer written or read. */
+  whalesyncProductType?: string;
 }
 
 // ── Scratch → Whalesync: Live Export run notifications (DEV-12330) ────────────

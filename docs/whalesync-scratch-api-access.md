@@ -168,7 +168,7 @@ person and the adoption by email that came with it ([DEV-10331](https://linear.a
 reuse the user linked to a `whalesyncUserId`, else link the native Scratch user that owned the person's email) are
 gone. As a fail-safe, every admin route checks the user that holds the team id: when it isn't a pure shadow user (its
 clerkId doesn't start with `ws_`, so it has a real Scratch login), the route answers 409 and logs an error, and never
-hands out a session for it, changes its plan, lists its workbooks, or deletes it.
+hands out a session for it, sets its Live Export access, lists its workbooks, or deletes it.
 
 **The real Scratch accounts that were teams' shadow users are gone.** Before this, some teams' shadow users were real
 Scratch accounts: one adopted by email before teams, or a shadow user whose person signed in to Scratch before it got
@@ -192,11 +192,48 @@ to no team is skipped and logged.
 `is_whalesync_shadow_user` keys on `whalesyncTeamId`. The column stays until a follow-up MR drops it, because a server
 of the previous version still writes it during a deploy.
 
+### Live Export access (DEV-12983)
+
+Whalesync decides what a team's Live Exports may do, and Scratch carries it out. Scratch never reads a Whalesync
+subscription. Whalesync works out each team's **Live Export access** from the team's plan and sends the whole of it,
+on every session and whenever it changes (`PUT /internal/whalesync/teams/:whalesyncTeamId/live-export-access`):
+
+```
+{ paused: boolean, recordLimit: number | null, fastestCadence: 'daily' | 'hourly' | 'frequent' | null }
+```
+
+`null` means no limit. Scratch keeps the three values in the metadata of the organization's one `WHALESYNC_PLAN`
+subscription row (`liveExportsPaused`, `liveExportRecordCountLimit`, and `liveExportCadence`), and acts on them only
+for Live Export (`ws_export`) workbooks:
+
+- **Paused:** `RoutineExecutorService.triggerRun` refuses every run before it is created. Run now answers 403 with
+  `{ error: 'LIVE_EXPORT_PAUSED', message }`, and a scheduled run is skipped and logged, with no run row and no
+  failure email. `LiveExportRecordLimitEnforcer` refuses publish and sync jobs started outside a run, so every other
+  route that starts them is covered; a run that was already going finishes. Schedules are left as they are, so sending
+  `paused: false` resumes them with nothing else to do.
+- **Speed:** a scheduled run that comes sooner after the export's last scheduled run than `fastestCadence` allows (9,
+  59, or 1,379 minutes) is skipped. A schedule that fits is never compared with past runs. So a downgrade slows
+  existing exports without rewriting anyone's schedule, and an upgrade speeds them up again. Run now isn't limited.
+- **Records:** the record cap (behind `SUBSCRIPTION_ENFORCEMENT_ENABLED`) fails sync and publish jobs while the team's
+  Live Exports hold more than `recordLimit` records.
+
+A team is paused only once Whalesync says so: with no `WHALESYNC_PLAN` row, or no stored value, its Live Exports run
+with no limits. The row itself stays active with a ~100-year expiry and never lapses, so Scratch's own subscription
+rules (`SubscriptionEnforcementService`, which turns off every schedule in a lapsed organization, and the data source
+limit) never act on a shadow organization, and building a Live Export is never refused. Applying an access writes
+nothing when it is already in place, and records an audit entry when the pause changes. The rules are in
+`server/src/live-export-access/`.
+
+A Whalesync backend from before this sends the old `subscription` payload instead (`{ status, whalesyncProductType,
+liveExportRecordCountLimit, liveExportCadence, expiresAt }`), on a session and on `PATCH /internal/whalesync/subscription`.
+Scratch maps it onto an access: paused unless `status` is `active`, with its record limit and cadence. Its product
+type and expiry are ignored. Both go once every Whalesync environment sends `liveExportAccess`.
+
 ## The two Bottlenose → Scratch channels
 
 | Channel              | Credential                       | Used for                                                                 | Auth on Scratch                         |
 | -------------------- | -------------------------------- | ------------------------------------------------------------------------ | --------------------------------------- |
-| **Admin**            | Single shared secret, Bottlenose-only | Ensure a team's shadow user and mint its tokens, apply its plan, list its Live Exports, deprovision | **new** `ScratchAdminGuard` |
+| **Admin**            | Single shared secret, Bottlenose-only | Ensure a team's shadow user and mint its tokens, set its Live Export access, list its Live Exports, deprovision | **new** `ScratchAdminGuard` |
 | **User-scoped**      | A shadow user's `ApiToken`       | Any operation acting as that user (also what the browser carries)        | **existing** `API_TOKEN_STRATEGY`       |
 
 The admin secret lives only in Bottlenose, loaded from GCP Secret Manager (the existing pattern in `whalesync/api/bottlenose/src/secrets/secrets.service.ts`). It is never exposed to the browser.
@@ -235,22 +272,33 @@ a pure shadow user (see [A shadow user per Whalesync team](#a-shadow-user-per-wh
 ```
 POST /internal/whalesync/sessions
   Header: X-Scratch-Admin-Token: <secret>
-  Body:   { whalesyncTeamId: string, name?: string, subscription?: { status, … } }
+  Body:   { whalesyncTeamId: string, name?: string, liveExportAccess?: { paused, recordLimit, fastestCadence },
+            subscription?: { status, … } }
   200:    { scratchUserId, apiToken, expiresAt }   // apiToken TTL = 10 minutes; expiresAt is a UTC ISO-8601 timestamp
   409:    the user holding the team id is a real Scratch account (fail-safe)
   Behavior: ensure-team-shadow-user-then-mint, idempotent on whalesyncTeamId. A missing shadow user
             is created as a pure one: clerkId ws_<whalesyncTeamId>, name as its label, no email.
-            Applies the Whalesync plan (subscription, or { status: 'active' } when omitted).
+            Applies the team's Live Export access (liveExportAccess, or the old subscription mapped onto
+            one). With neither, an existing plan is left alone, and a new one runs with no limits.
             Unknown body keys are stripped, not rejected.
             Folds provisioning + token minting into one round-trip.
+
+PUT /internal/whalesync/teams/:whalesyncTeamId/live-export-access
+  Body:   { paused: boolean, recordLimit: number | null, fastestCadence: 'daily' | 'hourly' | 'frequent' | null }
+  200:    { scratchUserId, updated }
+          // { scratchUserId: null, updated: false } when the team has no shadow user; nothing is created
+  409:    the fail-safe
+  Behavior: sets the team's Live Export access (see "Live Export access" above). Idempotent: a
+            repeat writes nothing and answers updated: false.
 
 PATCH /internal/whalesync/subscription
   Body:   { whalesyncTeamId: string, subscription: { status, … } }
   200:    { scratchUserId, updated, planType }
           // { scratchUserId: null, updated: false, planType: null } when the team has no shadow user
-  409:    the organization has a real Scratch Stripe subscription, or the fail-safe
-  Behavior: applies a Whalesync plan change (expire / cancel / upgrade) to the team's shadow
-            user. Only a WHALESYNC_PLAN subscription is mutated.
+  409:    the fail-safe
+  Behavior: the old way to set the team's Live Export access: the payload is mapped onto one
+            (paused unless status is active) and applied as the PUT above applies it. The plan never
+            lapses. Removed once every Whalesync environment sends liveExportAccess.
 
 GET /internal/whalesync/teams/:whalesyncTeamId/live-exports
   200:    { liveExports: [{ id, name, createdAt, updatedAt }] }   // newest first

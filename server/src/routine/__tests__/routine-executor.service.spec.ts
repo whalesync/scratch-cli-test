@@ -5,6 +5,8 @@ import { RoutineAction, RoutineRunId, RoutineStep, RoutineStepOptions, WorkbookI
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
+import { LiveExportPausedException } from 'src/live-export-access/live-export-access.errors';
+import { LiveExportAccessService } from 'src/live-export-access/live-export-access.service';
 import { LiveExportRunLifecycleService } from 'src/live-export-run-store/live-export-run-lifecycle.service';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
@@ -222,6 +224,7 @@ function makeService(deps: {
     classicLiveExportRunLifecycle(),
     (deps.whalesyncRunNotifier ?? { enqueueForRun: jest.fn() }) as unknown as WhalesyncRunNotifierService,
     (deps.metricsService ?? { logValue: jest.fn() }) as unknown as CustomMetricsService,
+    { assertLiveExportRunAllowedOrThrow: jest.fn().mockResolvedValue(undefined) } as unknown as LiveExportAccessService,
   );
 }
 
@@ -1720,6 +1723,7 @@ describe('RoutineExecutorService.triggerRun', () => {
     routineRunCreate: jest.Mock,
     parsedRoutine: typeof PARSED_ROUTINE = PARSED_ROUTINE,
     definitionContent: string | null = 'yaml',
+    assertLiveExportRunAllowedOrThrow: jest.Mock = jest.fn().mockResolvedValue(undefined),
   ) {
     const db = {
       client: {
@@ -1747,8 +1751,42 @@ describe('RoutineExecutorService.triggerRun', () => {
       classicLiveExportRunLifecycle(),
       { enqueueForRun: jest.fn() } as unknown as WhalesyncRunNotifierService,
       { logValue: jest.fn() } as unknown as CustomMetricsService,
+      { assertLiveExportRunAllowedOrThrow } as unknown as LiveExportAccessService,
     );
   }
+
+  it("refuses a run the team's Live Export access holds back before creating it (DEV-12983)", async () => {
+    const routineRunCreate = jest.fn();
+    const assertLiveExportRunAllowedOrThrow = jest.fn().mockRejectedValue(new LiveExportPausedException());
+    const service = makeTriggerService(routineRunCreate, PARSED_ROUTINE, 'yaml', assertLiveExportRunAllowedOrThrow);
+
+    await expect(service.triggerRun(WORKBOOK_ID, 'routines/daily.yaml', 'manual')).rejects.toBeInstanceOf(
+      LiveExportPausedException,
+    );
+    expect(routineRunCreate).not.toHaveBeenCalled();
+  });
+
+  it('hands the Live Export access check the run and the schedule that started it', async () => {
+    const assertLiveExportRunAllowedOrThrow = jest.fn().mockResolvedValue(undefined);
+    const service = makeTriggerService(
+      jest.fn().mockResolvedValue(makeCreatedRunWithoutSteps()),
+      PARSED_ROUTINE,
+      'yaml',
+      assertLiveExportRunAllowedOrThrow,
+    );
+    jest.spyOn(service, 'execute').mockResolvedValue(undefined);
+    const schedule = { cronExpression: '0 9 * * *', timezone: 'America/New_York' };
+
+    await service.triggerRun(WORKBOOK_ID, 'routines/daily.yaml', 'schedule', undefined, { schedule });
+
+    expect(assertLiveExportRunAllowedOrThrow).toHaveBeenCalledWith({
+      workbookId: WORKBOOK_ID,
+      routineFilePath: 'routines/daily.yaml',
+      trigger: 'schedule',
+      schedule,
+      now: expect.any(Date) as unknown,
+    });
+  });
 
   it('creates a pending run + steps and kicks the executor', async () => {
     const created = {

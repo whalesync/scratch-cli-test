@@ -2,6 +2,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Schedule } from '@prisma/client';
 import { DbService } from 'src/db/db.service';
+import {
+  LiveExportPausedException,
+  LiveExportScheduledRunSoonerThanFastestCadenceError,
+} from 'src/live-export-access/live-export-access.errors';
 import { WSLogger } from 'src/logger';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { RoutineExecutorService } from 'src/routine/routine-executor.service';
@@ -192,7 +196,13 @@ describe('SchedulerService', () => {
 
     // ROUTINE claims first (advancing nextRunAt), then triggers the run...
     expect(scheduleService.atomicClaim).toHaveBeenCalledWith(SCHEDULE_ID, expect.any(Date));
-    expect(routineExecutorService.triggerRun).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/daily.yaml', 'schedule');
+    expect(routineExecutorService.triggerRun).toHaveBeenCalledWith(
+      WORKBOOK_ID,
+      'routines/daily.yaml',
+      'schedule',
+      undefined,
+      { schedule },
+    );
     // ...and skips the per-job paths (which assume a single JobType and would misbehave on ROUTINE).
     expect(dbService.client.dbJob.count).not.toHaveBeenCalled();
     expect(scheduleService.entityExists).not.toHaveBeenCalled();
@@ -208,6 +218,27 @@ describe('SchedulerService', () => {
 
     await expect(service.evaluateSchedules()).resolves.not.toThrow();
     expect(routineExecutorService.triggerRun).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['paused', new LiveExportPausedException()],
+    ['too soon for its speed', new LiveExportScheduledRunSoonerThanFastestCadenceError('daily', new Date())],
+  ])('logs a Live Export run held back as %s at info, not as a failure (DEV-12983)', async (_reason, refusal) => {
+    const infoSpy = jest.spyOn(WSLogger, 'info').mockImplementation(() => {});
+    const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => {});
+    const schedule = makeSchedule({ action: 'ROUTINE', entityId: 'routines/daily.yaml' });
+    scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+    scheduleService.atomicClaim.mockResolvedValue(schedule);
+    routineExecutorService.triggerRun.mockRejectedValue(refusal);
+
+    await expect(service.evaluateSchedules()).resolves.not.toThrow();
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'SchedulerService.evaluateRoutineSchedule' }),
+    );
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'SchedulerService.evaluateRoutineSchedule' }),
+    );
   });
 
   it('skips workbook when a created job exists (busy check)', async () => {
