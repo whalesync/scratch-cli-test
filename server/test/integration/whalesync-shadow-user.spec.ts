@@ -173,6 +173,20 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     );
   }
 
+  // PUT /internal/whalesync/teams/:whalesyncTeamId/live-export-access. Does not throw on non-2xx.
+  function setTeamLiveExportAccess(whalesyncTeamId: string, liveExportAccess: Record<string, unknown>) {
+    return axios.put(`${apiUrl}/internal/whalesync/teams/${whalesyncTeamId}/live-export-access`, liveExportAccess, {
+      headers: adminHeaders,
+      ...anyStatus,
+    });
+  }
+
+  // The subscription rows of the team's shadow user's organization. Needs a DB matching the target server.
+  async function findSubscriptionRowsOfTeamShadowUserOrganization(prisma: PrismaClient, whalesyncTeamId: string) {
+    const shadowUser = await prisma.user.findUnique({ where: { whalesyncTeamId } });
+    return prisma.subscription.findMany({ where: { organizationId: shadowUser?.organizationId ?? '' } });
+  }
+
   // GET /internal/whalesync/teams/:whalesyncTeamId/live-exports. Does not throw on non-2xx.
   function listTeamLiveExports(whalesyncTeamId: string) {
     return axios.get<LiveExportListResponse>(`${apiUrl}/internal/whalesync/teams/${whalesyncTeamId}/live-exports`, {
@@ -318,87 +332,121 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     }
   });
 
-  // 1e — a session subscription payload with status 'active' records the Whalesync-side shape in
-  // Subscription.metadata (product type + Live Export limits) and keeps stripeStatus 'active'.
-  it('records the session subscription payload in metadata and applies the UTC expiry when status is active', async () => {
+  // 1e — a session's old subscription payload with status 'active' becomes the team's Live Export access (DEV-12983):
+  // its record limit and cadence are stored in Subscription.metadata, unpaused. Its product type and expiry are
+  // ignored, so the plan keeps its nominal far-future expiry and never lapses.
+  it("stores an active session subscription payload's limits as the team's Live Export access, ignoring its expiry", async () => {
     const whalesyncTeamId = newWhalesyncTeamId();
-    const expiresAt = '2027-01-15T00:00:00.000Z';
     const session = await createSession(whalesyncTeamId, 'Trajectories', {
       status: 'active',
       whalesyncProductType: 'growth',
       liveExportRecordCountLimit: 5000,
       liveExportCadence: 'hourly',
-      expiresAt,
+      expiresAt: '2027-01-15T00:00:00.000Z',
     });
 
     const whoami = await fetchCurrentUser(session.apiToken);
     expect(whoami.data.subscription?.planType).toBe('WHALESYNC_PLAN');
 
+    // Setting the same access writes nothing, which shows over HTTP that the session stored exactly this access.
+    const sameLiveExportAccessResponse = await setTeamLiveExportAccess(whalesyncTeamId, {
+      paused: false,
+      recordLimit: 5000,
+      fastestCadence: 'hourly',
+    });
+    expect(sameLiveExportAccessResponse.status).toBe(200);
+    expect(sameLiveExportAccessResponse.data).toEqual({ scratchUserId: session.scratchUserId, updated: false });
+
     if (prismaForDbRowAssertions) {
-      const user = await prismaForDbRowAssertions.user.findUnique({ where: { whalesyncTeamId } });
-      const subscriptions = await prismaForDbRowAssertions.subscription.findMany({
-        where: { organizationId: user?.organizationId ?? '' },
-      });
+      const subscriptions = await findSubscriptionRowsOfTeamShadowUserOrganization(
+        prismaForDbRowAssertions,
+        whalesyncTeamId,
+      );
       expect(subscriptions).toHaveLength(1);
       expect(subscriptions[0].stripeStatus).toBe('active');
-      // Whalesync's own UTC expiry replaces the nominal far-future expiry.
-      expect(subscriptions[0].expiration.toISOString()).toBe(expiresAt);
+      // The payload's expiresAt is ignored: the nominal far-future expiry stays.
+      expect(subscriptions[0].expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
       expect(subscriptions[0].metadata).toEqual({
-        whalesyncStatus: 'active',
-        whalesyncProductType: 'growth',
+        liveExportsPaused: false,
         liveExportRecordCountLimit: 5000,
         liveExportCadence: 'hourly',
       });
     }
   });
 
-  // 1f — a session subscription payload whose status is NOT active must not create a subscription row.
-  (isApiOnlyMode ? it.skip : it)(
-    'does not create a subscription when the session subscription status is not active',
-    async () => {
-      const prisma = prismaForDbRowAssertions;
-      if (!prisma) return;
+  // 1f — a session's old subscription payload whose status is NOT active still gives the team the Whalesync plan, so
+  // Scratch's own subscription rules never act on the shadow organization, but with its Live Exports paused.
+  it('gives the Whalesync plan with Live Exports paused when the session subscription status is not active', async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await createSession(whalesyncTeamId, 'Spanning Trees', { status: 'expired' });
 
-      const whalesyncTeamId = newWhalesyncTeamId();
-      const session = await createSession(whalesyncTeamId, 'Spanning Trees', { status: 'expired' });
+    const whoami = await fetchCurrentUser(session.apiToken);
+    expect(whoami.data.subscription?.planType).toBe('WHALESYNC_PLAN');
+    expect(whoami.data.subscription?.status).toBe('valid');
 
-      const user = await prisma.user.findUnique({ where: { whalesyncTeamId } });
-      expect(user).toBeTruthy(); // the shadow user is still provisioned...
-      const subscriptions = await prisma.subscription.findMany({
-        where: { organizationId: user?.organizationId ?? '' },
-      });
-      expect(subscriptions).toHaveLength(0); // ...but no Whalesync plan was granted.
+    // The session stored a paused access, so setting that access again writes nothing.
+    const sameLiveExportAccessResponse = await setTeamLiveExportAccess(whalesyncTeamId, {
+      paused: true,
+      recordLimit: null,
+      fastestCadence: null,
+    });
+    expect(sameLiveExportAccessResponse.data).toEqual({ scratchUserId: session.scratchUserId, updated: false });
 
-      // Over HTTP the user is not on the Whalesync plan.
-      const whoami = await fetchCurrentUser(session.apiToken);
-      expect(whoami.data.subscription?.planType).not.toBe('WHALESYNC_PLAN');
-    },
-  );
+    if (prismaForDbRowAssertions) {
+      const subscriptions = await findSubscriptionRowsOfTeamShadowUserOrganization(
+        prismaForDbRowAssertions,
+        whalesyncTeamId,
+      );
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0].planType).toBe('WHALESYNC_PLAN');
+      expect(subscriptions[0].stripeStatus).toBe('active');
+      expect(subscriptions[0].metadata).toEqual({ liveExportsPaused: true });
+    }
+  });
 
-  // 3a — PATCH /subscription with a non-active status soft-updates (keeps) the Whalesync row and marks it
-  // inactive, so the team's shadow user drops off the Whalesync plan.
-  it('marks the Whalesync plan inactive on a cancelled subscription patch', async () => {
+  // 3a — PATCH /subscription with a non-active status pauses the team's Live Exports (DEV-12983). The Whalesync plan
+  // row stays active, so the shadow user keeps the plan, and a patch with an active status resumes them.
+  it('pauses Live Exports on a cancelled subscription patch, keeping the Whalesync plan, and resumes on an active one', async () => {
     const whalesyncTeamId = newWhalesyncTeamId();
     const session = await createSession(whalesyncTeamId, 'Compilers', { status: 'active' });
     expect((await fetchCurrentUser(session.apiToken)).data.subscription?.planType).toBe('WHALESYNC_PLAN');
 
-    const patched = await patchSubscription(whalesyncTeamId, { status: 'cancelled' });
-    expect(patched.status).toBe(200);
-    expect(patched.data.scratchUserId).toBe(session.scratchUserId);
-    expect(patched.data.updated).toBe(true);
+    const pausingPatchResponse = await patchSubscription(whalesyncTeamId, { status: 'cancelled' });
+    expect(pausingPatchResponse.status).toBe(200);
+    expect(pausingPatchResponse.data).toEqual({
+      scratchUserId: session.scratchUserId,
+      updated: true,
+      planType: 'WHALESYNC_PLAN',
+    });
+    // A repeat writes nothing: the pause is already stored.
+    expect((await patchSubscription(whalesyncTeamId, { status: 'cancelled' })).data.updated).toBe(false);
 
-    // Over HTTP the user is no longer on the Whalesync plan.
+    // Over HTTP the user is still on the Whalesync plan: pausing Live Exports never lapses it.
     const whoami = await fetchCurrentUser(session.apiToken);
-    expect(whoami.data.subscription?.planType).not.toBe('WHALESYNC_PLAN');
+    expect(whoami.data.subscription?.planType).toBe('WHALESYNC_PLAN');
+    expect(whoami.data.subscription?.status).toBe('valid');
 
     if (prismaForDbRowAssertions) {
-      const user = await prismaForDbRowAssertions.user.findUnique({ where: { whalesyncTeamId } });
-      const subscriptions = await prismaForDbRowAssertions.subscription.findMany({
-        where: { organizationId: user?.organizationId ?? '' },
-      });
-      // The row is KEPT (soft-update), not deleted, and marked canceled.
+      const subscriptions = await findSubscriptionRowsOfTeamShadowUserOrganization(
+        prismaForDbRowAssertions,
+        whalesyncTeamId,
+      );
+      // The one row is kept active, with the pause in its metadata.
       expect(subscriptions).toHaveLength(1);
-      expect(subscriptions[0].stripeStatus).toBe('canceled');
+      expect(subscriptions[0].stripeStatus).toBe('active');
+      expect(subscriptions[0].cancelAt).toBeNull();
+      expect(subscriptions[0].metadata).toEqual({ liveExportsPaused: true });
+    }
+
+    const resumingPatchResponse = await patchSubscription(whalesyncTeamId, { status: 'active' });
+    expect(resumingPatchResponse.data.updated).toBe(true);
+    if (prismaForDbRowAssertions) {
+      const subscriptions = await findSubscriptionRowsOfTeamShadowUserOrganization(
+        prismaForDbRowAssertions,
+        whalesyncTeamId,
+      );
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0].metadata).toEqual({ liveExportsPaused: false });
     }
   });
 
@@ -409,27 +457,100 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     expect(response.data).toEqual({ scratchUserId: null, updated: false, planType: null });
   });
 
-  // 3c — PATCH /subscription refuses (409) to touch a real Scratch Stripe subscription (paid Pro/Max).
-  (isApiOnlyMode ? it.skip : it)(
-    'returns 409 when the organization has a real Scratch Stripe subscription',
-    async () => {
-      const prisma = prismaForDbRowAssertions;
-      if (!prisma) return;
+  // 3c — PUT /teams/:whalesyncTeamId/live-export-access sets the team's whole Live Export access (DEV-12983): a repeat
+  // writes nothing, and a null limit is no limit, so it is left out of the stored metadata.
+  it("sets a team's whole Live Export access, writing nothing on a repeat", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await createSession(whalesyncTeamId, 'Abstract Data Types');
+    const pausedAndLimitedLiveExportAccess = { paused: true, recordLimit: 250, fastestCadence: 'daily' };
 
-      const whalesyncTeamId = newWhalesyncTeamId();
-      await createSession(whalesyncTeamId, 'Abstract Data Types', { status: 'active' });
+    const firstResponse = await setTeamLiveExportAccess(whalesyncTeamId, pausedAndLimitedLiveExportAccess);
+    expect(firstResponse.status).toBe(200);
+    expect(firstResponse.data).toEqual({ scratchUserId: session.scratchUserId, updated: true });
+    const repeatedResponse = await setTeamLiveExportAccess(whalesyncTeamId, pausedAndLimitedLiveExportAccess);
+    expect(repeatedResponse.data).toEqual({ scratchUserId: session.scratchUserId, updated: false });
+    expect((await fetchCurrentUser(session.apiToken)).data.subscription?.planType).toBe('WHALESYNC_PLAN');
 
-      // Turn the org's Whalesync row into a real (non-Whalesync) active Stripe subscription.
-      const user = await prisma.user.findUnique({ where: { whalesyncTeamId } });
-      await prisma.subscription.updateMany({
-        where: { organizationId: user?.organizationId ?? '' },
-        data: { planType: 'PRO_PLAN', stripeSubscriptionId: `sub_real_${whalesyncTeamId}` },
+    if (prismaForDbRowAssertions) {
+      const subscriptions = await findSubscriptionRowsOfTeamShadowUserOrganization(
+        prismaForDbRowAssertions,
+        whalesyncTeamId,
+      );
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0].stripeStatus).toBe('active');
+      expect(subscriptions[0].metadata).toEqual({
+        liveExportsPaused: true,
+        liveExportRecordCountLimit: 250,
+        liveExportCadence: 'daily',
       });
+    }
 
-      const response = await patchSubscription(whalesyncTeamId, { status: 'cancelled' });
-      expect(response.status).toBe(409);
-    },
-  );
+    const noLimitsResponse = await setTeamLiveExportAccess(whalesyncTeamId, {
+      paused: false,
+      recordLimit: null,
+      fastestCadence: null,
+    });
+    expect(noLimitsResponse.data).toEqual({ scratchUserId: session.scratchUserId, updated: true });
+    if (prismaForDbRowAssertions) {
+      const subscriptions = await findSubscriptionRowsOfTeamShadowUserOrganization(
+        prismaForDbRowAssertions,
+        whalesyncTeamId,
+      );
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0].metadata).toEqual({ liveExportsPaused: false });
+    }
+  });
+
+  // 3d — a session's liveExportAccess is applied, and wins over the old subscription payload sent alongside it.
+  it("applies a session's liveExportAccess over the subscription payload it carries", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const liveExportAccess = { paused: true, recordLimit: 10, fastestCadence: 'frequent' };
+    const sessionResponse = await axios.post<SessionResponse>(
+      `${apiUrl}/internal/whalesync/sessions`,
+      { whalesyncTeamId, name: 'Access Team', liveExportAccess, subscription: { status: 'active' } },
+      { headers: adminHeaders, ...anyStatus },
+    );
+    expect(sessionResponse.status).toBe(201);
+
+    // The session stored exactly this access (paused, not the active subscription), so setting it again writes nothing.
+    const sameLiveExportAccessResponse = await setTeamLiveExportAccess(whalesyncTeamId, liveExportAccess);
+    expect(sameLiveExportAccessResponse.data).toEqual({
+      scratchUserId: sessionResponse.data.scratchUserId,
+      updated: false,
+    });
+
+    if (prismaForDbRowAssertions) {
+      const subscriptions = await findSubscriptionRowsOfTeamShadowUserOrganization(
+        prismaForDbRowAssertions,
+        whalesyncTeamId,
+      );
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0].metadata).toEqual({
+        liveExportsPaused: true,
+        liveExportRecordCountLimit: 10,
+        liveExportCadence: 'frequent',
+      });
+    }
+  });
+
+  // 3e — setting the Live Export access of a team with no shadow user is a no-op that creates nothing, and an access
+  // that is not whole is refused (400).
+  it('answers updated: false for a team with no shadow user, and 400 for a Live Export access that is not whole', async () => {
+    const teamWithoutShadowUser = createWhalesyncTeamIdForTest();
+    const noShadowUserResponse = await setTeamLiveExportAccess(teamWithoutShadowUser, {
+      paused: true,
+      recordLimit: null,
+      fastestCadence: null,
+    });
+    expect(noShadowUserResponse.status).toBe(200);
+    expect(noShadowUserResponse.data).toEqual({ scratchUserId: null, updated: false });
+    if (prismaForDbRowAssertions) {
+      expect(await prismaForDbRowAssertions.user.count({ where: { whalesyncTeamId: teamWithoutShadowUser } })).toBe(0);
+    }
+
+    const partialLiveExportAccessResponse = await setTeamLiveExportAccess(teamWithoutShadowUser, { paused: true });
+    expect(partialLiveExportAccessResponse.status).toBe(400);
+  });
 
   // 3 — idempotency: every member of a team reaches the same shadow user, each session an additive token
   it("gives every member's session the team's one shadow user and mints an additional token each call", async () => {
@@ -591,6 +712,12 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
         );
         expect(sessionResponse.status).toBe(409);
         expect((await patchSubscription(whalesyncTeamId, { status: 'active' })).status).toBe(409);
+        const setLiveExportAccessResponse = await setTeamLiveExportAccess(whalesyncTeamId, {
+          paused: true,
+          recordLimit: null,
+          fastestCadence: null,
+        });
+        expect(setLiveExportAccessResponse.status).toBe(409);
         expect((await listTeamLiveExports(whalesyncTeamId)).status).toBe(409);
         expect((await deprovisionTeam(whalesyncTeamId)).status).toBe(409);
 
