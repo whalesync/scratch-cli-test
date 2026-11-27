@@ -9,7 +9,7 @@
 
 We want Whalesync users to drive Scratch directly from the Whalesync product. Concretely, the Whalesync UI (**Dusky**, a Next.js app at `app.whalesync.com`) should be able to create Scratch workbooks, read job status, and otherwise call the Scratch API **as the acting Whalesync user**, without that user ever signing up for or logging into Scratch separately.
 
-To make this work, every Whalesync user gets a **shadow user** in the Scratch database, and Scratch must be able to authorize requests that originate in the Whalesync product and resolve them to the correct shadow user.
+To make this work, every Whalesync team gets a **shadow user** in the Scratch database (originally every Whalesync user did; see [A shadow user per Whalesync team](#a-shadow-user-per-whalesync-team-dev-13019)), and Scratch must be able to authorize requests that originate in the Whalesync product and resolve them to the correct shadow user.
 
 ### Hard constraint: Whalesync and Scratch use separate Clerk applications
 
@@ -21,7 +21,7 @@ Whalesync and Scratch each authenticate with **their own, separate Clerk applica
 
 ## Goals
 
-- Every Whalesync user maps 1:1 to a Scratch shadow user, created on demand.
+- Every Whalesync team maps 1:1 to a Scratch shadow user, created on demand.
 - Dusky calls the Scratch API **directly** (browser → Scratch), authenticated as the shadow user.
 - The Whalesync backend (**Bottlenose**) can call Scratch in two modes:
   - **User-scoped** — acting as a specific shadow user.
@@ -31,7 +31,7 @@ Whalesync and Scratch each authenticate with **their own, separate Clerk applica
 ## Non-goals (for v1)
 
 - Sharing a Clerk tenant or any SSO/identity federation between the two products.
-- Mapping Whalesync **teams/orgs** to shared Scratch organizations. Each shadow user gets its own auto-created Scratch org; cross-user workbook sharing is out of scope for v1 (see [Decision status](#decision-status)).
+- Mapping Whalesync **teams/orgs** to shared Scratch organizations. A team gets one shadow user, which gets its own auto-created Scratch org; cross-user workbook sharing is out of scope for v1 (see [Decision status](#decision-status)).
 - Proxying every Scratch call through Bottlenose (we explicitly want direct browser → Scratch; the proxy is noted only as an alternative).
 
 ## Core concept: swap the Whalesync JWT for a Scratch-native token
@@ -61,7 +61,7 @@ flowchart LR
   end
 
   Dusky -- "Whalesync Clerk JWT<br/>(stops here, never forwarded)" --> BN
-  BN -- "admin token + whalesyncUserId<br/>server-to-server" --> SC
+  BN -- "admin token + whalesyncTeamId<br/>server-to-server" --> SC
   SC -- "mints Scratch user token" --> BN
   BN -- "hands token to browser" --> Dusky
   Dusky == "Scratch user token only<br/>Authorization: API-Token" ==> SC
@@ -83,7 +83,7 @@ flowchart LR
 
   subgraph SC["Scratch / Spinner (trusted)"]
     ScratchAPI["Scratch API (NestJS :3010)"]
-    SCDB[("Scratch DB<br/>User (+ whalesyncUserId)<br/>ApiToken")]
+    SCDB[("Scratch DB<br/>User (+ whalesyncTeamId)<br/>ApiToken")]
   end
 
   Dusky -- "Clerk JWT — normal Whalesync auth" --> Bottlenose
@@ -101,13 +101,14 @@ The browser never holds the admin token. Bottlenose is the only thing that can p
 
 ## Identity model: the shadow user
 
-Key the shadow user on the **Whalesync user UUID** — it is immutable, unlike email, and unambiguous, unlike `clerkId` (which belongs to a different Clerk tenant). Add one unique field to Scratch's `User`:
+Key the shadow user on the **Whalesync team id** (`tm_…`): it is immutable, unlike a name or email, and unambiguous, unlike `clerkId` (which belongs to a different Clerk tenant). The v1 design keyed it on the Whalesync user UUID; [DEV-13019](https://linear.app/whalesync/issue/DEV-13019) moved it to the team (see [A shadow user per Whalesync team](#a-shadow-user-per-whalesync-team-dev-13019)). Scratch's `User` carries:
 
 ```prisma
 model User {
   // ... existing fields ...
-  clerkId         String? @unique   // existing column: real Clerk ID (user_…) for native users; synthetic "ws_<whalesyncUserId>" for shadow users
-  whalesyncUserId String? @unique   // UUID of the linked Whalesync user; null for native Scratch users
+  clerkId         String? @unique   // existing column: real Clerk ID (user_…) for native users; synthetic "ws_<whalesyncTeamId>" for a team's shadow user
+  whalesyncTeamId String? @unique   // the Whalesync team whose Live Exports this shadow user holds; null for native Scratch users
+  whalesyncUserId String? @unique   // v1's link to a Whalesync person; no longer read or written, dropped in a follow-up MR
 }
 
 model ApiToken {
@@ -119,126 +120,83 @@ model ApiToken {
 ```mermaid
 flowchart TB
   subgraph WS["Whalesync"]
-    WUser["User<br/>id: uuid (stable)<br/>clerkId, email"]
+    WTeam["Team<br/>id: tm_… (stable)<br/>members, name"]
   end
   subgraph SC["Scratch (shadow)"]
-    SUser["User<br/>whalesyncUserId (unique link)<br/>email, role = USER"]
+    SUser["User<br/>whalesyncTeamId (unique link)<br/>no email, role = USER"]
     Org["Organization<br/>(auto-created)"]
     WB["Workbook(s)"]
     UTok["ApiToken<br/>type = WHALESYNC_SESSION<br/>10-min expiresAt"]
   end
   Admin[["Scratch admin token<br/>one shared secret, Bottlenose only"]]
 
-  WUser -- "1:1, keyed by whalesyncUserId" --> SUser
+  WTeam -- "1:1, keyed by whalesyncTeamId" --> SUser
   SUser --> Org --> WB
   SUser --> UTok
   Admin -. "authorizes provisioning + minting" .-> SUser
 ```
 
-- `whalesyncUserId` is the idempotency key for provisioning and the link to the Whalesync identity. It does **not** force a Whalesync user to be a separate Scratch account — see [Email reconciliation](#email-reconciliation-dev-10331).
-- **Synthetic Clerk ID.** Scratch's `User.clerkId` is `@unique` and is populated by the existing creation routine, so each shadow user is given a generated one — prefixed `ws_`, concretely `ws_<whalesyncUserId>` — to differentiate it from a real Clerk ID (Clerk issues `user_…`). The prefix doubles as a discriminator: any server code that would otherwise call Clerk for a user can skip those whose `clerkId` starts with `ws_`, since they don't exist in Scratch's Clerk app. Deriving it from the Whalesync UUID keeps it unique and idempotent. The existing routine stamps the same `clerkId` on the auto-created Organization.
-- A `WHALESYNC_SESSION` token type lets these browser tokens get a short (10-minute) TTL, **bypass the API rate limiter**, and be revoked in bulk without touching a user's CLI/desktop tokens. v1 does **not** enforce `ApiToken.scopes`; the token type itself is the flag.
+- `whalesyncTeamId` is the idempotency key for provisioning and the link to the Whalesync team. Scratch keeps no record of the people in a team.
+- **Synthetic Clerk ID.** Scratch's `User.clerkId` is `@unique` and is populated by the existing creation routine, so each shadow user is given a generated one — prefixed `ws_`, concretely `ws_<whalesyncTeamId>` — to differentiate it from a real Clerk ID (Clerk issues `user_…`). The prefix doubles as a discriminator: any server code that would otherwise call Clerk for a user can skip those whose `clerkId` starts with `ws_`, since they don't exist in Scratch's Clerk app, and a user with that prefix is a **pure shadow user**. Deriving it from the team id keeps it unique and idempotent. The existing routine stamps the same `clerkId` on the auto-created Organization.
+- A `WHALESYNC_SESSION` token type lets these browser tokens get a short (10-minute) TTL, **bypass the API rate limiter**, and be told apart from a user's CLI/desktop tokens. v1 does **not** enforce `ApiToken.scopes`; the token type itself is the flag.
 - Provisioning reuses the **same** path Scratch runs today on first Clerk login (`getOrCreateUserFromClerk` → create User + Organization + default Workbook in `spinner/server/src/users/users.service.ts`). The only difference is the trigger: an explicit admin call instead of a JWT side effect.
-- 1 Whalesync user → 1 Scratch user → 1 Scratch org. Cross-user workbook sharing is out of scope for v1.
-
-### Email reconciliation (DEV-10331)
-
-Provisioning reconciles the incoming Whalesync email against the existing Scratch user base instead of forcing a separate account. The original v1 stop-gap stored shadow users with a `ws:`-prefixed email to dodge the `@unique` `User.email` constraint; [DEV-10331](https://linear.app/whalesync/issue/DEV-10331) **replaces** that prefix with real reconciliation. `getOrCreateShadowUserFromWhalesync` resolves the incoming `(whalesyncUserId, normalized email)` in order:
-
-1. **Already linked.** A Scratch user with this `whalesyncUserId` exists → reuse it (idempotent), refreshing `name`/`email` if changed. The email refresh is collision-safe (written only when no other user owns it) and organically strips any leftover `ws:` prefix from a pre-reconciliation shadow user.
-2. **Adopt by email.** An existing Scratch user owns the email and is **not** linked to any Whalesync user → link it by setting `whalesyncUserId`. The adopted user keeps its real `clerkId` (native Clerk login), email, organization, and workbooks — it becomes a dual-identity (native + Whalesync) account rather than a duplicate. A native Scratch user and the Whalesync user who shares their address are now **one** account. This link fires a dedicated `whalesync_account_linked` PostHog event carrying the Whalesync user id (it does not re-fire `account_user_created`, and does not reclassify the user as a shadow user).
-3. **Email linked to a different Whalesync user.** Two distinct Whalesync users share one address. The `@unique` email and `@unique` whalesyncUserId both forbid adopting, so we create a fresh shadow user with a **null email** and log a warning (surfaced, not silently swallowed). Rare.
-4. **Create fresh.** Nobody owns the email → create a shadow user with the real, un-prefixed email and a synthetic `ws_<whalesyncUserId>` clerkId.
-
-**No backfill migration is needed.** The shadow-user provisioning path has only ever run in local development — the Whalesync (Bottlenose/Dusky) wiring that calls it is not yet complete — so there are no `ws:`-prefixed rows in any shared environment to convert. Any leftover `ws:` rows in a local database are un-prefixed organically by the collision-safe refresh path (case 1) the next time that user provisions a session. If the `ws:` stop-gap ever does reach a shared environment before this lands, a one-time data migration would be the way to convert it — un-prefixing where the address is free and leaving genuine collisions for an explicit, reviewed merge (never merging users in SQL).
+- 1 Whalesync team → 1 Scratch user → 1 Scratch org. Cross-user workbook sharing is out of scope for v1.
 
 ### A shadow user per Whalesync team (DEV-13019)
 
 Whalesync moved everything a person owned to a team, and a team's Live Exports have to show for every member. So a
-shadow user now holds the Live Exports of one Whalesync **team**, keyed by a unique `User.whalesyncTeamId` (`tm_…`).
-Whichever member opens Live Export, Bottlenose asks for a session with the team's id and gets the team's shadow user.
-The rollout plan is `docs/plans/2026-11-25-live-exports-by-team.md` in the whalesync repo.
+shadow user holds the Live Exports of one Whalesync **team**, keyed by a unique `User.whalesyncTeamId` (`tm_…`), and
+every admin route names it by team. Scratch keeps no record of which person in a team created a Live Export or acted
+in a session: everything about a Live Export belongs to its team. The rollout plan is
+`docs/plans/2026-11-25-live-exports-by-team.md` in the whalesync repo.
 
 One shadow user per team, rather than one per person in a shared organization, because Scratch lists workbooks
 through per-user `WorkspacePermission` rows: a shadow user per person would need a row for every member on every Live
 Export, kept current as people join and leave.
 
-A session request that names a team (`whalesyncTeamId`) resolves in this order:
+**A session is for a team.** `POST /internal/whalesync/sessions` finds the team's shadow user, or creates a pure
+shadow user for it: clerkId `ws_<whalesyncTeamId>`, the team's `name` as its label, no email, and no Whalesync person
+id. An existing shadow user is reused as it is; its name is not refreshed. Any member's session reaches the same
+shadow user, so every member of a team with several members can open Live Export. Body keys the schema doesn't name
+are stripped, not rejected: Bottlenose sends `whalesyncUserId`, `whalesyncUserIsTeamsOnlyMember`, and `email` until
+its own change ships, and Scratch ignores them.
 
-1. **The team's shadow user.** Reused as it is. Its name and email are not refreshed, since several people act in one
-   team.
-2. **The acting person's shadow user from before teams**, when the request says they are the team's only member
-   (`whalesyncUserIsTeamsOnlyMember`). It carries their `whalesyncUserId` and no team id, so it becomes the team's and
-   the team id is recorded on it. Existing Live Exports stay where they are. This is removed once every existing
-   shadow user has its team.
-3. **A new pure shadow user**, with clerkId `ws_<whalesyncTeamId>` and no email. A team has no email, so a team's
-   shadow user is never matched to a native Scratch account by email, in either direction.
+**A team's shadow user is never a real Scratch account.** A team has no email, so its shadow user is never matched to
+a native Scratch account by email, in either direction: a native Clerk sign-up can't adopt it
+(`getOrCreateUserFromClerk` adopts by email), and provisioning never adopts a Scratch user either. The lookup by
+person and the adoption by email that came with it ([DEV-10331](https://linear.app/whalesync/issue/DEV-10331):
+reuse the user linked to a `whalesyncUserId`, else link the native Scratch user that owned the person's email) are
+gone. As a fail-safe, every admin route checks the user that holds the team id: when it isn't a pure shadow user (its
+clerkId doesn't start with `ws_`, so it has a real Scratch login), the route answers 409 and logs an error, and never
+hands out a session for it, changes its plan, lists its workbooks, or deletes it.
 
-A request that names no team is handled as before teams, by `whalesyncUserId`, for a Bottlenose that hasn't deployed
-its side yet.
+**The real Scratch accounts that were teams' shadow users are gone.** Before this, some teams' shadow users were real
+Scratch accounts: one adopted by email before teams, or a shadow user whose person signed in to Scratch before it got
+its team (22 in production on 2026-11-26). The `whalesync-teams-off-real-accounts` code migration moved each one's
+Live Exports to a new pure shadow user for its team, in an organization of its own, and unlinked the account. It has
+run in production and test, which had none left as of 2026-11-27, so the migration and the special cases it needed
+(the 409 for a teammate of a real account, and unlinking a real account on deprovision) have been removed.
 
-**While Bottlenose changes over, one shadow user answers both lookups.** A person who is their team's only member has
-one shadow user, found by team or by person. A shadow user from before teams keeps its `whalesyncUserId` when it gets
-its team, and one created for a team also gets its only member's `whalesyncUserId`. So a Bottlenose server still asking
-by person, during a deploy or after a revert, reaches the same Live Exports as one asking by team. In a team with
-several members nobody's own shadow user is the team's, and neither rule applies.
+**Shadow users that belong to no team are deprovisioned once.** Pure shadow users made for a person before teams and
+never given a team can't be reached through the admin channel any more (about 16 in test, none in production). The
+`whalesync-teamless-shadow-users-deprovision` code migration (Settings → Dev → Migrations, dry run supported) deletes
+them through the same routine as a team's deprovision. It selects them by data, skips and reports any that isn't a
+pure shadow user, holds a Live Export, or shares its organization with another member, and is idempotent.
 
-**A team's pure shadow user carries no person's email.** The email is cleared when a pure shadow user gets its team,
-and a lookup by person no longer refreshes the name or email of a row that has a team. Otherwise whoever later signed
-up for Scratch with that address, the person or someone who took the address over, would be given the team's shadow
-user and its Live Exports (`getOrCreateUserFromClerk` adopts by email).
+**A failed Live Export run names its team.** The notification Scratch sends Whalesync
+(`POST /internal/scratch/live-export-runs/finished`) always carries `whalesyncTeamId`, the team of the shadow user
+that owns the workbook, and Whalesync emails that team. It never carries a person's id. A workbook whose user belongs
+to no team is skipped and logged.
 
-**Shadow users made before teams get their team id two ways.** The first session or plan change that names their
-team records it (step 2). For the rest, Bottlenose pages through `GET /internal/whalesync/team-links/pending` and
-answers each Whalesync user id with that person's team on `POST /internal/whalesync/team-links`. A link is skipped
-and reported, never forced, when the shadow user already holds another team's Live Exports or the team already has a
-different shadow user.
-
-**A failed Live Export run names its team.** The notification Scratch sends Whalesync carries `whalesyncTeamId`, the
-team of the shadow user that owns the workbook, and Whalesync emails that team. A shadow user from before teams that
-hasn't been given its team yet sends its `whalesyncUserId` instead, and Whalesync works the team out from the person.
-Scratch keeps no record of which person in a team created a Live Export or acted in a session: everything about a
-Live Export belongs to its team.
-
-**A real Scratch account can be a team's shadow user**: one adopted by email before teams, or a shadow user whose
-person signed in to Scratch before it got its team. A session for it reaches that person's own workbooks too, so Scratch
-mints one only for the person it is linked to (`whalesyncUserId`) and answers anyone else in the team with a 409. On
-2026-11-26 production had 22 such accounts, 6 of which held Live Exports (36 Live Exports, 71 connections, 3
-schedules). No new ones are made: a team has no email, so its shadow user is never matched to a Scratch account.
-
-**The `whalesync-teams-off-real-accounts` code migration ends them** (Settings → Dev → Migrations). It finds its
-candidates in the data on every run, never by id: users with a `whalesyncTeamId` or `whalesyncUserId` that are not pure
-shadow users. For each, one at a time:
-
-- **Holds no Live Export:** unlinked, through the same routine as a deprovision
-  (`WhalesyncInternalService.unlinkRealScratchUserFromWhalesyncIdentity`): its `WHALESYNC_PLAN` subscription and
-  Whalesync sessions go, and both ids are cleared. The team's next session creates a pure shadow user.
-- **Holds Live Exports:** a new pure shadow user is made for the team (clerkId `ws_<whalesyncTeamId>`, no email) in an
-  organization of its own, which gets a copy of the account's Whalesync plan. Each Live Export is paused (its
-  connections quiesced and every schedule in it disabled, both behind crash-safe markers), its connection, workbook,
-  and scratch repos are renamed on scratch-git to the new organization (`POST /api/repo/manage/move`: atomic, never
-  overwrites, idempotent), its rows move to the new user and organization in one transaction (workbook, each
-  connection's `repoPath` and creator, schedules, the workspace permission, and the publish plans, jobs, and routine
-  runs that name the account), and it is released. Last, the account is unlinked and its `whalesyncTeamId` and
-  `whalesyncUserId` move to the new user in the same transaction, which refuses while a Live Export is still on the
-  account. The person keeps their account, organization, and every other workbook.
-
-An account is skipped and reported, never forced, when its state isn't what the migration expects: a routine run or job
-in progress (picked up by a later run), an organization with another member, a Live Export it didn't create, one
-pending deletion or shared with someone else, or a team that already has a pure shadow user. A dry run reports what
-each account would take. A run that stops at any step is finished by the next: the account stays linked, and so a
-candidate, until the final unlink commits, and every step before it is idempotent.
-
-**Once it has run everywhere, no team's shadow user is a real Scratch account**, and nothing depends on one having been:
-every Live Export sits with a pure shadow user that owns its own organization, as for any team that started after
-teams. The 409 for a teammate of a real account, the real-account branch of deprovisioning a team, and the migration
-itself then exist only for accounts that are gone, and can be removed.
+**`User.whalesyncUserId` is left over.** The server no longer reads or writes it, and PostHog's
+`is_whalesync_shadow_user` keys on `whalesyncTeamId`. The column stays until a follow-up MR drops it, because a server
+of the previous version still writes it during a deploy.
 
 ## The two Bottlenose → Scratch channels
 
 | Channel              | Credential                       | Used for                                                                 | Auth on Scratch                         |
 | -------------------- | -------------------------------- | ------------------------------------------------------------------------ | --------------------------------------- |
-| **Admin**            | Single shared secret, Bottlenose-only | Ensure/create shadow users, mint user tokens, deprovision           | **new** `ScratchAdminGuard`             |
+| **Admin**            | Single shared secret, Bottlenose-only | Ensure a team's shadow user and mint its tokens, apply its plan, list its Live Exports, deprovision | **new** `ScratchAdminGuard` |
 | **User-scoped**      | A shadow user's `ApiToken`       | Any operation acting as that user (also what the browser carries)        | **existing** `API_TOKEN_STRATEGY`       |
 
 The admin secret lives only in Bottlenose, loaded from GCP Secret Manager (the existing pattern in `whalesync/api/bottlenose/src/secrets/secrets.service.ts`). It is never exposed to the browser.
@@ -255,12 +213,12 @@ sequenceDiagram
 
   Note over D,B: User already authenticated to Whalesync (Clerk JWT)
   D->>B: GET /rest/scratch/session  (Authorization: Bearer Whalesync-JWT)
-  B->>B: Validate JWT against Whalesync's Clerk; extract whalesyncUserId, email
-  B->>S: POST /internal/whalesync/sessions<br/>X-Scratch-Admin-Token + {whalesyncUserId, email, name}
+  B->>B: Validate JWT against Whalesync's Clerk; work out the team the user is working in
+  B->>S: POST /internal/whalesync/sessions<br/>X-Scratch-Admin-Token + {whalesyncTeamId, name}
   S->>S: ScratchAdminGuard validates admin token
-  S->>DB: find User by whalesyncUserId
+  S->>DB: find User by whalesyncTeamId
   alt shadow user missing
-    S->>DB: create User(whalesyncUserId + synthetic ws_ clerkId), Org, default Workbook
+    S->>DB: create User(whalesyncTeamId + synthetic ws_ clerkId, no email), Org, default Workbook
   end
   S->>DB: create 10-minute ApiToken (type = WHALESYNC_SESSION)
   S-->>B: { scratchUserId, apiToken, expiresAt }
@@ -270,63 +228,51 @@ sequenceDiagram
 
 ### New Scratch internal endpoints (behind `ScratchAdminGuard`)
 
-Mounted under an internal-only route prefix, ideally network/IP-restricted in addition to the shared secret.
+Mounted under an internal-only route prefix, ideally network/IP-restricted in addition to the shared secret. Every
+route names a Whalesync team, and every one answers 409 (and logs an error) when the user holding that team id is not
+a pure shadow user (see [A shadow user per Whalesync team](#a-shadow-user-per-whalesync-team-dev-13019)).
 
 ```
 POST /internal/whalesync/sessions
   Header: X-Scratch-Admin-Token: <secret>
-  Body:   { whalesyncUserId: string, whalesyncTeamId?: string, whalesyncUserIsTeamsOnlyMember?: boolean,
-            email: string, name?: string }
+  Body:   { whalesyncTeamId: string, name?: string, subscription?: { status, … } }
   200:    { scratchUserId, apiToken, expiresAt }   // apiToken TTL = 10 minutes; expiresAt is a UTC ISO-8601 timestamp
-  409:    the team's shadow user is another person's real Scratch account
-  Behavior: ensure-shadow-user-then-mint. With whalesyncTeamId the shadow user is the team's and
-            whalesyncUserId is the person acting; idempotent on whalesyncTeamId. Without it,
-            idempotent on whalesyncUserId, as before teams.
+  409:    the user holding the team id is a real Scratch account (fail-safe)
+  Behavior: ensure-team-shadow-user-then-mint, idempotent on whalesyncTeamId. A missing shadow user
+            is created as a pure one: clerkId ws_<whalesyncTeamId>, name as its label, no email.
+            Applies the Whalesync plan (subscription, or { status: 'active' } when omitted).
+            Unknown body keys are stripped, not rejected.
             Folds provisioning + token minting into one round-trip.
 
-POST /internal/whalesync/users
-  Ensure (create-if-missing) a shadow user. For eager provisioning / lifecycle hooks.
-
-DELETE /internal/whalesync/users/:whalesyncUserId
-  Deprovision a shadow user. Must route through WorkbookService.delete so the
-  user's repos/jobs/tables are cleaned up (per the deletion rule in CLAUDE.md).
-  204, idempotent. Only a pure shadow user (synthetic ws_ clerkId) is deleted.
-  A real Scratch account linked to Whalesync (adopted by email, or signed in
-  natively) is unlinked instead: its Live Export workbooks, WHALESYNC_PLAN
-  subscription, and session tokens go; the user, org, and native workbooks
-  stay (DEV-12578).
-
-GET /internal/whalesync/users/:whalesyncUserId/live-exports
-  200:    { liveExports: [{ id, name, createdAt, updatedAt }] }   // newest first
-  Behavior: lists the user's Live Export workbooks, skipping those pending deletion, for
-            Whalesync's admin Users dev tool. Read-only: an unknown user gets an empty
-            list and is not created.
-```
-
-By team (DEV-13019). Where a route takes `?whalesyncUserId=`, it is the team's one member, used to find a shadow user
-that has no team id yet:
-
-```
 PATCH /internal/whalesync/subscription
-  Body:   { whalesyncTeamId?: string, whalesyncUserId?: string, subscription }   // at least one id
-  Behavior: applies the team's plan to its shadow user, and records the team id on a shadow user
-            made before teams.
+  Body:   { whalesyncTeamId: string, subscription: { status, … } }
+  200:    { scratchUserId, updated, planType }
+          // { scratchUserId: null, updated: false, planType: null } when the team has no shadow user
+  409:    the organization has a real Scratch Stripe subscription, or the fail-safe
+  Behavior: applies a Whalesync plan change (expire / cancel / upgrade) to the team's shadow
+            user. Only a WHALESYNC_PLAN subscription is mutated.
 
-DELETE /internal/whalesync/teams/:whalesyncTeamId[?whalesyncUserId=]
-  204, idempotent. Deletes a pure shadow user; unlinks a real Scratch account, as for a user.
-
-GET /internal/whalesync/teams/:whalesyncTeamId/live-exports[?whalesyncUserId=]
+GET /internal/whalesync/teams/:whalesyncTeamId/live-exports
   200:    { liveExports: [{ id, name, createdAt, updatedAt }] }   // newest first
+  Behavior: lists the team's Live Export workbooks, skipping those pending deletion, for
+            Whalesync's admin dev tools. Read-only: a team with no shadow user gets an empty
+            list and none is created.
 
-GET /internal/whalesync/team-links/pending[?after=<whalesyncUserId>]
-  200:    { whalesyncUserIds: string[] }   // shadow users with no team id, ascending, 500 a page
-
-POST /internal/whalesync/team-links
-  Body:   { links: [{ whalesyncUserId, whalesyncTeamId }] }   // at most 500
-  200:    { linked, alreadyLinked, skipped: [{ whalesyncUserId, whalesyncTeamId, reason }] }
+DELETE /internal/whalesync/teams/:whalesyncTeamId
+  204, idempotent: a team with no shadow user is a no-op.
+  Deletes the team's pure shadow user (with its tokens) and, when it is the sole member,
+  its organization and every workbook that organization owns, through
+  WorkbookService.executeHardDeleteWorkbook so the repos/jobs/tables are cleaned up (per
+  the deletion rule in CLAUDE.md).
 ```
 
-Minting reuses `generateUserApiToken` (`spinner/server/src/users/users.service.ts`).
+Removed with DEV-13019, as Scratch stopped knowing Whalesync people: every route by person
+(`POST /internal/whalesync/users`, `DELETE /internal/whalesync/users/:whalesyncUserId`, and its `/sessions`,
+`/subscription`, and `/live-exports` routes), the team-link backfill (`GET /internal/whalesync/team-links/pending` and
+`POST /internal/whalesync/team-links`), and the `?whalesyncUserId=` query parameter on the team routes.
+
+Minting creates a `WHALESYNC_SESSION` `ApiToken` row for the shadow user (`mintWhalesyncSessionToken` in
+`spinner/server/src/users/users.service.ts`); it records no Whalesync person.
 
 ### New Bottlenose endpoint (for Dusky)
 
@@ -375,7 +321,7 @@ flowchart TD
   Q -- yes --> AdminG["ScratchAdminGuard"]
   AdminG --> AdminChk{"valid admin token?"}
   AdminChk -- no --> R401a["401"]
-  AdminChk -- yes --> ActAs["Operate on target user<br/>from request body"]
+  AdminChk -- yes --> ActAs["Operate on the team's shadow user<br/>named in the body or path"]
 
   Q -- "no (normal API)" --> Auth["ScratchAuthGuard (existing)"]
   Auth --> Strat{"Authorization header?"}
@@ -405,11 +351,11 @@ Four concrete requirements, none of which involve Clerk:
 
 3. **Refresh.** Session tokens live **10 minutes**. Dusky proactively refreshes shortly before expiry and reactively on a `401` by re-calling `GET /rest/scratch/session`. Bottlenose caches the token per Whalesync user until near expiry, so this is not a round-trip on every page load.
 
-4. **Revocation.** Because these are real `ApiToken` rows (`type = WHALESYNC_SESSION`), Bottlenose can revoke a user's Scratch session tokens in bulk on logout/archive via the admin channel — without touching the user's CLI/desktop tokens.
+4. **Revocation.** These are real `ApiToken` rows (`type = WHALESYNC_SESSION`), so each one stops working after its 10 minutes, and all of them go with the shadow user when the team is deprovisioned. There is no per-person revocation: a team's members share one shadow user, and Scratch does not record which person a token was minted for.
 
 ## Why this is safe
 
-The security crux: **Scratch trusts no identity claim that arrives via the browser.** A browser cannot tell Scratch "I am Whalesync user X" — it can only present a token Scratch already bound to a shadow user during the server-to-server exchange. The `whalesyncUserId → shadow user` mapping is asserted **only** over the admin channel, authenticated by the admin secret, after Bottlenose has validated the real Whalesync JWT.
+The security crux: **Scratch trusts no identity claim that arrives via the browser.** A browser cannot tell Scratch "I am Whalesync team X" — it can only present a token Scratch already bound to a shadow user during the server-to-server exchange. The `whalesyncTeamId → shadow user` mapping is asserted **only** over the admin channel, authenticated by the admin secret, after Bottlenose has validated the real Whalesync JWT.
 
 Each credential is validated by exactly the party that issued or can verify it; none crosses a boundary it cannot be verified at. Keeping the Clerk apps separate is therefore not a problem the design fights — it is the reason the boundary stays clean. The only thing we give up versus a shared-Clerk world is statelessness: Scratch cannot lazily auto-provision from a JWT, so provisioning becomes an explicit admin call instead of a first-request side effect. That is a worthwhile trade for keeping the identity domains isolated.
 
@@ -424,9 +370,9 @@ Each credential is validated by exactly the party that issued or can verify it; 
 
 ### Scratch (`spinner/server`) — additive
 
-- **Schema:** add `whalesyncUserId String? @unique` to `User`; add a `WHALESYNC_SESSION` value to `ApiToken.type` (`spinner/server/prisma/schema.prisma`).
+- **Schema:** add `whalesyncTeamId String? @unique` to `User` (v1's `whalesyncUserId` column is no longer used and is dropped in a follow-up MR); add a `WHALESYNC_SESSION` value to `ApiToken.type` (`spinner/server/prisma/schema.prisma`).
 - **`ScratchAdminGuard` + admin strategy:** validate `X-Scratch-Admin-Token` against `SCRATCH_ADMIN_API_KEY`, constant-time; lock to internal network.
-- **`spinner/server/src/internal/whalesync.controller.ts`:** the endpoints above, reusing existing provisioning + token services. Shadow-user creation generates a synthetic `clerkId` of `ws_<whalesyncUserId>` to satisfy the `@unique` `clerkId` column and mark the user as Whalesync-provisioned.
+- **`spinner/server/src/internal/whalesync.controller.ts`:** the endpoints above, reusing existing provisioning + token services. Shadow-user creation generates a synthetic `clerkId` of `ws_<whalesyncTeamId>` to satisfy the `@unique` `clerkId` column and mark the user as Whalesync-provisioned.
 - **CORS:** allow `app.whalesync.com` (+ test/staging) origins with `Authorization` on preflight.
 - **Rate limiting:** `ApiRateLimitGuard` skips requests authenticated by a `WHALESYNC_SESSION` token, so Dusky's job-status polling isn't throttled.
 - **Token TTL:** mint `WHALESYNC_SESSION` tokens with a 10-minute expiry.
@@ -455,15 +401,15 @@ If we did not want any Scratch token in the browser at all, Bottlenose could pro
 | ------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------- |
 | Clerk topology                             | ✅ Resolved | Separate Clerk apps; must stay separate. Drives the whole design.                                            |
 | Direct browser → Scratch (vs proxy)        | ✅ Resolved | Direct, via a brokered Scratch-native token.                                                                 |
-| Shadow-user mapping key                    | ✅ Resolved | Whalesync user UUID (`whalesyncUserId`, unique on Scratch `User`).                                           |
-| Shadow-user Clerk ID                        | ✅ Resolved | Synthetic `ws_<whalesyncUserId>` (native users get Clerk's `user_…`); satisfies the `@unique` `clerkId`.     |
-| Org model                                  | ✅ Resolved | Each shadow user gets its own auto-created Scratch org. Cross-user workbook sharing is out of scope for v1.  |
-| Whalesync teams                            | ✅ Resolved | One shadow user per Whalesync team, keyed by `whalesyncTeamId` ([DEV-13019](https://linear.app/whalesync/issue/DEV-13019)). See "A shadow user per Whalesync team". |
+| Shadow-user mapping key                    | ✅ Resolved | Whalesync team id (`whalesyncTeamId`, unique on Scratch `User`). Was the Whalesync user UUID before [DEV-13019](https://linear.app/whalesync/issue/DEV-13019). |
+| Shadow-user Clerk ID                        | ✅ Resolved | Synthetic `ws_<whalesyncTeamId>` (native users get Clerk's `user_…`); satisfies the `@unique` `clerkId`.     |
+| Org model                                  | ✅ Resolved | Each team's shadow user gets its own auto-created Scratch org. Cross-user workbook sharing is out of scope for v1. |
+| Whalesync teams                            | ✅ Resolved | One shadow user per Whalesync team, keyed by `whalesyncTeamId` ([DEV-13019](https://linear.app/whalesync/issue/DEV-13019)). See [A shadow user per Whalesync team](#a-shadow-user-per-whalesync-team-dev-13019). |
 | Token TTL                                  | ✅ Resolved | **10 minutes.** Dusky refreshes before expiry (and on `401`).                                                |
 | Token scopes                               | ✅ Resolved | `ApiToken.scopes` not enforced in v1; the `WHALESYNC_SESSION` token type is the flag.                        |
 | Rate limiting                              | ✅ Resolved | `WHALESYNC_SESSION` tokens bypass `ApiRateLimitGuard`.                                                       |
 | Scratch base URL (per environment)         | ✅ Resolved | Bottlenose: env var sourced from a GCP secret. Dusky: baked in at Docker build time.                         |
-| Native + shadow user with the same email   | ✅ Resolved | **Reconcile by email** ([DEV-10331](https://linear.app/whalesync/issue/DEV-10331)): adopt/link the existing user instead of duplicating. Superseded the original "keep separate / `ws:` prefix" stop-gap. See [Email reconciliation](#email-reconciliation-dev-10331). |
+| Native + shadow user with the same email   | ✅ Resolved | **Never matched.** A team's shadow user has no email, so neither side adopts the other. Replaced the adoption by email of [DEV-10331](https://linear.app/whalesync/issue/DEV-10331), which itself replaced a `ws:` email prefix. See [A shadow user per Whalesync team](#a-shadow-user-per-whalesync-team-dev-13019). |
 | Token storage in browser                   | 🔶 Open     | In-memory bearer (leaning, given the 10-min TTL) vs httpOnly cookie.                                         |
 | Admin-token transport & rotation           | 🔶 Open     | `X-Scratch-Admin-Token` header proposed; confirm + define rotation window.                                   |
 | Eager vs lazy shadow-user provisioning     | 🔶 Open     | Lazy-on-first-session proposed.                                                                              |
@@ -479,12 +425,12 @@ If we did not want any Scratch token in the browser at all, Bottlenose could pro
 Decisions captured from review (folded into the design above and the [Decision status](#decision-status) table):
 
 - **Token TTL → 10 minutes.** Dusky refreshes before expiry and on `401`; Bottlenose caches per Whalesync user.
-- **Token scopes → not enforced in v1.** `ApiToken.scopes` is left unenforced; the `WHALESYNC_SESSION` token type is the flag that drives TTL, rate-limit bypass, and bulk revocation.
+- **Token scopes → not enforced in v1.** `ApiToken.scopes` is left unenforced; the `WHALESYNC_SESSION` token type is the flag that drives TTL and rate-limit bypass.
 - **Scratch base URL → configuration, not response.** Bottlenose reads it from an env var sourced from a GCP secret; Dusky bakes it in at Docker build time.
-- **Email collisions → reconcile (superseded).** The original v1 decision kept a native Scratch user and a same-email Whalesync user as two distinct accounts (via a `ws:` email prefix). [DEV-10331](https://linear.app/whalesync/issue/DEV-10331) **replaced** this: provisioning now adopts/links an existing user that owns the email, falling back to a real un-prefixed email when none does. See [Email reconciliation](#email-reconciliation-dev-10331).
+- **Email collisions → none (twice superseded).** The original v1 decision kept a native Scratch user and a same-email Whalesync user as two distinct accounts (via a `ws:` email prefix). [DEV-10331](https://linear.app/whalesync/issue/DEV-10331) replaced this by adopting the existing user that owned the email. [DEV-13019](https://linear.app/whalesync/issue/DEV-13019) removed that: a team's shadow user has no email, so it is never matched to a Scratch account. See [A shadow user per Whalesync team](#a-shadow-user-per-whalesync-team-dev-13019).
 - **Rate limiting → bypass for session tokens.** `WHALESYNC_SESSION` tokens are exempt from `ApiRateLimitGuard` so Dusky's polling isn't throttled.
-- **Org/team → shadow org per user.** Each shadow user gets its own auto-created Scratch org; cross-user workbook sharing is out of scope for the initial release.
-- **Shadow-user Clerk ID → synthetic `ws_` value.** Each shadow user gets `clerkId = ws_<whalesyncUserId>` to satisfy the `@unique` `clerkId` column and to distinguish it from a real Clerk ID; server code can skip Clerk calls for `ws_`-prefixed users.
+- **Org/team → shadow org per team.** Each team's shadow user gets its own auto-created Scratch org; cross-user workbook sharing is out of scope for the initial release.
+- **Shadow-user Clerk ID → synthetic `ws_` value.** Each shadow user gets `clerkId = ws_<whalesyncTeamId>` to satisfy the `@unique` `clerkId` column and to distinguish it from a real Clerk ID; server code can skip Clerk calls for `ws_`-prefixed users.
 
 ## References
 
@@ -492,7 +438,7 @@ Decisions captured from review (folded into the design above and the [Decision s
 
 - Auth guard chain: `spinner/server/src/auth/scratch-auth.guard.ts` (`AuthGuard(['API_TOKEN_STRATEGY', 'clerk'])`)
 - API token strategy: `spinner/server/src/auth/api-token.strategy.ts` (`Authorization: API-Token <token>`)
-- Clerk strategy + provisioning: `spinner/server/src/auth/clerk.strategy.ts`, `spinner/server/src/users/users.service.ts` (`getOrCreateUserFromClerk`, `generateUserApiToken`)
+- Clerk strategy + provisioning: `spinner/server/src/auth/clerk.strategy.ts`, `spinner/server/src/users/users.service.ts` (`getOrCreateUserFromClerk`, `getOrCreateShadowUserForWhalesyncTeam`, `mintWhalesyncSessionToken`)
 - User / ApiToken models: `spinner/server/prisma/schema.prisma`
 - Workbook + job endpoints: `spinner/server/src/workbook/workbook.controller.ts`, `spinner/server/src/job/job.controller.ts`
 - Permissions: `spinner/server/src/auth/permissions.ts`

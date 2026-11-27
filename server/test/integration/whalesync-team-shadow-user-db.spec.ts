@@ -1,20 +1,43 @@
 /**
- * DB-backed integration test for DEV-13019 (a Whalesync shadow user per team), run against real Postgres.
+ * DB-backed integration test for DEV-13019 (one Whalesync shadow user per team), run against real Postgres.
  *
- * The unit specs mock Prisma. This spec validates what those mocks can't (migration
- * `20261125120000_user_whalesync_team_id`):
- *   - the unique `whalesyncTeamId`, which keeps two shadow users from holding one team's Live Exports;
- *   - recording a team on a shadow user made before teams, guarded on the row still having none;
- *   - the page of shadow users that have no team yet, and its cursor.
- * Every id is unique to this run, so the assertions hold on a database that has other data.
+ * The unit specs mock Prisma. This spec runs the real `UsersService`, `WhalesyncInternalService`,
+ * `StripePaymentService` (its Whalesync plan path never calls Stripe), and `WorkbookService` hard delete against
+ * Postgres, and validates what those mocks can't:
+ *   - the unique `whalesyncTeamId`, which keeps two shadow users from holding one team's Live Exports, including
+ *     when two first sessions for a team race;
+ *   - a team's shadow user is a pure shadow user (`ws_<team>` clerkId, no email, no Whalesync person), and any
+ *     member's session reaches it;
+ *   - the fail-safe: a real Scratch account carrying a team id is refused (409) by every Whalesync operation, and
+ *     nothing about it changes;
+ *   - deprovisioning deletes the shadow user, its organization, and the organization's workbooks, idempotently.
+ *
+ * Only scratch-git is faked (a recorder of deleted repo ids), since this suite doesn't run it, and the default
+ * workspace a new user gets is stubbed for the same reason. Every id is unique to this run, so the assertions hold on
+ * a database that has other data.
  */
 
 import { ConflictException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { createOrganizationId, createUserId } from '@spinner/shared-types';
+import {
+  createConnectorAccountId,
+  createOrganizationId,
+  createUserId,
+  createWorkbookId,
+  createWorkspacePermissionId,
+  ScratchPlanType,
+  TokenType,
+} from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
+import { AuditLogService } from 'src/audit/audit-log.service';
+import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
+import { WhalesyncInternalService } from 'src/internal/whalesync-internal.service';
+import { StripePaymentService } from 'src/payment/stripe-payment.service';
+import { FileIndexService } from 'src/publish-plan/file-index.service';
+import { RecreatedIdMapService } from 'src/publish-plan/recreated-id-map.service';
 import { UsersService } from 'src/users/users.service';
+import { WorkbookService } from 'src/workbook/workbook.service';
 import { createIntegrationTestDbService } from './integration-db-service';
 
 /** A Whalesync team id shaped like the real ones (`tm_` and 12 characters), unique to this run. */
@@ -26,32 +49,14 @@ describe('Whalesync shadow user per team (DB-backed)', () => {
   let prisma: PrismaClient;
   let db: DbService;
   let usersService: UsersService;
+  let whalesyncInternalService: WhalesyncInternalService;
 
-  const createdWhalesyncUserIds: string[] = [];
+  /** Repo ids the fake scratch-git was asked to delete, in order. */
+  const scratchGitRepoIdsDeleted: string[] = [];
+
   const createdWhalesyncTeamIds: string[] = [];
-
-  /** A shadow user as they were made before teams: linked to one Whalesync person, with no team id. */
-  async function createShadowUserMadeBeforeTeams(options: { realScratchAccount?: boolean } = {}): Promise<{
-    scratchUserId: string;
-    whalesyncUserId: string;
-  }> {
-    const scratchUserId = createUserId();
-    const organizationId = createOrganizationId();
-    const whalesyncUserId = randomUUID();
-    createdWhalesyncUserIds.push(whalesyncUserId);
-    const clerkId = options.realScratchAccount ? `user_${whalesyncUserId}` : `ws_${whalesyncUserId}`;
-    await prisma.organization.create({ data: { id: organizationId, name: 'Team shadow test org', clerkId } });
-    await prisma.user.create({
-      data: {
-        id: scratchUserId,
-        email: `team-shadow-${scratchUserId}@example.com`,
-        organizationId,
-        whalesyncUserId,
-        clerkId,
-      },
-    });
-    return { scratchUserId, whalesyncUserId };
-  }
+  const createdRealAccountUserIds: string[] = [];
+  const createdRealAccountOrganizationIds: string[] = [];
 
   function newWhalesyncTeamId(): string {
     const whalesyncTeamId = createWhalesyncTeamIdForTest();
@@ -59,220 +64,389 @@ describe('Whalesync shadow user per team (DB-backed)', () => {
     return whalesyncTeamId;
   }
 
-  /** A session request for a team, as the team's only member unless said otherwise. */
-  function ensureTeamShadowUser(
-    whalesyncTeamId: string,
-    actingWhalesyncUserId: string,
-    options: { actingUserIsTeamsOnlyMember: boolean } = { actingUserIsTeamsOnlyMember: true },
-  ) {
-    return usersService.getOrCreateShadowUserFromWhalesync(
-      actingWhalesyncUserId,
-      `acting-${actingWhalesyncUserId}@example.com`,
-      'Acting Person',
-      undefined,
-      { whalesyncTeamId, ...options },
-    );
-  }
-
-  /** A session request by person alone, as a Whalesync server that hasn't changed over to teams makes it. */
-  function ensureShadowUserByPerson(whalesyncUserId: string) {
-    createdWhalesyncUserIds.push(whalesyncUserId);
-    return usersService.getOrCreateShadowUserFromWhalesync(
-      whalesyncUserId,
-      `person-${whalesyncUserId}@example.com`,
-      'A Person',
-    );
-  }
-
   beforeAll(() => {
     prisma = new PrismaClient();
     db = createIntegrationTestDbService(prisma);
+
+    const postHogService = {
+      identifyNewUser: jest.fn(),
+      trackSubscriptionChanged: jest.fn(),
+      trackRemoveWorkbook: jest.fn(),
+    };
+    const auditLogService = new AuditLogService(db);
+    const stripePaymentService = new StripePaymentService(
+      {
+        getStripeApiKey: () => 'sk_test_integration_never_called',
+        getStripeWebhookSecret: () => 'whsec_integration_never_called',
+      } as unknown as ScratchConfigService,
+      db,
+      postHogService as never,
+      {} as never,
+      auditLogService,
+      {} as never,
+      {} as never,
+    );
     usersService = new UsersService(
       db,
-      { identifyNewUser: jest.fn(), trackWhalesyncAccountLinked: jest.fn() } as never,
+      postHogService as never,
       {} as never,
       { sendMessage: jest.fn() } as never,
       {} as never,
       // The default workspace needs scratch-git, which this spec does not run; it isn't what is under test.
       { createWorkbookWithConfigRepo: jest.fn().mockResolvedValue({ id: 'wkb_unused' }) } as never,
       { getBooleanFlag: jest.fn().mockResolvedValue(false) } as never,
-      { ensureWhalesyncPlanSubscription: jest.fn().mockResolvedValue(undefined) } as never,
+      stripePaymentService,
     );
+    const fakeScratchGitService = {
+      resolveConnectionRepoPath: async (connectorAccountId: string) =>
+        (await prisma.connectorAccount.findUniqueOrThrow({ where: { id: connectorAccountId } })).repoPath,
+      deleteRepo: (repoId: string) => {
+        scratchGitRepoIdsDeleted.push(repoId);
+        return Promise.resolve();
+      },
+    };
+    const fakeWorkbookRepoService = {
+      deleteWorkbookRepo: (organizationId: string, workbookId: string) => {
+        scratchGitRepoIdsDeleted.push(`${organizationId}/${workbookId}/${workbookId}`);
+        return Promise.resolve();
+      },
+      deleteScratchRepo: (organizationId: string, workbookId: string) => {
+        scratchGitRepoIdsDeleted.push(`${organizationId}/${workbookId}/scratch`);
+        return Promise.resolve();
+      },
+    };
+    const workbookService = new WorkbookService(
+      db,
+      {} as never,
+      {} as never,
+      postHogService as never,
+      {} as never,
+      auditLogService,
+      fakeScratchGitService as never,
+      new FileIndexService(db),
+      {
+        deleteForWorkbook: (workbookId: string) => prisma.fileReference.deleteMany({ where: { workbookId } }),
+      } as never,
+      new RecreatedIdMapService(db),
+      fakeWorkbookRepoService as never,
+      {} as never,
+    );
+    whalesyncInternalService = new WhalesyncInternalService(usersService, workbookService, stripePaymentService);
   });
 
   afterAll(async () => {
-    const createdUsers = await prisma.user.findMany({
+    const shadowUsersCreatedThisRun = await prisma.user.findMany({
       where: {
         OR: [
-          { whalesyncUserId: { in: createdWhalesyncUserIds } },
           { whalesyncTeamId: { in: createdWhalesyncTeamIds } },
+          { clerkId: { in: createdWhalesyncTeamIds.map((whalesyncTeamId) => `ws_${whalesyncTeamId}`) } },
         ],
       },
       select: { id: true, organizationId: true },
     });
-    await prisma.user.deleteMany({ where: { id: { in: createdUsers.map((user) => user.id) } } });
-    await prisma.organization.deleteMany({
-      where: { id: { in: createdUsers.flatMap((user) => (user.organizationId ? [user.organizationId] : [])) } },
+    const allUserIds = [...createdRealAccountUserIds, ...shadowUsersCreatedThisRun.map((user) => user.id)];
+    const allOrganizationIds = [
+      ...createdRealAccountOrganizationIds,
+      ...shadowUsersCreatedThisRun.flatMap((user) => (user.organizationId ? [user.organizationId] : [])),
+    ];
+    await prisma.auditLogEvent.deleteMany({
+      where: { OR: [{ organizationId: { in: allOrganizationIds } }, { userId: { in: allUserIds } }] },
     });
+    // Workbooks, subscriptions, and permissions cascade from the organization; tokens from the user.
+    await prisma.workbook.deleteMany({ where: { organizationId: { in: allOrganizationIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: allUserIds } } });
+    await prisma.organization.deleteMany({ where: { id: { in: allOrganizationIds } } });
     await prisma.$disconnect();
   });
 
-  it("makes a person's shadow user from before teams their team's, once", async () => {
-    const { scratchUserId, whalesyncUserId } = await createShadowUserMadeBeforeTeams();
+  /** A Live Export (with one connection) or a native workbook owned by the user's organization. */
+  async function createWorkbookOwnedByUserOrganization(options: {
+    ownerUserId: string;
+    organizationId: string;
+    managedBy: 'ws_export' | null;
+    isPendingDelete?: boolean;
+    name?: string;
+  }): Promise<{ workbookId: string; connectionRepoPath: string }> {
+    const workbookId = createWorkbookId();
+    const connectorAccountId = createConnectorAccountId();
+    const connectionRepoPath = `${options.organizationId}/${workbookId}/${connectorAccountId}`;
+    await prisma.workbook.create({
+      data: {
+        id: workbookId,
+        name: options.name ?? (options.managedBy ? 'A Live Export' : 'A native workbook'),
+        organizationId: options.organizationId,
+        userId: options.ownerUserId,
+        managedBy: options.managedBy ?? undefined,
+        isPendingDelete: options.isPendingDelete ?? false,
+        workspacePermissions: { create: { id: createWorkspacePermissionId(), userId: options.ownerUserId } },
+      },
+    });
+    await prisma.connectorAccount.create({
+      data: {
+        id: connectorAccountId,
+        workbookId,
+        userId: options.ownerUserId,
+        service: 'AIRTABLE',
+        displayName: 'Airtable',
+        repoPath: connectionRepoPath,
+        encryptedCredentials: { sealed: `credentials-${connectorAccountId}` },
+      },
+    });
+    return { workbookId, connectionRepoPath };
+  }
+
+  /** A person's own Scratch account (real Clerk login) that carries a team id, with a native workbook. */
+  async function createRealScratchAccountCarryingTeam(): Promise<{
+    realUserId: string;
+    organizationId: string;
+    whalesyncTeamId: string;
+    nativeWorkbookId: string;
+  }> {
+    const realUserId = createUserId();
+    const organizationId = createOrganizationId();
+    const whalesyncTeamId = newWhalesyncTeamId();
+    createdRealAccountUserIds.push(realUserId);
+    createdRealAccountOrganizationIds.push(organizationId);
+    await prisma.organization.create({
+      data: { id: organizationId, name: 'Real account org', clerkId: `user_${realUserId}` },
+    });
+    await prisma.user.create({
+      data: {
+        id: realUserId,
+        clerkId: `user_${realUserId}`,
+        email: `real-${realUserId.toLowerCase()}@example.com`,
+        organizationId,
+        whalesyncTeamId,
+      },
+    });
+    const { workbookId: nativeWorkbookId } = await createWorkbookOwnedByUserOrganization({
+      ownerUserId: realUserId,
+      organizationId,
+      managedBy: null,
+    });
+    return { realUserId, organizationId, whalesyncTeamId, nativeWorkbookId };
+  }
+
+  it('creates a pure shadow user for a team on its first session, and reuses it on the next', async () => {
     const whalesyncTeamId = newWhalesyncTeamId();
 
-    const first = await ensureTeamShadowUser(whalesyncTeamId, whalesyncUserId);
-    const again = await ensureTeamShadowUser(whalesyncTeamId, whalesyncUserId);
+    const firstSession = await whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Acme Team');
+    const secondSession = await whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Acme Team');
 
-    expect(first.id).toBe(scratchUserId);
-    expect(again.id).toBe(scratchUserId);
-    const stored = await prisma.user.findUniqueOrThrow({ where: { id: scratchUserId } });
-    expect(stored.whalesyncTeamId).toBe(whalesyncTeamId);
-    // Still the person's too, so a Whalesync that hasn't deployed its side keeps finding it by user id.
-    expect(stored.whalesyncUserId).toBe(whalesyncUserId);
-    // A pure shadow user no longer carries its person's email once it is a team's.
-    expect(stored.email).toBeNull();
+    expect(secondSession.scratchUserId).toBe(firstSession.scratchUserId);
+    expect(secondSession.apiToken).not.toBe(firstSession.apiToken);
+    const storedShadowUser = await prisma.user.findUniqueOrThrow({
+      where: { id: firstSession.scratchUserId },
+      include: { apiTokens: true, organization: { include: { subscriptions: true } } },
+    });
+    expect(storedShadowUser).toMatchObject({
+      clerkId: `ws_${whalesyncTeamId}`,
+      whalesyncTeamId,
+      whalesyncUserId: null,
+      email: null,
+      name: 'Acme Team',
+    });
+    expect(storedShadowUser.organizationId).toEqual(expect.any(String));
+    expect(
+      storedShadowUser.apiTokens.filter((token) => token.type === (TokenType.WHALESYNC_SESSION as string)),
+    ).toHaveLength(2);
+    // The Whalesync plan was granted once, not once per session.
+    expect(storedShadowUser.organization?.subscriptions.map((subscription) => subscription.planType)).toEqual([
+      ScratchPlanType.WHALESYNC_PLAN,
+    ]);
+    expect(await prisma.user.count({ where: { whalesyncTeamId } })).toBe(1);
   });
 
-  it('finds one shadow user whether Whalesync asks by team or by person, in either order', async () => {
-    // By team first: a server on the new code creates it, then one still on the old code asks by person.
-    const teamFirstTeamId = newWhalesyncTeamId();
-    const teamFirstUserId = randomUUID();
-    const createdByTeam = await ensureTeamShadowUser(teamFirstTeamId, teamFirstUserId);
-    const foundByPerson = await ensureShadowUserByPerson(teamFirstUserId);
+  it("gives every member of a team the team's one shadow user", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
 
-    expect(foundByPerson.id).toBe(createdByTeam.id);
-    // Asking by person must not put that person's email on the team's shadow user.
-    expect((await prisma.user.findUniqueOrThrow({ where: { id: createdByTeam.id } })).email).toBeNull();
-
-    // By person first, then by team.
-    const personFirstTeamId = newWhalesyncTeamId();
-    const personFirstUserId = randomUUID();
-    const createdByPerson = await ensureShadowUserByPerson(personFirstUserId);
-    const foundByTeam = await ensureTeamShadowUser(personFirstTeamId, personFirstUserId);
-
-    expect(foundByTeam.id).toBe(createdByPerson.id);
-    expect(await prisma.user.count({ where: { whalesyncTeamId: { in: [teamFirstTeamId, personFirstTeamId] } } })).toBe(
-      2,
+    // Two members' sessions: Scratch is told nothing about who is acting, so they differ only in what Whalesync sends.
+    const firstMemberSession = await whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Team');
+    const secondMemberSession = await whalesyncInternalService.ensureSessionForWhalesyncTeam(
+      whalesyncTeamId,
+      'Renamed Team',
+      { status: 'active', whalesyncProductType: 'growth' },
     );
+
+    expect(secondMemberSession.scratchUserId).toBe(firstMemberSession.scratchUserId);
+    // An existing shadow user's name is left alone.
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: firstMemberSession.scratchUserId } })).name).toBe(
+      'Team',
+    );
+    expect(await prisma.user.count({ where: { clerkId: `ws_${whalesyncTeamId}` } })).toBe(1);
   });
 
-  it("leaves a person's own shadow user alone when they act in a team with several members", async () => {
-    const { scratchUserId, whalesyncUserId } = await createShadowUserMadeBeforeTeams();
-    const sharedTeamId = newWhalesyncTeamId();
-
-    const forSharedTeam = await ensureTeamShadowUser(sharedTeamId, whalesyncUserId, {
-      actingUserIsTeamsOnlyMember: false,
-    });
-
-    expect(forSharedTeam.id).not.toBe(scratchUserId);
-    expect(forSharedTeam.whalesyncUserId).toBeNull();
-    const ownShadowUser = await prisma.user.findUniqueOrThrow({ where: { id: scratchUserId } });
-    expect(ownShadowUser.whalesyncTeamId).toBeNull();
-    expect(ownShadowUser.email).not.toBeNull();
-  });
-
-  it("gives a teammate the team's shadow user, not one of their own", async () => {
-    const { scratchUserId, whalesyncUserId } = await createShadowUserMadeBeforeTeams();
-    const whalesyncTeamId = newWhalesyncTeamId();
-    await ensureTeamShadowUser(whalesyncTeamId, whalesyncUserId);
-
-    const forTeammate = await ensureTeamShadowUser(whalesyncTeamId, randomUUID(), {
-      actingUserIsTeamsOnlyMember: false,
-    });
-
-    expect(forTeammate.id).toBe(scratchUserId);
-  });
-
-  it('creates a pure shadow user with no email for a team that has none', async () => {
+  it('ends two concurrent first sessions for one team with one shadow user', async () => {
     const whalesyncTeamId = newWhalesyncTeamId();
 
-    const onlyMemberUserId = randomUUID();
-    const created = await ensureTeamShadowUser(whalesyncTeamId, onlyMemberUserId);
+    const concurrentSessions = await Promise.all([
+      whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Racing Team'),
+      whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Racing Team'),
+    ]);
 
-    expect(created.clerkId).toBe(`ws_${whalesyncTeamId}`);
-    expect(created.whalesyncTeamId).toBe(whalesyncTeamId);
-    // Its only member's id too, so a lookup by person finds the same shadow user.
-    expect(created.whalesyncUserId).toBe(onlyMemberUserId);
-    expect(created.email).toBeNull();
-    expect(created.organizationId).toEqual(expect.any(String));
+    expect(concurrentSessions[1].scratchUserId).toBe(concurrentSessions[0].scratchUserId);
+    expect(await prisma.user.count({ where: { whalesyncTeamId } })).toBe(1);
+    expect(await prisma.user.count({ where: { clerkId: `ws_${whalesyncTeamId}` } })).toBe(1);
+    expect(
+      await prisma.apiToken.count({
+        where: { userId: concurrentSessions[0].scratchUserId, type: TokenType.WHALESYNC_SESSION },
+      }),
+    ).toBe(2);
   });
 
-  it("does not take over a shadow user that already holds another team's Live Exports", async () => {
-    const { scratchUserId, whalesyncUserId } = await createShadowUserMadeBeforeTeams();
-    const firstTeamId = newWhalesyncTeamId();
-    const secondTeamId = newWhalesyncTeamId();
-    await ensureTeamShadowUser(firstTeamId, whalesyncUserId);
-
-    const forSecondTeam = await ensureTeamShadowUser(secondTeamId, whalesyncUserId);
-
-    expect(forSecondTeam.id).not.toBe(scratchUserId);
-    expect(forSecondTeam.whalesyncTeamId).toBe(secondTeamId);
-    // The person's id is unique and already on the first team's shadow user.
-    expect(forSecondTeam.whalesyncUserId).toBeNull();
-    expect((await prisma.user.findUniqueOrThrow({ where: { id: scratchUserId } })).whalesyncTeamId).toBe(firstTeamId);
-  });
-
-  it("refuses a teammate a session for a real Scratch account that holds the team's Live Exports", async () => {
-    const { scratchUserId, whalesyncUserId } = await createShadowUserMadeBeforeTeams({ realScratchAccount: true });
+  it("applies a subscription change to the team's shadow user, and is a no-op for a team with none", async () => {
     const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Team');
 
-    expect((await ensureTeamShadowUser(whalesyncTeamId, whalesyncUserId)).id).toBe(scratchUserId);
     await expect(
-      ensureTeamShadowUser(whalesyncTeamId, randomUUID(), { actingUserIsTeamsOnlyMember: false }),
-    ).rejects.toBeInstanceOf(ConflictException);
-    // A real account keeps its email: it is how its person signs in to Scratch.
-    expect((await prisma.user.findUniqueOrThrow({ where: { id: scratchUserId } })).email).not.toBeNull();
+      whalesyncInternalService.updateWhalesyncSubscription(whalesyncTeamId, { status: 'cancelled' }),
+    ).resolves.toEqual({ scratchUserId: session.scratchUserId, updated: true, planType: null });
+    const shadowUser = await prisma.user.findUniqueOrThrow({ where: { id: session.scratchUserId } });
+    const subscriptions = await prisma.subscription.findMany({
+      where: { organizationId: shadowUser.organizationId ?? '' },
+    });
+    expect(subscriptions.map((subscription) => subscription.stripeStatus)).toEqual(['canceled']);
+
+    await expect(
+      whalesyncInternalService.updateWhalesyncSubscription(newWhalesyncTeamId(), { status: 'expired' }),
+    ).resolves.toEqual({ scratchUserId: null, updated: false, planType: null });
   });
 
-  it('pages through the shadow users that have no team, and links each to the team Whalesync names', async () => {
-    const unlinked = [
-      await createShadowUserMadeBeforeTeams(),
-      await createShadowUserMadeBeforeTeams(),
-      await createShadowUserMadeBeforeTeams(),
-    ].sort((a, b) => a.whalesyncUserId.localeCompare(b.whalesyncUserId));
-    const idsOfUnlinked = unlinked.map((shadowUser) => shadowUser.whalesyncUserId);
-    const alreadyLinked = await createShadowUserMadeBeforeTeams();
-    const teamOfAlreadyLinked = newWhalesyncTeamId();
-    await ensureTeamShadowUser(teamOfAlreadyLinked, alreadyLinked.whalesyncUserId);
+  it("lists a team's Live Exports, newest first, skipping those pending deletion and native workbooks", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Team');
+    const shadowUser = await prisma.user.findUniqueOrThrow({ where: { id: session.scratchUserId } });
+    const shadowUserOrganizationId = shadowUser.organizationId ?? '';
+    const olderLiveExport = await createWorkbookOwnedByUserOrganization({
+      ownerUserId: shadowUser.id,
+      organizationId: shadowUserOrganizationId,
+      managedBy: 'ws_export',
+      name: 'Older export',
+    });
+    const newerLiveExport = await createWorkbookOwnedByUserOrganization({
+      ownerUserId: shadowUser.id,
+      organizationId: shadowUserOrganizationId,
+      managedBy: 'ws_export',
+      name: 'Newer export',
+    });
+    await prisma.workbook.update({
+      where: { id: olderLiveExport.workbookId },
+      data: { createdAt: new Date(Date.now() - 60_000) },
+    });
+    await createWorkbookOwnedByUserOrganization({
+      ownerUserId: shadowUser.id,
+      organizationId: shadowUserOrganizationId,
+      managedBy: 'ws_export',
+      isPendingDelete: true,
+    });
+    await createWorkbookOwnedByUserOrganization({
+      ownerUserId: shadowUser.id,
+      organizationId: shadowUserOrganizationId,
+      managedBy: null,
+    });
 
-    // The database may hold other shadow users with no team, so look only at this test's.
-    const pendingBefore = await usersService.findWhalesyncUserIdsOfShadowUsersWithoutTeam(undefined, 100_000);
-    expect(pendingBefore.filter((id) => idsOfUnlinked.includes(id))).toEqual(idsOfUnlinked);
-    expect(pendingBefore).not.toContain(alreadyLinked.whalesyncUserId);
-    expect([...pendingBefore].sort((a, b) => a.localeCompare(b))).toEqual(pendingBefore);
+    const listedLiveExports = await whalesyncInternalService.listLiveExportsForWhalesyncTeam(whalesyncTeamId);
 
-    const pendingAfterFirst = await usersService.findWhalesyncUserIdsOfShadowUsersWithoutTeam(
-      idsOfUnlinked[0],
-      100_000,
-    );
-    expect(pendingAfterFirst).not.toContain(idsOfUnlinked[0]);
-    expect(pendingAfterFirst).toEqual(expect.arrayContaining(idsOfUnlinked.slice(1)));
-
-    const teamForFirst = newWhalesyncTeamId();
-    const result = await usersService.linkShadowUsersToWhalesyncTeams([
-      { whalesyncUserId: idsOfUnlinked[0], whalesyncTeamId: teamForFirst },
-      // Already carries this team.
-      { whalesyncUserId: alreadyLinked.whalesyncUserId, whalesyncTeamId: teamOfAlreadyLinked },
-      // Already carries a different team.
-      { whalesyncUserId: alreadyLinked.whalesyncUserId, whalesyncTeamId: newWhalesyncTeamId() },
-      // The team already has a shadow user: the unique index refuses a second.
-      { whalesyncUserId: idsOfUnlinked[1], whalesyncTeamId: teamOfAlreadyLinked },
-      { whalesyncUserId: randomUUID(), whalesyncTeamId: newWhalesyncTeamId() },
+    expect(listedLiveExports.liveExports.map((liveExport) => liveExport.id)).toEqual([
+      newerLiveExport.workbookId,
+      olderLiveExport.workbookId,
     ]);
+    // Read-only: a team with no shadow user gets an empty list, and none is created.
+    const teamWithoutShadowUser = newWhalesyncTeamId();
+    await expect(whalesyncInternalService.listLiveExportsForWhalesyncTeam(teamWithoutShadowUser)).resolves.toEqual({
+      liveExports: [],
+    });
+    expect(await prisma.user.count({ where: { whalesyncTeamId: teamWithoutShadowUser } })).toBe(0);
+  });
 
-    expect(result.linked).toBe(1);
-    expect(result.alreadyLinked).toBe(1);
-    expect(result.skipped.map((skipped) => skipped.reason)).toEqual([
-      'linked_to_another_team',
-      'team_has_another_shadow_user',
-      'no_shadow_user',
-    ]);
-    const pendingAfter = await usersService.findWhalesyncUserIdsOfShadowUsersWithoutTeam(undefined, 100_000);
-    expect(pendingAfter).not.toContain(idsOfUnlinked[0]);
-    expect(pendingAfter).toEqual(expect.arrayContaining(idsOfUnlinked.slice(1)));
-    expect((await prisma.user.findUniqueOrThrow({ where: { id: unlinked[0].scratchUserId } })).whalesyncTeamId).toBe(
-      teamForFirst,
+  it('refuses every Whalesync operation on a real Scratch account that carries the team id, changing nothing', async () => {
+    const realAccount = await createRealScratchAccountCarryingTeam();
+    const realAccountBefore = await prisma.user.findUniqueOrThrow({ where: { id: realAccount.realUserId } });
+
+    await expect(
+      whalesyncInternalService.ensureSessionForWhalesyncTeam(realAccount.whalesyncTeamId, 'Team'),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      whalesyncInternalService.updateWhalesyncSubscription(realAccount.whalesyncTeamId, { status: 'active' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      whalesyncInternalService.listLiveExportsForWhalesyncTeam(realAccount.whalesyncTeamId),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(whalesyncInternalService.deprovisionWhalesyncTeam(realAccount.whalesyncTeamId)).rejects.toBeInstanceOf(
+      ConflictException,
     );
+
+    expect(await prisma.user.findUniqueOrThrow({ where: { id: realAccount.realUserId } })).toEqual(realAccountBefore);
+    expect(await prisma.organization.findUnique({ where: { id: realAccount.organizationId } })).not.toBeNull();
+    expect(await prisma.workbook.findUnique({ where: { id: realAccount.nativeWorkbookId } })).not.toBeNull();
+    expect(await prisma.apiToken.count({ where: { userId: realAccount.realUserId } })).toBe(0);
+    expect(await prisma.subscription.count({ where: { organizationId: realAccount.organizationId } })).toBe(0);
+    // No shadow user was created beside it for the team.
+    expect(await prisma.user.count({ where: { clerkId: `ws_${realAccount.whalesyncTeamId}` } })).toBe(0);
+  });
+
+  it("deprovisions a team by deleting its shadow user, organization, and the organization's workbooks, idempotently", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId, 'Team');
+    const shadowUser = await prisma.user.findUniqueOrThrow({ where: { id: session.scratchUserId } });
+    const shadowUserOrganizationId = shadowUser.organizationId ?? '';
+    const liveExport = await createWorkbookOwnedByUserOrganization({
+      ownerUserId: shadowUser.id,
+      organizationId: shadowUserOrganizationId,
+      managedBy: 'ws_export',
+    });
+    const defaultWorkbook = await createWorkbookOwnedByUserOrganization({
+      ownerUserId: shadowUser.id,
+      organizationId: shadowUserOrganizationId,
+      managedBy: null,
+    });
+    // A workbook another organization shared with the shadow user is not the shadow user's to delete.
+    const otherOrganizationId = createOrganizationId();
+    const otherOrganizationOwnerUserId = createUserId();
+    createdRealAccountOrganizationIds.push(otherOrganizationId);
+    createdRealAccountUserIds.push(otherOrganizationOwnerUserId);
+    await prisma.organization.create({
+      data: { id: otherOrganizationId, name: 'Sharing org', clerkId: `user_${otherOrganizationOwnerUserId}` },
+    });
+    await prisma.user.create({
+      data: {
+        id: otherOrganizationOwnerUserId,
+        clerkId: `user_${otherOrganizationOwnerUserId}`,
+        organizationId: otherOrganizationId,
+      },
+    });
+    const sharedWorkbook = await createWorkbookOwnedByUserOrganization({
+      ownerUserId: otherOrganizationOwnerUserId,
+      organizationId: otherOrganizationId,
+      managedBy: null,
+    });
+    await prisma.workspacePermission.create({
+      data: { id: createWorkspacePermissionId(), userId: shadowUser.id, workbookId: sharedWorkbook.workbookId },
+    });
+
+    await whalesyncInternalService.deprovisionWhalesyncTeam(whalesyncTeamId);
+
+    expect(await prisma.user.findUnique({ where: { id: shadowUser.id } })).toBeNull();
+    expect(await prisma.organization.findUnique({ where: { id: shadowUserOrganizationId } })).toBeNull();
+    expect(
+      await prisma.workbook.count({ where: { id: { in: [liveExport.workbookId, defaultWorkbook.workbookId] } } }),
+    ).toBe(0);
+    expect(await prisma.apiToken.count({ where: { userId: shadowUser.id } })).toBe(0);
+    expect(scratchGitRepoIdsDeleted).toEqual(
+      expect.arrayContaining([
+        liveExport.connectionRepoPath,
+        `${shadowUserOrganizationId}/${liveExport.workbookId}/${liveExport.workbookId}`,
+        defaultWorkbook.connectionRepoPath,
+      ]),
+    );
+    expect(await prisma.workbook.findUnique({ where: { id: sharedWorkbook.workbookId } })).not.toBeNull();
+    expect(scratchGitRepoIdsDeleted).not.toContain(sharedWorkbook.connectionRepoPath);
+
+    // A retry (or a team that was never provisioned) is a no-op.
+    await expect(whalesyncInternalService.deprovisionWhalesyncTeam(whalesyncTeamId)).resolves.toBeUndefined();
+    await expect(whalesyncInternalService.deprovisionWhalesyncTeam(newWhalesyncTeamId())).resolves.toBeUndefined();
+    // A new session after deprovisioning starts the team over with a fresh shadow user.
+    const sessionAfterDeprovision = await whalesyncInternalService.ensureSessionForWhalesyncTeam(whalesyncTeamId);
+    expect(sessionAfterDeprovision.scratchUserId).not.toBe(shadowUser.id);
   });
 });

@@ -102,8 +102,8 @@ export class WhalesyncRunNotifierService implements OnModuleInit {
 
   /**
    * The routine executor's hook, called once when a run transitions to `failed`. Queues the run for Whalesync when it
-   * is a Live Export with a Whalesync owner, and does nothing otherwise. Never throws and makes no HTTP call; the
-   * sweeper cron delivers the queued row.
+   * is a Live Export whose user belongs to a Whalesync team, and does nothing otherwise. Never throws and makes no
+   * HTTP call; the sweeper cron delivers the queued row.
    */
   async enqueueForRun(runId: RoutineRunId): Promise<void> {
     try {
@@ -123,7 +123,7 @@ export class WhalesyncRunNotifierService implements OnModuleInit {
 
   /**
    * Queues a `WhalesyncRunNotification` for the run when it is a failed Live Export (`ws_export`) run whose workbook
-   * has a Whalesync owner and is not being deleted. Returns true when it queued a deliverable notification, and false
+   * belongs to a Whalesync team and is not being deleted. Returns true when it queued a deliverable notification, and false
    * when the run isn't eligible or already has one. Shared by the executor's hook and the sweeper's backfill.
    */
   async enqueueNotificationIfRunIsEligible(runId: RoutineRunId): Promise<boolean> {
@@ -145,7 +145,7 @@ export class WhalesyncRunNotifierService implements OnModuleInit {
             name: true,
             managedBy: true,
             isPendingDelete: true,
-            user: { select: { whalesyncUserId: true, whalesyncTeamId: true } },
+            user: { select: { whalesyncTeamId: true } },
           },
         },
       },
@@ -159,13 +159,12 @@ export class WhalesyncRunNotifierService implements OnModuleInit {
       return false;
     }
     // The workbook's shadow user holds the Live Exports of one Whalesync team (DEV-13019), which is who Whalesync
-    // tells. One made before teams that hasn't been given its team yet names the person it was made for instead.
-    const whalesyncTeamId = run.workbook.user?.whalesyncTeamId ?? undefined;
-    const whalesyncUserId = run.workbook.user?.whalesyncUserId ?? undefined;
-    if (!whalesyncTeamId && !whalesyncUserId) {
+    // tells. A workbook whose user belongs to no team has nobody to tell.
+    const whalesyncTeamId = run.workbook.user?.whalesyncTeamId;
+    if (!whalesyncTeamId) {
       WSLogger.info({
         source: LOG_SOURCE,
-        message: `Not notifying Whalesync about failed Live Export run ${run.id}: its workbook has no Whalesync owner`,
+        message: `Not notifying Whalesync about failed Live Export run ${run.id}: its workbook's user belongs to no Whalesync team`,
         routineRunId: run.id,
         workbookId: run.workbookId,
       });
@@ -173,8 +172,7 @@ export class WhalesyncRunNotifierService implements OnModuleInit {
     }
 
     const unvalidatedNotificationPayload = {
-      ...(whalesyncTeamId ? { whalesyncTeamId } : {}),
-      ...(whalesyncUserId ? { whalesyncUserId } : {}),
+      whalesyncTeamId,
       workbookId: run.workbookId,
       workbookName: run.workbook.name ?? UNNAMED_LIVE_EXPORT_DISPLAY_NAME,
       routineFilePath: run.routineFilePath,

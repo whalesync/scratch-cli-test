@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { ScratchPlanType, SubscriptionId, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
 import type { RequestWithUser } from 'src/auth/types';
@@ -53,7 +54,7 @@ export function isSystemActor(actor: Actor): boolean {
 
 /**
  * Prefix of the synthetic clerkId given to a user Whalesync provisioned with no Clerk login: `ws_<whalesyncTeamId>`
- * for a team's shadow user, `ws_<whalesyncUserId>` for one made for a person before teams.
+ * for a team's shadow user (`ws_<Whalesync person id>` on older ones, made before teams).
  */
 export const WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX = 'ws_';
 
@@ -71,6 +72,29 @@ export function pureShadowUserClerkIdForWhalesyncTeam(whalesyncTeamId: string): 
  */
 export function isPureWhalesyncShadowUser(user: Pick<UserCluster.User, 'clerkId'>): boolean {
   return user.clerkId?.startsWith(WHALESYNC_SHADOW_USER_CLERK_ID_PREFIX) === true;
+}
+
+/**
+ * The fail-safe on the Whalesync channel (DEV-13019): it may only hand out a session for, change the plan of, list, or
+ * delete a pure shadow user. Nothing can make a team's shadow user a real Scratch account any more (a pure team shadow
+ * user has no email for a native sign-up to adopt it by), so this never fires; if it does, the request is refused
+ * with a 409 and logged as an error rather than reaching a person's own account.
+ */
+export function assertIsPureWhalesyncShadowUser(
+  user: Pick<UserCluster.User, 'id' | 'clerkId' | 'whalesyncTeamId'>,
+  attemptedOperation: 'session' | 'subscription' | 'list' | 'delete',
+): void {
+  if (isPureWhalesyncShadowUser(user)) {
+    return;
+  }
+  WSLogger.error({
+    source: 'users.assertIsPureWhalesyncShadowUser',
+    message: `Refused a Whalesync ${attemptedOperation} request: Scratch user ${user.id} has a real Clerk login, so it is not a pure shadow user`,
+    userId: user.id,
+    whalesyncTeamId: user.whalesyncTeamId,
+    attemptedOperation,
+  });
+  throw new ConflictException("This Whalesync team's Scratch user is a real Scratch account; refusing to act on it.");
 }
 
 export function userToActor(user: UserCluster.User): Actor {

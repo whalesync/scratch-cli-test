@@ -110,7 +110,7 @@ export class WhalesyncRunNotificationSweeperService {
 
 /**
  * Failed Live Export runs that finished between an hour and a couple of minutes before `now`, belong to a workbook
- * with a Whalesync owner that isn't being deleted, and have no `WhalesyncRunNotification`: the runs the executor's
+ * whose user belongs to a Whalesync team, isn't being deleted, and have no `WhalesyncRunNotification`: the runs the executor's
  * hook never queued.
  */
 export async function findRecentlyFailedLiveExportRunIdsWithoutWhalesyncNotification(
@@ -127,7 +127,7 @@ export async function findRecentlyFailedLiveExportRunIdsWithoutWhalesyncNotifica
       workbook: {
         managedBy: WorkbookManager.ws_export,
         isPendingDelete: false,
-        user: { OR: [{ whalesyncTeamId: { not: null } }, { whalesyncUserId: { not: null } }] },
+        user: { whalesyncTeamId: { not: null } },
       },
       whalesyncRunNotification: { is: null },
     },

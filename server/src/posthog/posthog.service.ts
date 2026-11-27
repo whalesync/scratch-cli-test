@@ -90,17 +90,17 @@ export class PostHogService implements OnModuleDestroy {
     const signedUpAt = user.createdAt.toISOString().slice(0, 10);
 
     // Shadow users provisioned from Whalesync are flagged with a durable person property so
-    // Scratch-growth dashboards and funnels can exclude them. `is_whalesync_shadow_user` is set
+    // Scratch-growth dashboards and funnels can exclude them. A shadow user holds one Whalesync team's
+    // Live Exports, so it is the team id that marks one (DEV-13019). `is_whalesync_shadow_user` is set
     // for every user (true for shadow, explicitly false for native) to keep the exclusion filter
     // unambiguous, and is set via `$set` (not `$set_once`) so it stays correct if a user is ever
     // reconciled from shadow to native later.
-    const isWhalesyncShadowUser = !!user.whalesyncUserId || !!user.whalesyncTeamId;
+    const isWhalesyncShadowUser = !!user.whalesyncTeamId;
 
     const eventProperties = {
       email: user.email,
       name: user.name,
       is_whalesync_shadow_user: isWhalesyncShadowUser,
-      whalesync_user_id: user.whalesyncUserId ?? null,
       whalesync_team_id: user.whalesyncTeamId ?? null,
       $set_once: {
         signed_up_at: signedUpAt,
@@ -117,7 +117,6 @@ export class PostHogService implements OnModuleDestroy {
         email: user.email,
         role: user.role,
         is_whalesync_shadow_user: isWhalesyncShadowUser,
-        whalesync_user_id: user.whalesyncUserId ?? null,
         whalesync_team_id: user.whalesyncTeamId ?? null,
         $set_once: {
           signed_up_at: signedUpAt,
@@ -134,37 +133,15 @@ export class PostHogService implements OnModuleDestroy {
   }
 
   /**
-   * Fires when an existing Scratch user is linked (adopted) to a Whalesync identity by the
-   * email-reconciliation path (`UsersService.getOrCreateShadowUserFromWhalesync`) — i.e. a native
-   * Scratch account and the Whalesync user that shares its address became one account. This is a
-   * link, not a creation, so it is a dedicated event rather than another ACCOUNT_USER_CREATED.
-   *
-   * The `whalesync_user_id` is recorded both as an event property and `$set` on the person so the
-   * link is queryable. `is_whalesync_shadow_user` is deliberately left untouched (false): an adopted
-   * user is a real native user, not a pure shadow user, and must not be excluded from growth funnels.
-   */
-  public trackWhalesyncAccountLinked(user: User, whalesyncUserId: string): void {
-    this.captureEvent(PostHogEventName.WHALESYNC_ACCOUNT_LINKED, user, {
-      whalesync_user_id: whalesyncUserId,
-      email: user.email,
-      role: user.role,
-      $set: {
-        whalesync_user_id: whalesyncUserId,
-      },
-    });
-  }
-
-  /**
    * Fires when a Whalesync shadow user is adopted into a native Clerk identity by the email-match path
    * (`UsersService.getOrCreateUserFromClerk`) — a purely-Whalesync account and the real Clerk login
-   * that shares its address became one dual-identity account. The mirror of
-   * {@link trackWhalesyncAccountLinked}: a link, not a creation, so it is a dedicated event rather than
-   * another ACCOUNT_USER_CREATED. The real Clerk id is recorded as `clerk_id`.
+   * that shares its address became one dual-identity account. A link, not a creation, so it is a
+   * dedicated event rather than another ACCOUNT_USER_CREATED. The real Clerk id is recorded as `clerk_id`.
    */
   public trackClerkAccountLinked(user: User, clerkId: string): void {
     this.captureEvent(PostHogEventName.CLERK_ACCOUNT_LINKED, user, {
       clerk_id: clerkId,
-      whalesync_user_id: user.whalesyncUserId,
+      whalesync_team_id: user.whalesyncTeamId,
       email: user.email,
       role: user.role,
     });
@@ -585,17 +562,10 @@ export class PostHogService implements OnModuleDestroy {
 export enum PostHogEventName {
   ACCOUNT_USER_CREATED = 'account_user_created',
   /**
-   * DEV-10331: an existing Scratch user was linked (adopted) to a Whalesync identity by the
-   * email-reconciliation path — a native account and the same-email Whalesync user became one.
-   * Distinct from ACCOUNT_USER_CREATED (creation, not linking). Properties:
-   * { whalesync_user_id, email, role } and a `$set` of `whalesync_user_id` on the person.
-   */
-  WHALESYNC_ACCOUNT_LINKED = 'whalesync_account_linked',
-  /**
    * DEV-10731: a Whalesync shadow user (synthetic ws_ clerkId) signed into Scratch natively for the
    * first time, so their existing row was adopted into a real Clerk identity by the email-match path
-   * in `UsersService.getOrCreateUserFromClerk` — the mirror of WHALESYNC_ACCOUNT_LINKED. A link, not
-   * a creation. Properties: { clerk_id, whalesync_user_id, email, role }.
+   * in `UsersService.getOrCreateUserFromClerk`. A link, not a creation. Properties:
+   * { clerk_id, whalesync_team_id, email, role }.
    */
   CLERK_ACCOUNT_LINKED = 'clerk_account_linked',
   /**

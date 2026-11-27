@@ -53,64 +53,38 @@ describe('PostHogService.identifyNewUser', () => {
     (service as unknown as { postHog: MockPostHogClient }).postHog = mockClient;
   });
 
-  it('flags a Whalesync shadow user with the person properties on identify and the creation event', () => {
+  it("flags a Whalesync team's shadow user with the person properties on identify and the creation event", () => {
     const shadowUser = makeUser({
       id: 'usr_shadow',
-      clerkId: 'ws_wsu-123',
-      whalesyncUserId: 'wsu-123',
-      email: 'shadow@example.com',
+      clerkId: 'ws_tm_acme',
+      whalesyncTeamId: 'tm_acme',
     });
 
     service.identifyNewUser(shadowUser);
 
     const identifyProps = identifyProperties(mockClient);
     expect(identifyProps.is_whalesync_shadow_user).toBe(true);
-    expect(identifyProps.whalesync_user_id).toBe('wsu-123');
+    expect(identifyProps.whalesync_team_id).toBe('tm_acme');
+    expect(identifyProps).not.toHaveProperty('whalesync_user_id');
 
     const createdEvent = capturedEvents(mockClient).find((event) => event.event === 'account_user_created');
     expect(createdEvent?.properties.is_whalesync_shadow_user).toBe(true);
-    expect(createdEvent?.properties.whalesync_user_id).toBe('wsu-123');
+    expect(createdEvent?.properties.whalesync_team_id).toBe('tm_acme');
+    expect(createdEvent?.properties).not.toHaveProperty('whalesync_user_id');
   });
 
-  it('marks a native user as not a shadow user with a null whalesync id', () => {
+  it('keys is_whalesync_shadow_user on the team id, not on a leftover Whalesync person id', () => {
+    service.identifyNewUser(makeUser({ clerkId: 'ws_wsu-123', whalesyncUserId: 'wsu-123', whalesyncTeamId: null }));
+
+    expect(identifyProperties(mockClient).is_whalesync_shadow_user).toBe(false);
+  });
+
+  it('marks a native user as not a shadow user with a null whalesync team id', () => {
     service.identifyNewUser(makeUser());
 
     const identifyProps = identifyProperties(mockClient);
     expect(identifyProps.is_whalesync_shadow_user).toBe(false);
-    expect(identifyProps.whalesync_user_id).toBeNull();
-  });
-});
-
-describe('PostHogService.trackWhalesyncAccountLinked', () => {
-  let service: PostHogService;
-  let mockClient: MockPostHogClient;
-
-  beforeEach(() => {
-    const configService = {
-      getPostHogApiKey: () => undefined,
-      getPostHogHost: () => undefined,
-      isPosthogAnaltyicsEnabled: () => false,
-    } as unknown as ScratchConfigService;
-    service = new PostHogService(configService);
-
-    mockClient = { identify: jest.fn(), capture: jest.fn() };
-    (service as unknown as { postHog: MockPostHogClient }).postHog = mockClient;
-  });
-
-  it('fires a whalesync_account_linked event carrying the whalesync id and $sets it on the person', () => {
-    const adoptedNativeUser = makeUser({ id: 'usr_native', email: 'ada@example.com' });
-
-    service.trackWhalesyncAccountLinked(adoptedNativeUser, 'wsu-123');
-
-    const linkEvent = capturedEvents(mockClient).find((event) => event.event === 'whalesync_account_linked');
-    expect(linkEvent).toBeDefined();
-    expect(linkEvent?.properties.whalesync_user_id).toBe('wsu-123');
-    // The link is also recorded on the person record so it is queryable.
-    expect(linkEvent?.properties.$set).toEqual({ whalesync_user_id: 'wsu-123' });
-    // Linking is not creation and not re-identification — no identify() call, and the adopted user is
-    // NOT reclassified as a shadow user (it stays a real native user for growth analytics).
-    expect(mockClient.identify).not.toHaveBeenCalled();
-    expect(linkEvent?.properties.is_whalesync_shadow_user).toBeUndefined();
+    expect(identifyProps.whalesync_team_id).toBeNull();
   });
 });
 
@@ -130,12 +104,12 @@ describe('PostHogService.trackClerkAccountLinked', () => {
     (service as unknown as { postHog: MockPostHogClient }).postHog = mockClient;
   });
 
-  it('fires a clerk_account_linked event carrying the real clerk id and the whalesync id (DEV-10731)', () => {
-    // A Whalesync shadow user that just signed in natively for the first time and was adopted.
+  it('fires a clerk_account_linked event carrying the real clerk id and the whalesync team id (DEV-10731)', () => {
+    // A user created without a Clerk login that just signed in natively for the first time and was adopted.
     const adoptedShadowUser = makeUser({
       id: 'usr_shadow',
       clerkId: 'user_realclerkid',
-      whalesyncUserId: 'wsu-123',
+      whalesyncTeamId: null,
       email: 'ada@example.com',
     });
 
@@ -144,7 +118,8 @@ describe('PostHogService.trackClerkAccountLinked', () => {
     const linkEvent = capturedEvents(mockClient).find((event) => event.event === 'clerk_account_linked');
     expect(linkEvent).toBeDefined();
     expect(linkEvent?.properties.clerk_id).toBe('user_realclerkid');
-    expect(linkEvent?.properties.whalesync_user_id).toBe('wsu-123');
+    expect(linkEvent?.properties.whalesync_team_id).toBeNull();
+    expect(linkEvent?.properties).not.toHaveProperty('whalesync_user_id');
     // A link, not a creation or re-identification — no identify() call.
     expect(mockClient.identify).not.toHaveBeenCalled();
   });

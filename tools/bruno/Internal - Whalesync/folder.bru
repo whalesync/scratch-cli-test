@@ -15,9 +15,9 @@ docs {
   the shared-secret header `X-Scratch-Admin-Token` (added here at the folder level),
   compared against the server's `SCRATCH_ADMIN_API_KEY`. Set the secret `adminToken`
   environment variable to that key. There is no user session — each endpoint acts on
-  the shadow user named in the request body/path: by `whalesyncTeamId` for a Whalesync
-  team's (the "Team" requests), or by `whalesyncUserId` for one made for a person before
-  teams.
+  the shadow user of the Whalesync team named in the request body/path by
+  `whalesyncTeamId`. Scratch keeps one shadow user per team and knows nothing about the
+  people in it.
 
   (The collection's inherited `Authorization: API-Token` header is ignored by these
   routes, so it is harmless that it is still sent.)

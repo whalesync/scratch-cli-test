@@ -33,11 +33,6 @@ export class SlackFormatters {
     return `✅ *Waitlist Approved*\n👤 ${userInfo} was approved by ${adminInfo}`;
   }
 
-  static whalesyncAccountLinked(user: UserCluster.User, whalesyncUserId: string): string {
-    const userInfo = user.email || user.name || user.id;
-    return `🔗 *Whalesync account linked*\n👤 ${userInfo} (${user.id})\n🐳 Whalesync user: ${whalesyncUserId}`;
-  }
-
   static clerkAccountLinked(user: UserCluster.User, clerkId: string): string {
     const userInfo = user.email || user.name || user.id;
     return `🔗 *Native Clerk sign-in linked to shadow user*\n👤 ${userInfo} (${user.id})\n🔑 Clerk id: ${clerkId}`;

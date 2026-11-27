@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 
 /**
  * Integration tests for the internal Whalesync shadow-user + session-management endpoints
- * (`/internal/whalesync/*`) and the WHALESYNC_SESSION token behavior.
+ * (`/internal/whalesync/*`) and the WHALESYNC_SESSION token behavior. Scratch keeps one pure shadow user per
+ * Whalesync team (DEV-13019) and knows nothing about the people in it, so every route names the team.
  *
  * PRECONDITIONS (the suite skips itself, with a warning, if they are not met):
  *   - RUN_WHALESYNC_INTEGRATION=true
@@ -11,8 +11,8 @@
  *   - A Scratch server reachable at INTEGRATION_TEST_API_DOMAIN (default localhost:3010)
  *
  * These drive the real server over HTTP, so they exercise the full chain: ScratchAdminGuard →
- * controller → UsersService/WorkbookService → DB → git. Each test uses a fresh random whalesyncUserId
- * and is torn down through the deprovision endpoint so workbook repos are cleaned up (not orphaned).
+ * controller → UsersService/WorkbookService → DB → git. Each test uses a fresh random whalesyncTeamId
+ * and is torn down through the team deprovision endpoint so workbook repos are cleaned up (not orphaned).
  *
  * DATABASE ASSERTIONS — LOCAL VS. REMOTE.
  * Every behavioral guarantee is asserted over HTTP and holds in both modes. When a Postgres
@@ -90,6 +90,15 @@ interface SessionResponse {
   expiresAt: string;
 }
 
+interface LiveExportListResponse {
+  liveExports: { id: string; name: string; createdAt: string; updatedAt: string }[];
+}
+
+/** A Whalesync team id shaped like the real ones (`tm_` and 12 characters), unique to this run. */
+function createWhalesyncTeamIdForTest(): string {
+  return `tm_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+}
+
 interface CurrentUserResponse {
   id: string;
   email?: string;
@@ -109,7 +118,7 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
 
   // Present only when a local DB matching the target server is available; undefined in API-only mode.
   let prismaForDbRowAssertions: PrismaClient | undefined;
-  const provisionedWhalesyncUserIds: string[] = [];
+  const provisionedWhalesyncTeamIds: string[] = [];
 
   beforeAll(async () => {
     // test-api scales to zero, and the post-deploy job spends its first minutes in suites that never
@@ -124,12 +133,9 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
   }, SCRATCH_API_WARM_UP_HOOK_TIMEOUT_MS);
 
   afterEach(async () => {
-    // Deprovision everything created this test (idempotent), so no workbook repos or rows leak.
-    for (const whalesyncUserId of provisionedWhalesyncUserIds.splice(0)) {
-      await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {
-        headers: adminHeaders,
-        ...anyStatus,
-      });
+    // Deprovision every team created this test (idempotent), so no workbook repos or rows leak.
+    for (const whalesyncTeamId of provisionedWhalesyncTeamIds.splice(0)) {
+      await deprovisionTeam(whalesyncTeamId);
     }
   });
 
@@ -137,28 +143,50 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     await prismaForDbRowAssertions?.$disconnect();
   });
 
+  function newWhalesyncTeamId(): string {
+    const whalesyncTeamId = createWhalesyncTeamIdForTest();
+    provisionedWhalesyncTeamIds.push(whalesyncTeamId);
+    return whalesyncTeamId;
+  }
+
+  // POST /internal/whalesync/sessions. Throws on non-2xx.
   async function createSession(
-    whalesyncUserId: string,
-    email: string,
+    whalesyncTeamId: string,
     name?: string,
     subscription?: Record<string, unknown>,
+    legacyBodyFieldsScratchNoLongerReads: Record<string, unknown> = {},
   ): Promise<SessionResponse> {
-    provisionedWhalesyncUserIds.push(whalesyncUserId);
     const response = await axios.post<SessionResponse>(
       `${apiUrl}/internal/whalesync/sessions`,
-      { whalesyncUserId, email, name, subscription },
+      { ...legacyBodyFieldsScratchNoLongerReads, whalesyncTeamId, name, subscription },
       { headers: adminHeaders },
     );
     return response.data;
   }
 
   // PATCH /internal/whalesync/subscription. Does not throw on non-2xx — callers assert the status.
-  function patchSubscription(whalesyncUserId: string, subscription: Record<string, unknown>) {
+  function patchSubscription(whalesyncTeamId: string, subscription: Record<string, unknown>) {
     return axios.patch(
       `${apiUrl}/internal/whalesync/subscription`,
-      { whalesyncUserId, subscription },
+      { whalesyncTeamId, subscription },
       { headers: adminHeaders, ...anyStatus },
     );
+  }
+
+  // GET /internal/whalesync/teams/:whalesyncTeamId/live-exports. Does not throw on non-2xx.
+  function listTeamLiveExports(whalesyncTeamId: string) {
+    return axios.get<LiveExportListResponse>(`${apiUrl}/internal/whalesync/teams/${whalesyncTeamId}/live-exports`, {
+      headers: adminHeaders,
+      ...anyStatus,
+    });
+  }
+
+  // DELETE /internal/whalesync/teams/:whalesyncTeamId. Does not throw on non-2xx.
+  function deprovisionTeam(whalesyncTeamId: string) {
+    return axios.delete(`${apiUrl}/internal/whalesync/teams/${whalesyncTeamId}`, {
+      headers: adminHeaders,
+      ...anyStatus,
+    });
   }
 
   // Resolve the actor a session token authenticates as. Does not throw on 401 — callers assert status.
@@ -169,14 +197,11 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     });
   }
 
-  // 1 + 2 — provision + mint, real (un-prefixed) normalized email, 10-min token
-  it('provisions a shadow user with a synthetic clerkId, a real normalized email, and a 10-min token', async () => {
-    const whalesyncUserId = randomUUID();
-    // Unique address so it cannot collide with any existing user (post-reconciliation we adopt on a
-    // collision rather than coexist — see the adoption test below).
-    const email = `ada-${whalesyncUserId}@example.com`;
+  // 1 + 2 — provision + mint: a pure shadow user for the team, with no email, and a 10-min token
+  it("provisions the team's pure shadow user with a synthetic clerkId, no email, and a 10-min token", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
     const before = Date.now();
-    const session = await createSession(whalesyncUserId, `  ${email.toUpperCase()}  `, 'Ada Lovelace');
+    const session = await createSession(whalesyncTeamId, 'Analytical Engines');
 
     expect(session.scratchUserId).toBeTruthy();
     expect(session.apiToken).toBeTruthy();
@@ -187,31 +212,82 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     expect(ttlMs).toBeLessThan(1000 * 60 * 12);
 
     // The minted token authenticates as the shadow user, and /users/current exposes the synthetic
-    // clerkId and the real, normalized (un-prefixed) email — asserted over HTTP so it holds in both
-    // local and remote/deployed (API-only) modes.
+    // clerkId and no email (a team has none) — asserted over HTTP so it holds in both local and
+    // remote/deployed (API-only) modes.
     const whoami = await fetchCurrentUser(session.apiToken);
     expect(whoami.status).toBe(200);
     expect(whoami.data.id).toBe(session.scratchUserId);
-    expect(whoami.data.clerkId).toBe(`ws_${whalesyncUserId}`);
+    expect(whoami.data.clerkId).toBe(`ws_${whalesyncTeamId}`);
     expect(whoami.data.isAdmin).toBe(false); // role === USER
-    // Real address, NOT ws:-prefixed, lowercased/trimmed by the DB email-normalization trigger.
-    expect(whoami.data.email).toBe(email.toLowerCase());
+    expect(whoami.data.email ?? null).toBeNull();
 
     if (prismaForDbRowAssertions) {
       // Token type is not exposed over HTTP; assert it directly when a matching DB is available.
       const tokenRow = await prismaForDbRowAssertions.apiToken.findUnique({ where: { token: session.apiToken } });
       expect(tokenRow?.type).toBe('WHALESYNC_SESSION');
       expect(tokenRow?.userId).toBe(session.scratchUserId);
+      const shadowUserRow = await prismaForDbRowAssertions.user.findUnique({ where: { id: session.scratchUserId } });
+      expect(shadowUserRow).toMatchObject({ whalesyncTeamId, whalesyncUserId: null, email: null });
     }
   });
 
-  // 1c — shadow users are auto-subscribed to the internal Whalesync plan ($0, Pro-equivalent), the plan
+  // 1b — a Whalesync backend that still sends the acting person's id, email, and team-membership flag keeps working:
+  // the unknown keys are stripped, so nothing about the person reaches the shadow user.
+  it('accepts and ignores the legacy per-person body fields', async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const legacyWhalesyncUserId = randomUUID();
+    const legacyEmail = `legacy-${legacyWhalesyncUserId}@example.com`;
+
+    const response = await axios.post<SessionResponse>(
+      `${apiUrl}/internal/whalesync/sessions`,
+      {
+        whalesyncTeamId,
+        whalesyncUserId: legacyWhalesyncUserId,
+        whalesyncUserIsTeamsOnlyMember: true,
+        email: legacyEmail,
+        name: 'Legacy Caller Team',
+      },
+      { headers: adminHeaders, ...anyStatus },
+    );
+    expect(response.status).toBe(201);
+    expect(response.data.scratchUserId).toBeTruthy();
+
+    const whoami = await fetchCurrentUser(response.data.apiToken);
+    expect(whoami.data.clerkId).toBe(`ws_${whalesyncTeamId}`);
+    expect(whoami.data.email ?? null).toBeNull();
+
+    if (prismaForDbRowAssertions) {
+      const shadowUserRow = await prismaForDbRowAssertions.user.findUnique({
+        where: { id: response.data.scratchUserId },
+      });
+      expect(shadowUserRow).toMatchObject({ whalesyncTeamId, whalesyncUserId: null, email: null });
+      expect(await prismaForDbRowAssertions.user.count({ where: { email: legacyEmail } })).toBe(0);
+    }
+  });
+
+  // 1c — the team id is required on both bodies that name a team.
+  it('rejects a session or subscription request that names no team (400)', async () => {
+    const sessionResponse = await axios.post(
+      `${apiUrl}/internal/whalesync/sessions`,
+      { whalesyncUserId: randomUUID(), email: 'no-team@example.com' },
+      { headers: adminHeaders, ...anyStatus },
+    );
+    expect(sessionResponse.status).toBe(400);
+
+    const subscriptionResponse = await axios.patch(
+      `${apiUrl}/internal/whalesync/subscription`,
+      { whalesyncUserId: randomUUID(), subscription: { status: 'expired' } },
+      { headers: adminHeaders, ...anyStatus },
+    );
+    expect(subscriptionResponse.status).toBe(400);
+  });
+
+  // 1d — shadow users are auto-subscribed to the internal Whalesync plan ($0, Pro-equivalent), the plan
   // is visible on /users/current, "manage" is not offered (no real Stripe sub), and the assignment is
   // idempotent: a second session does NOT create a duplicate subscription row (self-heal-safe).
   it('auto-subscribes a shadow user to the Whalesync plan without creating duplicates', async () => {
-    const whalesyncUserId = randomUUID();
-    const email = `plan-${whalesyncUserId}@example.com`;
-    const session = await createSession(whalesyncUserId, email, 'Grace Hopper');
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await createSession(whalesyncTeamId, 'Compilers');
 
     const whoami = await fetchCurrentUser(session.apiToken);
     expect(whoami.status).toBe(200);
@@ -222,13 +298,13 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     // Internal plan: no real Stripe subscription behind it, so "manage" must not be offered.
     expect(whoami.data.subscription?.canManageSubscription).toBe(false);
 
-    // A second session for the same user must not create a second Whalesync subscription.
-    const second = await createSession(whalesyncUserId, email);
+    // A second session for the same team must not create a second Whalesync subscription.
+    const second = await createSession(whalesyncTeamId);
     const secondWhoami = await fetchCurrentUser(second.apiToken);
     expect(secondWhoami.data.subscription?.planType).toBe('WHALESYNC_PLAN');
 
     if (prismaForDbRowAssertions) {
-      const user = await prismaForDbRowAssertions.user.findFirst({ where: { whalesyncUserId } });
+      const user = await prismaForDbRowAssertions.user.findUnique({ where: { whalesyncTeamId } });
       expect(user).toBeTruthy();
       const subscriptions = await prismaForDbRowAssertions.subscription.findMany({
         where: { organizationId: user?.organizationId ?? '' },
@@ -242,13 +318,12 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     }
   });
 
-  // 1d — a session subscription payload with status 'active' records the Whalesync-side shape in
+  // 1e — a session subscription payload with status 'active' records the Whalesync-side shape in
   // Subscription.metadata (product type + Live Export limits) and keeps stripeStatus 'active'.
   it('records the session subscription payload in metadata and applies the UTC expiry when status is active', async () => {
-    const whalesyncUserId = randomUUID();
-    const email = `sub-active-${whalesyncUserId}@example.com`;
+    const whalesyncTeamId = newWhalesyncTeamId();
     const expiresAt = '2027-01-15T00:00:00.000Z';
-    const session = await createSession(whalesyncUserId, email, 'Katherine Johnson', {
+    const session = await createSession(whalesyncTeamId, 'Trajectories', {
       status: 'active',
       whalesyncProductType: 'growth',
       liveExportRecordCountLimit: 5000,
@@ -260,7 +335,7 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     expect(whoami.data.subscription?.planType).toBe('WHALESYNC_PLAN');
 
     if (prismaForDbRowAssertions) {
-      const user = await prismaForDbRowAssertions.user.findFirst({ where: { whalesyncUserId } });
+      const user = await prismaForDbRowAssertions.user.findUnique({ where: { whalesyncTeamId } });
       const subscriptions = await prismaForDbRowAssertions.subscription.findMany({
         where: { organizationId: user?.organizationId ?? '' },
       });
@@ -277,18 +352,17 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     }
   });
 
-  // 1e — a session subscription payload whose status is NOT active must not create a subscription row.
+  // 1f — a session subscription payload whose status is NOT active must not create a subscription row.
   (isApiOnlyMode ? it.skip : it)(
     'does not create a subscription when the session subscription status is not active',
     async () => {
       const prisma = prismaForDbRowAssertions;
       if (!prisma) return;
 
-      const whalesyncUserId = randomUUID();
-      const email = `sub-none-${whalesyncUserId}@example.com`;
-      const session = await createSession(whalesyncUserId, email, 'Radia Perlman', { status: 'expired' });
+      const whalesyncTeamId = newWhalesyncTeamId();
+      const session = await createSession(whalesyncTeamId, 'Spanning Trees', { status: 'expired' });
 
-      const user = await prisma.user.findFirst({ where: { whalesyncUserId } });
+      const user = await prisma.user.findUnique({ where: { whalesyncTeamId } });
       expect(user).toBeTruthy(); // the shadow user is still provisioned...
       const subscriptions = await prisma.subscription.findMany({
         where: { organizationId: user?.organizationId ?? '' },
@@ -302,14 +376,13 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
   );
 
   // 3a — PATCH /subscription with a non-active status soft-updates (keeps) the Whalesync row and marks it
-  // inactive, so the user drops off the Whalesync plan.
+  // inactive, so the team's shadow user drops off the Whalesync plan.
   it('marks the Whalesync plan inactive on a cancelled subscription patch', async () => {
-    const whalesyncUserId = randomUUID();
-    const email = `patch-cancel-${whalesyncUserId}@example.com`;
-    const session = await createSession(whalesyncUserId, email, 'Grace Hopper', { status: 'active' });
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await createSession(whalesyncTeamId, 'Compilers', { status: 'active' });
     expect((await fetchCurrentUser(session.apiToken)).data.subscription?.planType).toBe('WHALESYNC_PLAN');
 
-    const patched = await patchSubscription(whalesyncUserId, { status: 'cancelled' });
+    const patched = await patchSubscription(whalesyncTeamId, { status: 'cancelled' });
     expect(patched.status).toBe(200);
     expect(patched.data.scratchUserId).toBe(session.scratchUserId);
     expect(patched.data.updated).toBe(true);
@@ -319,7 +392,7 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     expect(whoami.data.subscription?.planType).not.toBe('WHALESYNC_PLAN');
 
     if (prismaForDbRowAssertions) {
-      const user = await prismaForDbRowAssertions.user.findFirst({ where: { whalesyncUserId } });
+      const user = await prismaForDbRowAssertions.user.findUnique({ where: { whalesyncTeamId } });
       const subscriptions = await prismaForDbRowAssertions.subscription.findMany({
         where: { organizationId: user?.organizationId ?? '' },
       });
@@ -329,9 +402,9 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     }
   });
 
-  // 3b — PATCH /subscription for a user that doesn't exist is an idempotent no-op (safe to retry).
-  it('is an idempotent no-op when patching a subscription for an unknown user', async () => {
-    const response = await patchSubscription(randomUUID(), { status: 'expired' });
+  // 3b — PATCH /subscription for a team with no shadow user is an idempotent no-op (safe to retry).
+  it('is an idempotent no-op when patching a subscription for a team with no shadow user', async () => {
+    const response = await patchSubscription(createWhalesyncTeamIdForTest(), { status: 'expired' });
     expect(response.status).toBe(200);
     expect(response.data).toEqual({ scratchUserId: null, updated: false, planType: null });
   });
@@ -343,94 +416,52 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
       const prisma = prismaForDbRowAssertions;
       if (!prisma) return;
 
-      const whalesyncUserId = randomUUID();
-      const email = `patch-real-${whalesyncUserId}@example.com`;
-      const session = await createSession(whalesyncUserId, email, 'Barbara Liskov', { status: 'active' });
+      const whalesyncTeamId = newWhalesyncTeamId();
+      await createSession(whalesyncTeamId, 'Abstract Data Types', { status: 'active' });
 
       // Turn the org's Whalesync row into a real (non-Whalesync) active Stripe subscription.
-      const user = await prisma.user.findFirst({ where: { whalesyncUserId } });
+      const user = await prisma.user.findUnique({ where: { whalesyncTeamId } });
       await prisma.subscription.updateMany({
         where: { organizationId: user?.organizationId ?? '' },
-        data: { planType: 'PRO_PLAN', stripeSubscriptionId: `sub_real_${whalesyncUserId}` },
+        data: { planType: 'PRO_PLAN', stripeSubscriptionId: `sub_real_${whalesyncTeamId}` },
       });
 
-      const response = await patchSubscription(whalesyncUserId, { status: 'cancelled' });
+      const response = await patchSubscription(whalesyncTeamId, { status: 'cancelled' });
       expect(response.status).toBe(409);
     },
   );
 
-  // 2b — reconciliation: an existing Scratch user that owns the email is adopted, not duplicated.
-  // Requires a local DB matching the target server (to seed the pre-existing native user directly),
-  // so it is skipped in API-only mode. Gated on isApiOnlyMode (known at registration time) rather
-  // than prismaForDbRowAssertions (assigned later, in beforeAll).
-  (isApiOnlyMode ? it.skip : it)(
-    'adopts an existing Scratch user that owns the email instead of creating a duplicate',
-    async () => {
-      const prisma = prismaForDbRowAssertions;
-      if (!prisma) return; // narrowing for TS; the it/it.skip guard already gates execution
+  // 3 — idempotency: every member of a team reaches the same shadow user, each session an additive token
+  it("gives every member's session the team's one shadow user and mints an additional token each call", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    // Two members of the team: what an older Whalesync backend sends about each person is ignored.
+    const firstMemberSession = await createSession(whalesyncTeamId, 'Shared Team', undefined, {
+      whalesyncUserId: randomUUID(),
+      email: `member-one-${randomUUID()}@example.com`,
+    });
+    const secondMemberSession = await createSession(whalesyncTeamId, 'Shared Team', undefined, {
+      whalesyncUserId: randomUUID(),
+      email: `member-two-${randomUUID()}@example.com`,
+    });
 
-      const whalesyncUserId = randomUUID();
-      const email = `adopt-${whalesyncUserId}@example.com`;
-      const nativeUserId = `usr_test_${randomUUID()}`;
-      const nativeClerkId = `user_test_${randomUUID()}`;
-
-      // Seed a pre-existing native Scratch user (real Clerk login, not linked to any Whalesync user).
-      await prisma.user.create({ data: { id: nativeUserId, clerkId: nativeClerkId, email } });
-
-      try {
-        // Provision a Whalesync session for the SAME email under a brand-new whalesyncUserId.
-        const session = await createSession(whalesyncUserId, email, 'Ada Lovelace');
-
-        // Adopted: the session resolves to the existing native user, not a freshly-created shadow user.
-        expect(session.scratchUserId).toBe(nativeUserId);
-
-        // The adopted user keeps its real clerkId (native login preserved) and is now Whalesync-linked.
-        const whoami = await fetchCurrentUser(session.apiToken);
-        expect(whoami.status).toBe(200);
-        expect(whoami.data.id).toBe(nativeUserId);
-        expect(whoami.data.clerkId).toBe(nativeClerkId); // NOT ws_<id>
-
-        const linkedRow = await prisma.user.findUnique({ where: { id: nativeUserId } });
-        expect(linkedRow?.whalesyncUserId).toBe(whalesyncUserId);
-        expect(linkedRow?.clerkId).toBe(nativeClerkId);
-        expect(linkedRow?.email).toBe(email);
-
-        // Exactly one user owns the email — no duplicate shadow user was created.
-        const usersOwningEmail = await prisma.user.count({ where: { email } });
-        expect(usersOwningEmail).toBe(1);
-      } finally {
-        // afterEach deprovisions by whalesyncUserId; also clear the seed directly in case adoption
-        // failed and the row never got linked (so it would otherwise leak).
-        await prisma.apiToken.deleteMany({ where: { userId: nativeUserId } });
-        await prisma.user.deleteMany({ where: { id: nativeUserId } });
-      }
-    },
-  );
-
-  // 3 — idempotency: same user, additive token
-  it('is idempotent on whalesyncUserId and mints an additional token each call', async () => {
-    const whalesyncUserId = randomUUID();
-    const first = await createSession(whalesyncUserId, 'repeat@example.com');
-    const second = await createSession(whalesyncUserId, 'repeat@example.com');
-
-    // Same shadow user resolved both times (idempotent on whalesyncUserId)...
-    expect(second.scratchUserId).toBe(first.scratchUserId);
+    // Same shadow user resolved both times (idempotent on whalesyncTeamId)...
+    expect(secondMemberSession.scratchUserId).toBe(firstMemberSession.scratchUserId);
     // ...and each call minted a distinct, independently-valid token (additive minting), both
     // resolving to the same shadow user — observable over HTTP without a DB.
-    expect(second.apiToken).not.toBe(first.apiToken);
-    const firstWhoami = await fetchCurrentUser(first.apiToken);
-    const secondWhoami = await fetchCurrentUser(second.apiToken);
+    expect(secondMemberSession.apiToken).not.toBe(firstMemberSession.apiToken);
+    const firstWhoami = await fetchCurrentUser(firstMemberSession.apiToken);
+    const secondWhoami = await fetchCurrentUser(secondMemberSession.apiToken);
     expect(firstWhoami.status).toBe(200);
     expect(secondWhoami.status).toBe(200);
-    expect(firstWhoami.data.id).toBe(first.scratchUserId);
-    expect(secondWhoami.data.id).toBe(first.scratchUserId);
+    expect(firstWhoami.data.id).toBe(firstMemberSession.scratchUserId);
+    expect(secondWhoami.data.id).toBe(firstMemberSession.scratchUserId);
 
     if (prismaForDbRowAssertions) {
-      const userCount = await prismaForDbRowAssertions.user.count({ where: { whalesyncUserId } });
+      const userCount = await prismaForDbRowAssertions.user.count({ where: { clerkId: `ws_${whalesyncTeamId}` } });
       expect(userCount).toBe(1);
 
       const sessionTokenCount = await prismaForDbRowAssertions.apiToken.count({
-        where: { userId: first.scratchUserId, type: 'WHALESYNC_SESSION' },
+        where: { userId: firstMemberSession.scratchUserId, type: 'WHALESYNC_SESSION' },
       });
       expect(sessionTokenCount).toBe(2);
     }
@@ -438,115 +469,108 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
 
   // 4 — minted token authenticates a real request as the shadow user
   it('mints a token that authenticates as the shadow user on a normal API route', async () => {
-    const whalesyncUserId = randomUUID();
-    const session = await createSession(whalesyncUserId, 'whoami@example.com');
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await createSession(whalesyncTeamId);
 
     const whoami = await fetchCurrentUser(session.apiToken);
     expect(whoami.status).toBe(200);
     expect(whoami.data.id).toBe(session.scratchUserId);
   });
 
-  // 5 — ensure-only endpoint mints no token
-  it('POST /users ensures a shadow user without minting a session token', async () => {
-    const whalesyncUserId = randomUUID();
-    provisionedWhalesyncUserIds.push(whalesyncUserId);
-
-    const response = await axios.post(
-      `${apiUrl}/internal/whalesync/users`,
-      { whalesyncUserId, email: 'ensure@example.com' },
-      { headers: adminHeaders },
+  // 5 — the team's Live Exports, listed for Whalesync's admin dev tools
+  it("lists a team's Live Exports, and an empty list for a team with no shadow user", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await createSession(whalesyncTeamId, 'Exporters');
+    // A Live Export created through the API under the Whalesync session, so it has a real repo to tear down.
+    const liveExportResponse = await axios.post<{ id: string }>(
+      `${apiUrl}/workbook`,
+      { name: 'Deals export', managedBy: 'ws_export' },
+      { headers: { Authorization: `API-Token ${session.apiToken}` } },
     );
-    expect(response.status).toBe(201);
-    expect(response.data.scratchUserId).toBeTruthy();
-    // The ensure-only endpoint returns no token — minting is exclusive to POST /sessions.
-    expect(response.data.apiToken).toBeUndefined();
+    const liveExportWorkbookId = liveExportResponse.data.id;
+    expect(liveExportWorkbookId).toBeTruthy();
 
+    const listResponse = await listTeamLiveExports(whalesyncTeamId);
+    expect(listResponse.status).toBe(200);
+    // The default workspace every new user gets is not a Live Export, so it isn't listed.
+    expect(listResponse.data.liveExports.map((liveExport) => liveExport.id)).toEqual([liveExportWorkbookId]);
+    expect(listResponse.data.liveExports[0].name).toBe('Deals export');
+
+    // Read-only: a team with no shadow user gets an empty list, and none is created.
+    const teamWithoutShadowUser = createWhalesyncTeamIdForTest();
+    const emptyListResponse = await listTeamLiveExports(teamWithoutShadowUser);
+    expect(emptyListResponse.status).toBe(200);
+    expect(emptyListResponse.data).toEqual({ liveExports: [] });
     if (prismaForDbRowAssertions) {
-      const sessionTokenCount = await prismaForDbRowAssertions.apiToken.count({
-        where: { userId: response.data.scratchUserId, type: 'WHALESYNC_SESSION' },
-      });
-      expect(sessionTokenCount).toBe(0);
+      expect(await prismaForDbRowAssertions.user.count({ where: { whalesyncTeamId: teamWithoutShadowUser } })).toBe(0);
     }
   });
 
-  // 6 — bulk revoke, and a revoked token stops authenticating
-  it('bulk-revokes session tokens and invalidates them', async () => {
-    const whalesyncUserId = randomUUID();
-    const session = await createSession(whalesyncUserId, 'revoke@example.com');
-    await createSession(whalesyncUserId, 'revoke@example.com'); // a second session token
+  // 7 — deprovision tears down user + org + workbooks + tokens, idempotent on an unknown team
+  it("deprovisions a team's shadow user (user, org, Live Exports, tokens) and is idempotent", async () => {
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await createSession(whalesyncTeamId, 'Short-lived Team');
+    const liveExportResponse = await axios.post<{ id: string }>(
+      `${apiUrl}/workbook`,
+      { name: 'Doomed export', managedBy: 'ws_export' },
+      { headers: { Authorization: `API-Token ${session.apiToken}` } },
+    );
+    const liveExportWorkbookId = liveExportResponse.data.id;
+    const organizationIdOfShadowUser = prismaForDbRowAssertions
+      ? (await prismaForDbRowAssertions.user.findUnique({ where: { id: session.scratchUserId } }))?.organizationId
+      : undefined;
 
-    // Token authenticates before revocation.
-    expect((await fetchCurrentUser(session.apiToken)).status).toBe(200);
-
-    const revokeResponse = await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}/sessions`, {
-      headers: adminHeaders,
-    });
-    expect(revokeResponse.data.revoked).toBe(2);
-
-    // The revoked token no longer authenticates.
-    const afterRevoke = await fetchCurrentUser(session.apiToken);
-    expect(afterRevoke.status).toBe(401);
-
-    if (prismaForDbRowAssertions) {
-      const remaining = await prismaForDbRowAssertions.apiToken.count({
-        where: { userId: session.scratchUserId, type: 'WHALESYNC_SESSION' },
-      });
-      expect(remaining).toBe(0);
-    }
-  });
-
-  // 7 — deprovision tears down user + org + workbooks, idempotent on unknown id
-  it('deprovisions a shadow user (user, org, tokens) and is idempotent', async () => {
-    const whalesyncUserId = randomUUID();
-    const session = await createSession(whalesyncUserId, 'deprovision@example.com');
-
-    const first = await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {
-      headers: adminHeaders,
-      ...anyStatus,
-    });
+    const first = await deprovisionTeam(whalesyncTeamId);
     expect(first.status).toBe(204);
 
     // The user and its tokens are gone: the previously-valid token stops authenticating.
     const afterDeprovision = await fetchCurrentUser(session.apiToken);
     expect(afterDeprovision.status).toBe(401);
+    // ...and the team has no Live Exports left.
+    expect((await listTeamLiveExports(whalesyncTeamId)).data).toEqual({ liveExports: [] });
 
     if (prismaForDbRowAssertions) {
-      const userRow = await prismaForDbRowAssertions.user.findUnique({ where: { whalesyncUserId } });
-      expect(userRow).toBeNull();
-      const tokenCount = await prismaForDbRowAssertions.apiToken.count({ where: { userId: session.scratchUserId } });
-      expect(tokenCount).toBe(0);
+      expect(await prismaForDbRowAssertions.user.findUnique({ where: { whalesyncTeamId } })).toBeNull();
+      expect(await prismaForDbRowAssertions.apiToken.count({ where: { userId: session.scratchUserId } })).toBe(0);
+      expect(await prismaForDbRowAssertions.workbook.findUnique({ where: { id: liveExportWorkbookId } })).toBeNull();
+      expect(
+        await prismaForDbRowAssertions.organization.findUnique({ where: { id: organizationIdOfShadowUser ?? '' } }),
+      ).toBeNull();
     }
 
-    // Idempotent: deleting an unknown / already-gone user still succeeds.
-    const second = await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {
-      headers: adminHeaders,
-      ...anyStatus,
-    });
-    expect(second.status).toBe(204);
+    // Idempotent: deprovisioning an already-gone (or never-provisioned) team still succeeds.
+    expect((await deprovisionTeam(whalesyncTeamId)).status).toBe(204);
+    expect((await deprovisionTeam(createWhalesyncTeamIdForTest())).status).toBe(204);
   });
 
-  // 7b — DEV-12578: deprovisioning a REAL Scratch account (adopted by email) only unlinks it. The user, org, and
-  // native workbooks stay; the Live Export, the Whalesync plan, the session tokens, and the link go. Seeds the
-  // native account directly, so it needs a local DB matching the target server (skipped in API-only mode).
+  // 7b — the fail-safe: a real Scratch account (real Clerk login) that carries a team id is refused (409) by every
+  // team route, and nothing about it changes. Seeds the account directly, so it needs a local DB matching the target
+  // server (skipped in API-only mode).
   (isApiOnlyMode ? it.skip : it)(
-    'deprovisions an adopted real Scratch user by unlinking it, keeping its org and native workbooks',
+    'refuses (409) every team route for a real Scratch account that carries the team id, changing nothing',
     async () => {
       const prisma = prismaForDbRowAssertions;
       if (!prisma) return; // narrowing for TS; the it/it.skip guard already gates execution
 
-      const whalesyncUserId = randomUUID();
-      const email = `deprovision-adopted-${whalesyncUserId}@example.com`;
+      // Not pushed to provisionedWhalesyncTeamIds: its teardown is the direct cleanup below, never a deprovision.
+      const whalesyncTeamId = createWhalesyncTeamIdForTest();
       const nativeUserId = `usr_test_${randomUUID()}`;
       const nativeClerkId = `user_test_${randomUUID()}`;
       const nativeOrganizationId = `org_test_${randomUUID()}`;
       const nativeWorkbookId = `wkb_test_${randomUUID()}`;
+      const nativeEmail = `real-account-${randomUUID()}@example.com`;
 
-      // A native Scratch account (real Clerk login) with its own org and a native workbook (DB row only).
       await prisma.organization.create({
         data: { id: nativeOrganizationId, clerkId: nativeClerkId, name: 'Native Organization' },
       });
       await prisma.user.create({
-        data: { id: nativeUserId, clerkId: nativeClerkId, email, organizationId: nativeOrganizationId },
+        data: {
+          id: nativeUserId,
+          clerkId: nativeClerkId,
+          email: nativeEmail,
+          organizationId: nativeOrganizationId,
+          whalesyncTeamId,
+        },
       });
       await prisma.workbook.create({
         data: {
@@ -558,63 +582,26 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
       });
 
       try {
-        // Whalesync adopts the account by email and grants the Whalesync plan.
-        const session = await createSession(whalesyncUserId, email, 'Ada Lovelace', { status: 'active' });
-        expect(session.scratchUserId).toBe(nativeUserId);
+        const realAccountBefore = await prisma.user.findUniqueOrThrow({ where: { id: nativeUserId } });
 
-        // A Live Export created through the API under the Whalesync session, so it has a real repo to tear down.
-        const liveExportResponse = await axios.post<{ id: string }>(
-          `${apiUrl}/workbook`,
-          { name: 'Deals export', managedBy: 'ws_export' },
-          { headers: { Authorization: `API-Token ${session.apiToken}` } },
+        const sessionResponse = await axios.post(
+          `${apiUrl}/internal/whalesync/sessions`,
+          { whalesyncTeamId, name: 'Team' },
+          { headers: adminHeaders, ...anyStatus },
         );
-        const liveExportWorkbookId = liveExportResponse.data.id;
-        expect(liveExportWorkbookId).toBeTruthy();
+        expect(sessionResponse.status).toBe(409);
+        expect((await patchSubscription(whalesyncTeamId, { status: 'active' })).status).toBe(409);
+        expect((await listTeamLiveExports(whalesyncTeamId)).status).toBe(409);
+        expect((await deprovisionTeam(whalesyncTeamId)).status).toBe(409);
 
-        const first = await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {
-          headers: adminHeaders,
-          ...anyStatus,
-        });
-        expect(first.status).toBe(204);
-
-        // The account is kept with its native login, but no longer linked to Whalesync.
-        const userRow = await prisma.user.findUnique({ where: { id: nativeUserId } });
-        expect(userRow).not.toBeNull();
-        expect(userRow?.clerkId).toBe(nativeClerkId);
-        expect(userRow?.organizationId).toBe(nativeOrganizationId);
-        expect(userRow?.whalesyncUserId).toBeNull();
-
-        // The org and the native workbook stay; only the Live Export is gone.
+        expect(await prisma.user.findUniqueOrThrow({ where: { id: nativeUserId } })).toEqual(realAccountBefore);
         expect(await prisma.organization.findUnique({ where: { id: nativeOrganizationId } })).not.toBeNull();
         expect(await prisma.workbook.findUnique({ where: { id: nativeWorkbookId } })).not.toBeNull();
-        expect(await prisma.workbook.findUnique({ where: { id: liveExportWorkbookId } })).toBeNull();
-
-        // The Whalesync session tokens and the Whalesync plan are gone.
-        const sessionTokenCount = await prisma.apiToken.count({
-          where: { userId: nativeUserId, type: 'WHALESYNC_SESSION' },
-        });
-        expect(sessionTokenCount).toBe(0);
-        const whalesyncPlanSubscriptionCount = await prisma.subscription.count({
-          where: { organizationId: nativeOrganizationId, planType: 'WHALESYNC_PLAN' },
-        });
-        expect(whalesyncPlanSubscriptionCount).toBe(0);
-        expect((await fetchCurrentUser(session.apiToken)).status).toBe(401);
-
-        // Idempotent: a second deprovision is a no-op and the account is still there.
-        const second = await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {
-          headers: adminHeaders,
-          ...anyStatus,
-        });
-        expect(second.status).toBe(204);
-        expect(await prisma.user.findUnique({ where: { id: nativeUserId } })).not.toBeNull();
+        expect(await prisma.apiToken.count({ where: { userId: nativeUserId } })).toBe(0);
+        expect(await prisma.subscription.count({ where: { organizationId: nativeOrganizationId } })).toBe(0);
+        expect(await prisma.user.count({ where: { clerkId: `ws_${whalesyncTeamId}` } })).toBe(0);
       } finally {
-        // Deprovision through the server first (idempotent), so a Live Export left by a failed assertion has its
-        // repo torn down rather than orphaned. Then remove the seeded rows; deleting the org cascades the rest.
-        await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {
-          headers: adminHeaders,
-          ...anyStatus,
-        });
-        await prisma.workbook.deleteMany({ where: { id: nativeWorkbookId } });
+        // Deleting the org cascades its workbooks; the user goes with its tokens.
         await prisma.apiToken.deleteMany({ where: { userId: nativeUserId } });
         await prisma.user.deleteMany({ where: { id: nativeUserId } });
         await prisma.organization.deleteMany({ where: { id: nativeOrganizationId } });
@@ -622,17 +609,50 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     },
   );
 
-  // 8 — admin guard
+  // 8 — the per-person routes and the team-link routes are gone
+  describe('removed routes', () => {
+    const someWhalesyncUserId = randomUUID();
+    const removedRoutes: { method: 'get' | 'post' | 'delete'; path: string; body?: Record<string, unknown> }[] = [
+      {
+        method: 'post',
+        path: '/internal/whalesync/users',
+        body: { whalesyncUserId: someWhalesyncUserId, email: 'removed@example.com' },
+      },
+      { method: 'delete', path: `/internal/whalesync/users/${someWhalesyncUserId}` },
+      { method: 'delete', path: `/internal/whalesync/users/${someWhalesyncUserId}/sessions` },
+      { method: 'delete', path: `/internal/whalesync/users/${someWhalesyncUserId}/subscription` },
+      { method: 'get', path: `/internal/whalesync/users/${someWhalesyncUserId}/live-exports` },
+      { method: 'get', path: '/internal/whalesync/team-links/pending' },
+      {
+        method: 'post',
+        path: '/internal/whalesync/team-links',
+        body: { links: [{ whalesyncUserId: someWhalesyncUserId, whalesyncTeamId: 'tm_removed0000' }] },
+      },
+    ];
+
+    it.each(removedRoutes)('$method $path answers 404', async ({ method, path, body }) => {
+      const response = await axios.request({
+        method,
+        url: `${apiUrl}${path}`,
+        data: body,
+        headers: adminHeaders,
+        ...anyStatus,
+      });
+      expect(response.status).toBe(404);
+    });
+  });
+
+  // 9 — admin guard
   describe('ScratchAdminGuard', () => {
-    const body = { whalesyncUserId: randomUUID(), email: 'guard@example.com' };
+    const body = { whalesyncTeamId: createWhalesyncTeamIdForTest() };
 
     it('rejects a request with no admin token (401)', async () => {
-      const response = await axios.post(`${apiUrl}/internal/whalesync/users`, body, anyStatus);
+      const response = await axios.post(`${apiUrl}/internal/whalesync/sessions`, body, anyStatus);
       expect(response.status).toBe(401);
     });
 
     it('rejects a request with a wrong admin token (401)', async () => {
-      const response = await axios.post(`${apiUrl}/internal/whalesync/users`, body, {
+      const response = await axios.post(`${apiUrl}/internal/whalesync/sessions`, body, {
         headers: { 'X-Scratch-Admin-Token': 'definitely-wrong' },
         ...anyStatus,
       });
@@ -640,7 +660,7 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     });
   });
 
-  // 9 — rate-limit bypass for WHALESYNC_SESSION tokens
+  // 10 — rate-limit bypass for WHALESYNC_SESSION tokens
   //
   // Sends the full burst through a small fixed-size worker pool rather than firing all 75 at once.
   // Against the remote deployed server a 75-wide `Promise.all` spike inflates tail latency on both the
@@ -654,8 +674,8 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
   // non-throttling) remote should not read as a failure. The bounded pool is what actually caps the
   // tail; the larger timeout is the margin.
   it('does not rate limit WHALESYNC_SESSION tokens under burst polling', async () => {
-    const whalesyncUserId = randomUUID();
-    const session = await createSession(whalesyncUserId, 'burst@example.com');
+    const whalesyncTeamId = newWhalesyncTeamId();
+    const session = await createSession(whalesyncTeamId);
 
     // Fire well over the default 60 req / 60s cap. With the bypass in place none should be throttled.
     // NOTE: if API_RATE_LIMIT_DISABLED is true (the default in `development`), this trivially passes and

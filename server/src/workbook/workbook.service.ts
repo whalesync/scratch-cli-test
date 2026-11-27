@@ -597,8 +597,8 @@ export class WorkbookService {
   /**
    * Ids of every Live Export (`managedBy: ws_export`) workbook the user created, including those pending deletion.
    * Picked by `Workbook.userId` (the creator), NOT by membership: a Live Export another member of the same
-   * organization created, or one another organization shared with this user, is never returned. Used to tear down
-   * the Live Exports of a Whalesync identity that is being unlinked from a real Scratch account (DEV-12578).
+   * organization created, or one another organization shared with this user, is never returned. Used by the
+   * `whalesync-teamless-shadow-users-deprovision` code migration to leave alone a user that holds a Live Export.
    */
   async findIdsOfLiveExportWorkbooksCreatedByUser(userId: string): Promise<WorkbookId[]> {
     const liveExportWorkbooksCreatedByUser = await this.db.client.workbook.findMany({

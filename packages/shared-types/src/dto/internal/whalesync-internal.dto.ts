@@ -44,30 +44,19 @@ export type WhalesyncSubscriptionPayload = z.infer<typeof whalesyncSubscriptionP
 // ── Request DTOs ──────────────────────────────────────────────────────────────
 
 /**
- * Who a session or shadow user is for. A shadow user holds the Live Exports of one Whalesync team (DEV-13019), so
- * `whalesyncTeamId` is its identity and `whalesyncUserId` is the person acting in that team. Without a team id the
- * shadow user is found and created by `whalesyncUserId` alone, as before teams, which is how a Whalesync backend that
- * hasn't deployed its side yet still calls.
+ * Body for `POST /internal/whalesync/sessions`: the Whalesync team (DEV-13019) whose shadow user the session is for.
+ * Scratch keeps one shadow user per team and knows nothing about the people in it, so any member's session reaches
+ * the same one. Unknown keys are stripped, not rejected, so a Whalesync backend that still sends the acting person's
+ * id or email keeps working.
  */
 export const whalesyncShadowUserSchema = z.object({
-  /** The Whalesync person acting. Recorded on the session token it mints. */
-  whalesyncUserId: z.string().min(1),
-  /** The Whalesync team (`tm_…`) the person is working in. */
-  whalesyncTeamId: z.string().min(1).optional(),
-  /**
-   * Whether the person is the team's only member, which makes their own shadow user and their team's the same one.
-   * Only then is a shadow user made for the person before teams taken as the team's, and only then does a shadow
-   * user created for the team also carry the person's id. Left out, it counts as false.
-   */
-  whalesyncUserIsTeamsOnlyMember: z.boolean().optional(),
-  /** The person's email. Not stored on a shadow user created for a team, which has no email of its own. */
-  email: z.string().min(1),
-  /** A label for the shadow user: the team's name, or the person's for a team with no name. */
+  /** The Whalesync team (`tm_…`). Its shadow user is found by it, or created for it. */
+  whalesyncTeamId: z.string().min(1),
+  /** A label for a shadow user created for the team: the team's name. Not applied to an existing one. */
   name: z.string().optional(),
   /**
-   * Optional Whalesync subscription state to apply while provisioning. Optional for backwards
-   * compatibility until the Whalesync backend starts sending it; when omitted the shadow user is granted
-   * the Whalesync plan (the historical auto-subscribe behavior).
+   * Optional Whalesync subscription state to apply while provisioning. When omitted the shadow user is granted the
+   * Whalesync plan (the historical auto-subscribe behavior).
    */
   subscription: whalesyncSubscriptionPayloadSchema.optional(),
 });
@@ -75,40 +64,17 @@ export const whalesyncShadowUserSchema = z.object({
 export type WhalesyncShadowUserDto = z.infer<typeof whalesyncShadowUserSchema>;
 
 /**
- * Body for `PATCH /internal/whalesync/subscription`. Whalesync calls this whenever a subscription's status
- * changes on their side (expire / cancel / upgrade). The user is identified in-body since the path carries
- * no id. Only a `WHALESYNC_PLAN` subscription is mutated — a real Scratch Stripe subscription yields a 409.
+ * Body for `PATCH /internal/whalesync/subscription`. Whalesync calls this whenever a team's subscription changes on
+ * its side (expire / cancel / upgrade). Only a `WHALESYNC_PLAN` subscription is mutated: a real Scratch Stripe
+ * subscription yields a 409.
  */
-export const whalesyncUpdateSubscriptionSchema = z
-  .object({
-    /**
-     * The team whose plan changed. When no shadow user carries it yet, `whalesyncUserId` finds the shadow user made
-     * for the team's one member before teams, and the team id is recorded on it.
-     */
-    whalesyncTeamId: z.string().min(1).optional(),
-    whalesyncUserId: z.string().min(1).optional(),
-    subscription: whalesyncSubscriptionPayloadSchema,
-  })
-  .refine((body) => body.whalesyncTeamId !== undefined || body.whalesyncUserId !== undefined, {
-    message: 'whalesyncTeamId or whalesyncUserId is required',
-  });
-
-export type WhalesyncUpdateSubscriptionDto = z.infer<typeof whalesyncUpdateSubscriptionSchema>;
-
-/** How many shadow users one team link request may name, and how many one page of unlinked ones lists. */
-export const WHALESYNC_TEAM_LINK_BATCH_LIMIT = 500;
-
-/**
- * Body for `POST /internal/whalesync/team-links`: the team of each Whalesync person whose shadow user predates teams.
- * Whalesync reads the people from `GET /internal/whalesync/team-links/pending` and answers with their teams.
- */
-export const whalesyncLinkTeamsSchema = z.object({
-  links: z
-    .array(z.object({ whalesyncUserId: z.string().min(1), whalesyncTeamId: z.string().min(1) }))
-    .max(WHALESYNC_TEAM_LINK_BATCH_LIMIT),
+export const whalesyncUpdateSubscriptionSchema = z.object({
+  /** The team whose plan changed. */
+  whalesyncTeamId: z.string().min(1),
+  subscription: whalesyncSubscriptionPayloadSchema,
 });
 
-export type WhalesyncLinkTeamsDto = z.infer<typeof whalesyncLinkTeamsSchema>;
+export type WhalesyncUpdateSubscriptionDto = z.infer<typeof whalesyncUpdateSubscriptionSchema>;
 
 // ── Response Entities ─────────────────────────────────────────────────────────
 
@@ -119,23 +85,8 @@ export interface WhalesyncSessionResponse {
   expiresAt: string;
 }
 
-export interface WhalesyncUserResponse {
-  scratchUserId: string;
-}
-
-export interface WhalesyncRevokeSessionsResponse {
-  revoked: number;
-}
-
-export interface WhalesyncClearSubscriptionResponse {
-  /** The Scratch user whose Whalesync plan was cleared, or `null` when no shadow user exists. */
-  scratchUserId: string | null;
-  /** True when a Whalesync-plan subscription row was deleted; false when there was nothing to clear. */
-  cleared: boolean;
-}
-
 export interface WhalesyncUpdateSubscriptionResponse {
-  /** The Scratch user whose subscription was updated, or `null` when no shadow user exists. */
+  /** The Scratch user whose subscription was updated, or `null` when the team has no shadow user. */
   scratchUserId: string | null;
   /** True when a Whalesync-plan subscription row was created or updated; false for a no-op. */
   updated: boolean;
@@ -143,7 +94,7 @@ export interface WhalesyncUpdateSubscriptionResponse {
   planType: string | null;
 }
 
-/** One of a shadow user's Live Exports (a `ws_export` workbook), as listed for Whalesync's admin dev tools. */
+/** One of a team's Live Exports (a `ws_export` workbook), as listed for Whalesync's admin dev tools. */
 export interface WhalesyncLiveExportSummary {
   /** The workbook id (`wkb_…`), which is also the id in Whalesync's `/exports/<id>` URL. */
   id: string;
@@ -156,33 +107,8 @@ export interface WhalesyncLiveExportSummary {
 }
 
 export interface WhalesyncListLiveExportsResponse {
-  /** Newest first. Empty when no shadow user exists. Excludes workbooks pending deletion. */
+  /** Newest first. Empty when the team has no shadow user. Excludes workbooks pending deletion. */
   liveExports: WhalesyncLiveExportSummary[];
-}
-
-export interface WhalesyncPendingTeamLinksResponse {
-  /**
-   * Whalesync user ids of shadow users with no team id yet, in ascending order, at most
-   * `WHALESYNC_TEAM_LINK_BATCH_LIMIT`. Pass the last one as `after` for the next page; an empty list is the end.
-   */
-  whalesyncUserIds: string[];
-}
-
-/** Why a requested team link was not made. */
-export type WhalesyncTeamLinkSkipReason =
-  /** No shadow user is linked to that Whalesync user. */
-  | 'no_shadow_user'
-  /** The shadow user already carries a different team id. */
-  | 'linked_to_another_team'
-  /** Another shadow user already carries that team id. */
-  | 'team_has_another_shadow_user';
-
-export interface WhalesyncLinkTeamsResponse {
-  /** Shadow users that got their team id from this request. */
-  linked: number;
-  /** Shadow users that already carried the requested team id. */
-  alreadyLinked: number;
-  skipped: { whalesyncUserId: string; whalesyncTeamId: string; reason: WhalesyncTeamLinkSkipReason }[];
 }
 
 /**
@@ -227,40 +153,31 @@ const ROUTINE_RUN_TRIGGER_VALUES = {
  * Scratch validates every body against it before queuing it. `status` is on the wire even though Scratch only sends
  * failed runs today, so runs that complete with warnings can be added without a contract change.
  */
-export const liveExportRunFinishedNotificationSchema = z
-  .object({
-    /**
-     * The Whalesync team (`tm_…`) the Live Export belongs to: the team of the shadow user that owns the workbook
-     * (DEV-13019). Absent for a shadow user made before teams that hasn't been given its team yet.
-     */
-    whalesyncTeamId: z.string().min(1).optional(),
-    /**
-     * The Whalesync person the workbook's shadow user was made for, before teams. Whalesync works the team out from
-     * them when `whalesyncTeamId` is absent. Absent for a shadow user made for a team.
-     */
-    whalesyncUserId: z.uuid().optional(),
-    /** The Scratch workbook that is the Live Export (`wkb_…`). */
-    workbookId: z.string().min(1),
-    /** The Live Export's name as Whalesync shows it: the workbook name, or "Untitled export" when it has none. */
-    workbookName: z.string(),
-    routineFilePath: z.string(),
-    /** The routine run (`rrn_…`). Whalesync's dedup key. */
-    runId: z.string().min(1),
-    status: z.enum(ROUTINE_RUN_STATUS_VALUES),
-    trigger: z.enum(ROUTINE_RUN_TRIGGER_VALUES),
-    /** When the run reached its terminal state, as a UTC ISO-8601 timestamp. */
-    finishedAt: z.string().datetime(),
-    /** The failing step's own message (or the last step's summary when the run completed). */
-    resultSummary: z.string().nullable(),
-    /** Set when the run completed but a step finished with a warning. */
-    resultWarning: z.string().nullable(),
-    /** The older, prefixed form of the failure ("Step N (action) failed: …"). */
-    error: z.string().nullable(),
-    liveExportEngine: z.enum(LiveExportEngine).nullable(),
-  })
-  .refine((notification) => notification.whalesyncTeamId !== undefined || notification.whalesyncUserId !== undefined, {
-    message: 'whalesyncTeamId or whalesyncUserId is required',
-  });
+export const liveExportRunFinishedNotificationSchema = z.object({
+  /**
+   * The Whalesync team (`tm_…`) the Live Export belongs to: the team of the shadow user that owns the workbook
+   * (DEV-13019).
+   */
+  whalesyncTeamId: z.string().min(1),
+  /** The Scratch workbook that is the Live Export (`wkb_…`). */
+  workbookId: z.string().min(1),
+  /** The Live Export's name as Whalesync shows it: the workbook name, or "Untitled export" when it has none. */
+  workbookName: z.string(),
+  routineFilePath: z.string(),
+  /** The routine run (`rrn_…`). Whalesync's dedup key. */
+  runId: z.string().min(1),
+  status: z.enum(ROUTINE_RUN_STATUS_VALUES),
+  trigger: z.enum(ROUTINE_RUN_TRIGGER_VALUES),
+  /** When the run reached its terminal state, as a UTC ISO-8601 timestamp. */
+  finishedAt: z.string().datetime(),
+  /** The failing step's own message (or the last step's summary when the run completed). */
+  resultSummary: z.string().nullable(),
+  /** Set when the run completed but a step finished with a warning. */
+  resultWarning: z.string().nullable(),
+  /** The older, prefixed form of the failure ("Step N (action) failed: …"). */
+  error: z.string().nullable(),
+  liveExportEngine: z.enum(LiveExportEngine).nullable(),
+});
 
 export type LiveExportRunFinishedNotificationDto = z.infer<typeof liveExportRunFinishedNotificationSchema>;
 
@@ -271,7 +188,7 @@ export type LiveExportRunFinishedNotificationDto = z.infer<typeof liveExportRunF
  * - `muted`: the owner turned Live Export failure emails off.
  * - `throttled`: the owner was already emailed about a Live Export failure within the last day.
  * - `disabled`: failure emails are switched off in that Whalesync environment.
- * - `unknown_user`: no live Whalesync user has that id.
+ * - `unknown_user`: Whalesync has no live team by that id.
  * - `duplicate`: the run was already handled.
  * - `ignored_status`: a status Whalesync does not act on yet (anything but `failed`).
  */

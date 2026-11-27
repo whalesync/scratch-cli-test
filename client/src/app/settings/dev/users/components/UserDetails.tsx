@@ -46,11 +46,11 @@ import { clerkUserUrl, posthogPersonUrl, stripeCustomerUrl } from '../utils';
 import { HardDeleteUserModal } from './HardDeleteUserModal';
 
 /**
- * A Whalesync "shadow" user: provisioned from Whalesync (has a `whalesyncUserId` or a `whalesyncTeamId`) and
- * backed by a synthetic `ws_`-prefixed Clerk ID rather than a real Clerk account.
+ * A Whalesync "shadow" user: holds a Whalesync team's Live Exports (has a `whalesyncTeamId`) and is backed by a
+ * synthetic `ws_`-prefixed Clerk ID rather than a real Clerk account.
  */
 const isWhalesyncShadowUser = (user: User): boolean =>
-  (!!user.whalesyncUserId || !!user.whalesyncTeamId) && (user.clerkId?.startsWith('ws_') ?? false);
+  !!user.whalesyncTeamId && (user.clerkId?.startsWith('ws_') ?? false);
 
 export const UserDetailsCard = ({
   details,
@@ -239,14 +239,11 @@ export const UserDetailsCard = ({
                 </Tooltip>
               )}
             </Group>
-            {details.user.whalesyncUserId ? (
-              <LabelValuePair label="Whalesync ID" value={details.user.whalesyncUserId} canCopy />
-            ) : (
-              <LabelValuePair label="Whalesync ID" value="—" />
-            )}
             {details.user.whalesyncTeamId ? (
               <LabelValuePair label="Whalesync team" value={details.user.whalesyncTeamId} canCopy />
-            ) : null}
+            ) : (
+              <LabelValuePair label="Whalesync team" value="—" />
+            )}
             <Group align="center" gap="xs">
               {details.user.stripeCustomerId ? (
                 <LabelValuePair label="Stripe Customer ID" value={details.user.stripeCustomerId} canCopy />

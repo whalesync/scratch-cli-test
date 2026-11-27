@@ -124,7 +124,7 @@ describe('WhalesyncRunNotificationSweeperService', () => {
         workbook: {
           managedBy: 'ws_export',
           isPendingDelete: false,
-          user: { OR: [{ whalesyncTeamId: { not: null } }, { whalesyncUserId: { not: null } }] },
+          user: { whalesyncTeamId: { not: null } },
         },
         whalesyncRunNotification: { is: null },
       },

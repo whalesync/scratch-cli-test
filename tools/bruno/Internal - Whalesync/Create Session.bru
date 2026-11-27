@@ -16,13 +16,19 @@ headers {
 
 body:json {
   {
-    "whalesyncUserId": "ws_user_123",
-    "email": "user@example.com",
-    "name": "Example User"
+    "whalesyncTeamId": "tm_abc123def456",
+    "name": "Example Team"
   }
 }
 
 docs {
-  Ensure the shadow user exists and mint a 10-minute session token. Idempotent on
-  `whalesyncUserId`. Returns { scratchUserId, apiToken, expiresAt }. `name` optional.
+  Ensure the team's shadow user exists and mint a 10-minute session token for it.
+  Idempotent on `whalesyncTeamId`: any member's session reaches the same shadow user.
+  Returns { scratchUserId, apiToken, expiresAt }.
+
+  A missing shadow user is created as a pure one (clerkId `ws_<whalesyncTeamId>`, `name`
+  as its label, no email); an existing one's name is left alone. `name` and
+  `subscription` are optional; without `subscription` the Whalesync plan is granted.
+  Unknown body keys are stripped, not rejected. Returns 409 when the user holding the
+  team id is a real Scratch account.
 }

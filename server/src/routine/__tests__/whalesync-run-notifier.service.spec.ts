@@ -16,7 +16,7 @@ import {
 
 const RUN_ID = 'rrn_test1234' as RoutineRunId;
 const WORKBOOK_ID = 'wkb_test1234';
-const WHALESYNC_USER_ID = '3f1c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6';
+const WHALESYNC_TEAM_ID = 'tm_abc123def456';
 const WHALESYNC_INTERNAL_API_URL = 'https://test-bottlenose.example.com';
 const NOTIFICATION_URL = `${WHALESYNC_INTERNAL_API_URL}/internal/scratch/live-export-runs/finished`;
 const SERVICE_TOKEN = 'super-secret-service-token-value';
@@ -42,7 +42,7 @@ function failedLiveExportRun(
       name: 'Intercom → Supabase',
       managedBy: 'ws_export',
       isPendingDelete: false,
-      user: { whalesyncUserId: WHALESYNC_USER_ID },
+      user: { whalesyncTeamId: WHALESYNC_TEAM_ID },
       ...workbookOverrides,
     },
     ...overrides,
@@ -50,7 +50,7 @@ function failedLiveExportRun(
 }
 
 const EXPECTED_PAYLOAD = {
-  whalesyncUserId: WHALESYNC_USER_ID,
+  whalesyncTeamId: WHALESYNC_TEAM_ID,
   workbookId: WORKBOOK_ID,
   workbookName: 'Intercom → Supabase',
   routineFilePath: 'routines/run-syn_1.yaml',
@@ -238,46 +238,23 @@ describe('WhalesyncRunNotifierService', () => {
       ['the workbook is not a Live Export', failedLiveExportRun({}, { managedBy: null })],
       ['the workbook is being deleted', failedLiveExportRun({}, { isPendingDelete: true })],
       ['the workbook has no owner', failedLiveExportRun({}, { user: null })],
-      ['the owner is not a Whalesync user', failedLiveExportRun({}, { user: { whalesyncUserId: null } })],
+      ['the owner belongs to no Whalesync team', failedLiveExportRun({}, { user: { whalesyncTeamId: null } })],
     ])('skips the run when %s', async (_reason, run) => {
       const { notifier, notificationCreate } = makeNotifier({ run });
       await expect(notifier.enqueueNotificationIfRunIsEligible(RUN_ID)).resolves.toBe(false);
       expect(notificationCreate).not.toHaveBeenCalled();
     });
 
-    it("names the team of a team's shadow user, which has no person of its own", async () => {
-      const { notifier, notificationCreate } = makeNotifier({
-        run: failedLiveExportRun({}, { user: { whalesyncUserId: null, whalesyncTeamId: 'tm_abc123def456' } }),
-      });
+    it("names the workbook's team and never a Whalesync person", async () => {
+      const { notifier, notificationCreate } = makeNotifier({ run: failedLiveExportRun() });
 
       await expect(notifier.enqueueNotificationIfRunIsEligible(RUN_ID)).resolves.toBe(true);
 
-      const [[{ data }]] = notificationCreate.mock.calls as [[{ data: { payload: Record<string, unknown> } }]];
-      expect(data.payload).toEqual({
-        ...EXPECTED_PAYLOAD,
-        whalesyncUserId: undefined,
-        whalesyncTeamId: 'tm_abc123def456',
-      });
-      expect(data.payload).not.toHaveProperty('whalesyncUserId');
-    });
-
-    it('names both the team and the person for a shadow user from before teams that has its team', async () => {
-      const { notifier, notificationCreate } = makeNotifier({
-        run: failedLiveExportRun(
-          {},
-          { user: { whalesyncUserId: WHALESYNC_USER_ID, whalesyncTeamId: 'tm_abc123def456' } },
-        ),
-      });
-
-      await notifier.enqueueNotificationIfRunIsEligible(RUN_ID);
-
       expect(notificationCreate).toHaveBeenCalledWith({
-        data: {
-          routineRunId: RUN_ID,
-          workbookId: WORKBOOK_ID,
-          payload: { ...EXPECTED_PAYLOAD, whalesyncTeamId: 'tm_abc123def456' },
-        },
+        data: { routineRunId: RUN_ID, workbookId: WORKBOOK_ID, payload: EXPECTED_PAYLOAD },
       });
+      const [[{ data }]] = notificationCreate.mock.calls as [[{ data: { payload: Record<string, unknown> } }]];
+      expect(data.payload).not.toHaveProperty('whalesyncUserId');
     });
 
     it('names an unnamed workbook the way Whalesync does', async () => {
@@ -304,14 +281,14 @@ describe('WhalesyncRunNotifierService', () => {
 
     it('records an invalid payload as given up instead of queuing it for delivery', async () => {
       const { notifier, notificationCreate, logValue } = makeNotifier({
-        run: failedLiveExportRun({}, { user: { whalesyncUserId: 'not-a-uuid' } }),
+        run: failedLiveExportRun({ finishedAt: null }),
       });
       await expect(notifier.enqueueNotificationIfRunIsEligible(RUN_ID)).resolves.toBe(false);
       expect(notificationCreate).toHaveBeenCalledWith({
         data: expect.objectContaining({
           routineRunId: RUN_ID,
           attempts: MAX_WHALESYNC_RUN_NOTIFICATION_DELIVERY_ATTEMPTS,
-          lastError: expect.stringContaining('Invalid notification payload: whalesyncUserId') as unknown,
+          lastError: expect.stringContaining('Invalid notification payload: finishedAt') as unknown,
         }) as unknown,
       });
       expect(logValue).toHaveBeenCalledWith(CustomMetric.WHALESYNC_RUN_NOTIFY_GAVE_UP, 1);

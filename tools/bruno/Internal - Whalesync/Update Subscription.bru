@@ -1,0 +1,33 @@
+meta {
+  name: Update Subscription
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/internal/whalesync/subscription
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "whalesyncTeamId": "tm_abc123def456",
+    "subscription": {
+      "status": "active",
+      "liveExportCadence": "daily"
+    }
+  }
+}
+
+docs {
+  Apply a Whalesync plan change to the team's shadow user. Returns
+  { scratchUserId, updated, planType }, or { scratchUserId: null, updated: false,
+  planType: null } when the team has no shadow user. Returns 409 when the organization
+  pays for Scratch directly (a real Stripe subscription), or when the user holding the
+  team id is a real Scratch account.
+}

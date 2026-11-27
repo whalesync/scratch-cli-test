@@ -13,7 +13,7 @@ import { DataFolderTableSpecStoreService } from 'src/workbook/table-spec-store/d
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { CodeMigrationsController } from '../code-migrations.controller';
 import { ConnectionDrainTimeoutError, ConnectionQuiesceService } from '../connection-quiesce.service';
-import { WhalesyncRealAccountMigrationService } from '../whalesync-real-account-migration.service';
+import { WhalesyncTeamlessShadowUsersDeprovisionService } from '../whalesync-teamless-shadow-users-deprovision.service';
 
 const makeReqWithUser = (isAdmin = true) =>
   ({
@@ -39,7 +39,7 @@ describe('CodeMigrationsController', () => {
   let auditLogService: jest.Mocked<AuditLogService>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let connectionQuiesceService: jest.Mocked<ConnectionQuiesceService>;
-  let whalesyncRealAccountMigrationService: jest.Mocked<WhalesyncRealAccountMigrationService>;
+  let whalesyncTeamlessShadowUsersDeprovisionService: jest.Mocked<WhalesyncTeamlessShadowUsersDeprovisionService>;
   let metricsService: jest.Mocked<CustomMetricsService>;
   let dataFolderTableSpecStore: jest.Mocked<DataFolderTableSpecStoreService>;
 
@@ -109,14 +109,14 @@ describe('CodeMigrationsController', () => {
       withLoggedExecTimeForConnector: jest.fn(),
     } as unknown as jest.Mocked<CustomMetricsService>;
 
-    whalesyncRealAccountMigrationService = {
+    whalesyncTeamlessShadowUsersDeprovisionService = {
       run: jest.fn().mockResolvedValue({
-        migrationName: 'whalesync-teams-off-real-accounts',
+        migrationName: 'whalesync-teamless-shadow-users-deprovision',
         migratedIds: [],
         remainingCount: 0,
         dryRun: true,
       }),
-    } as unknown as jest.Mocked<WhalesyncRealAccountMigrationService>;
+    } as unknown as jest.Mocked<WhalesyncTeamlessShadowUsersDeprovisionService>;
 
     dataFolderTableSpecStore = {
       importTableSpecFromGitIfAbsent: jest.fn().mockResolvedValue({ kind: 'imported', importedDefaultView: true }),
@@ -132,7 +132,7 @@ describe('CodeMigrationsController', () => {
       connectionQuiesceService,
       metricsService,
       dataFolderTableSpecStore,
-      whalesyncRealAccountMigrationService,
+      whalesyncTeamlessShadowUsersDeprovisionService,
     );
   });
 
@@ -179,29 +179,32 @@ describe('CodeMigrationsController', () => {
 
   // A dry-run must only be accepted for a migration that actually honors it —
   // otherwise a user could believe they dry-ran a migration that wrote for real.
-  describe('runMigration - whalesync-teams-off-real-accounts (DEV-13019)', () => {
+  describe('runMigration - whalesync-teamless-shadow-users-deprovision (DEV-13019)', () => {
     it('is listed with dry-run support and hands ids, qty, and dryRun to the migration service', async () => {
       const descriptor = controller
         .getAvailableMigrations(makeReqWithUser())
-        .migrations.find((migration) => migration.name === 'whalesync-teams-off-real-accounts');
+        .migrations.find((migration) => migration.name === 'whalesync-teamless-shadow-users-deprovision');
       expect(descriptor?.supportsDryRun).toBe(true);
 
       await controller.runMigration(makeReqWithUser(), {
-        migration: 'whalesync-teams-off-real-accounts',
+        migration: 'whalesync-teamless-shadow-users-deprovision',
         ids: ['usr_a'],
         dryRun: true,
       });
-      expect(whalesyncRealAccountMigrationService.run).toHaveBeenCalledWith({
+      expect(whalesyncTeamlessShadowUsersDeprovisionService.run).toHaveBeenCalledWith({
         dryRun: true,
-        realUserIds: ['usr_a'],
-        maximumAccountCount: undefined,
+        scratchUserIdsToConsider: ['usr_a'],
+        maximumCandidateCount: undefined,
       });
 
-      await controller.runMigration(makeReqWithUser(), { migration: 'whalesync-teams-off-real-accounts', qty: 5 });
-      expect(whalesyncRealAccountMigrationService.run).toHaveBeenLastCalledWith({
+      await controller.runMigration(makeReqWithUser(), {
+        migration: 'whalesync-teamless-shadow-users-deprovision',
+        qty: 5,
+      });
+      expect(whalesyncTeamlessShadowUsersDeprovisionService.run).toHaveBeenLastCalledWith({
         dryRun: false,
-        realUserIds: undefined,
-        maximumAccountCount: 5,
+        scratchUserIdsToConsider: undefined,
+        maximumCandidateCount: 5,
       });
     });
   });

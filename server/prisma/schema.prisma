@@ -65,8 +65,8 @@ model User {
   id                   String                @id // type: UserId
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
-  clerkId              String?               @unique // Real Clerk ID (user_…) for native users; synthetic "ws_<whalesyncUserId>" for Whalesync shadow users
-  whalesyncUserId      String?               @unique // UUID of the Whalesync user this account was made for or adopted from; null for native Scratch users and for shadow users made for a team
+  clerkId              String?               @unique // Real Clerk ID (user_…) for native users; synthetic "ws_<whalesyncTeamId>" for Whalesync shadow users ("ws_<Whalesync person id>" on ones made before teams)
+  whalesyncUserId      String?               @unique // DEPRECATED (DEV-13019): no longer read or written by the server; kept only while old servers still write it during a deploy, then dropped
   whalesyncTeamId      String?               @unique // Id of the Whalesync team (tm_…) whose Live Exports this user holds; null for native Scratch users
   name                 String?
   /// Always stored lowercase + trimmed by a BEFORE INSERT/UPDATE trigger.

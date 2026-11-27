@@ -1,7 +1,7 @@
 meta {
   name: List Team Live Exports
   type: http
-  seq: 9
+  seq: 3
 }
 
 get {
@@ -10,15 +10,9 @@ get {
   auth: inherit
 }
 
-params:query {
-  ~whalesyncUserId: {{whalesyncUserId}}
-}
-
 docs {
   List a team's Live Export workbooks, newest first, skipping those pending deletion.
   Returns { liveExports: [{ id, name, createdAt, updatedAt }] }. Returns an empty list if
-  the team has no shadow user (never creates one).
-
-  The optional `whalesyncUserId` is the team's one member, used to find a shadow user
-  made before teams.
+  the team has no shadow user (never creates one). Returns 409 when the user holding the
+  team id is a real Scratch account.
 }
